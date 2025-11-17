@@ -12,10 +12,10 @@
  * signaling server with authentication, rate limiting, etc.
  */
 
-const WebSocket = require('ws');
+import { WebSocketServer } from 'ws';
 
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const wss = new WebSocketServer({ port: PORT });
 
 const peers = new Map();
 
@@ -45,7 +45,7 @@ wss.on('connection', (ws) => {
 
         // Notify other peers about new node
         for (const [id, peer] of peers.entries()) {
-          if (id !== nodeId && peer.readyState === WebSocket.OPEN) {
+          if (id !== nodeId && peer.readyState === 1) { // WebSocket.OPEN = 1
             peer.send(
               JSON.stringify({
                 type: 'new-peer',
@@ -70,7 +70,7 @@ wss.on('connection', (ws) => {
       ) {
         // Forward WebRTC signaling messages
         const target = peers.get(data.to);
-        if (target && target.readyState === WebSocket.OPEN) {
+        if (target && target.readyState === 1) { // WebSocket.OPEN = 1
           target.send(
             JSON.stringify({
               ...data,
@@ -93,7 +93,7 @@ wss.on('connection', (ws) => {
 
       // Notify other peers about disconnection
       for (const [id, peer] of peers.entries()) {
-        if (peer.readyState === WebSocket.OPEN) {
+        if (peer.readyState === 1) { // WebSocket.OPEN = 1
           peer.send(
             JSON.stringify({
               type: 'peer-left',

@@ -30,6 +30,10 @@ export interface IndexStateSnapshot {
 export class IndexState {
   // Internal: Map<namespace, Map<key, value>>
   private state: Map<string, Map<string, string>> = new Map();
+  
+  // Phase 12: Change log for incremental snapshots
+  private changeLog: Operation[] = [];
+  private isRecording: boolean = false;
 
   /**
    * Create an empty state
@@ -114,6 +118,39 @@ export class IndexState {
   }
 
   /**
+   * Phase 12: Start recording changes to changeLog
+   */
+  beginRecording(): void {
+    this.isRecording = true;
+    this.changeLog = [];
+  }
+
+  /**
+   * Phase 12: Stop recording and return the change log
+   * @returns Array of operations recorded since beginRecording()
+   */
+  stopRecording(): Operation[] {
+    this.isRecording = false;
+    const changes = [...this.changeLog];
+    this.changeLog = [];
+    return changes;
+  }
+
+  /**
+   * Phase 12: Get current change log (without stopping recording)
+   */
+  getChangeLog(): Operation[] {
+    return [...this.changeLog];
+  }
+
+  /**
+   * Phase 12: Clear change log
+   */
+  clearChangeLog(): void {
+    this.changeLog = [];
+  }
+
+  /**
    * Apply a single operation to update internal state
    * 
    * Phase 7: Added TRANSFER operation support
@@ -132,6 +169,12 @@ export class IndexState {
       if (!op.to || op.amount === undefined) {
         throw new Error("TRANSFER operation requires 'to' and 'amount' fields");
       }
+      
+      // Phase 12: Record operation before applying (so it's in changeLog)
+      if (this.isRecording) {
+        this.changeLog.push(op);
+      }
+      
       this.applyTransfer(ownerAddress, op.to, op.amount);
       return;
     }
@@ -154,6 +197,11 @@ export class IndexState {
       if (nsMap.size === 0) {
         this.state.delete(namespace);
       }
+    }
+
+    // Phase 12: Record operation in change log if recording
+    if (this.isRecording) {
+      this.changeLog.push(op);
     }
   }
 
@@ -182,6 +230,9 @@ export class IndexState {
     // Add to recipient
     const toBalance = this.getBalance(to);
     this.setBalance(to, toBalance + amount);
+    
+    // Phase 12: TRANSFER operations are recorded via applyOperation, not here
+    // The operation is already in changeLog when applyOperation is called
   }
 
   /**

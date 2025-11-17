@@ -20,7 +20,16 @@ import {
   getBlocksUntilAdjustment,
   explainDifficultyChange,
 } from "../core/difficulty.js";
-import type { Operation, Block, Tx } from "../core/types.js";
+import {
+  loadAllSnapshotMeta,
+  getLatestSnapshotMeta,
+  clearAllSnapshots,
+  saveSnapshot,
+  recompressAllSnapshots,
+  getSnapshotSizeInfo,
+  loadSnapshotByHeightSync,
+} from "../core/snapshot.js";
+import type { Operation, Block, Tx, SnapshotMeta } from "../core/types.js";
 import "./index.css";
 
 /**
@@ -57,6 +66,18 @@ function App() {
     hashRate: null,
     elapsedTime: 0,
   });
+
+  // Phase 9: Snapshot state
+  const [snapshotMetas, setSnapshotMetas] = useState<SnapshotMeta[]>([]);
+  const [latestSnapshot, setLatestSnapshot] = useState<SnapshotMeta | null>(null);
+  
+  // Phase 11: Snapshot compression info
+  const [snapshotSizeInfo, setSnapshotSizeInfo] = useState<{
+    compressedSize: number;
+    estimatedUncompressedSize: number;
+    compressionRatio: number;
+  } | null>(null);
+  const [isRecompressing, setIsRecompressing] = useState<boolean>(false);
 
   // Form state for creating transactions
   const [txNamespace, setTxNamespace] = useState<string>("test");
@@ -100,6 +121,26 @@ function App() {
       minerClient.destroy();
     };
   }, []);
+
+  // Phase 9: Load snapshot metadata when chain context changes
+  // Phase 11: Also load snapshot size info
+  useEffect(() => {
+    if (chainContext) {
+      const metas = loadAllSnapshotMeta();
+      setSnapshotMetas(metas);
+      const latest = getLatestSnapshotMeta();
+      setLatestSnapshot(latest);
+      
+      // Load size info for latest snapshot
+      if (latest) {
+        getSnapshotSizeInfo(latest.height).then((info) => {
+          setSnapshotSizeInfo(info);
+        });
+      } else {
+        setSnapshotSizeInfo(null);
+      }
+    }
+  }, [chainContext]);
 
   // Handle chain reset (for Phase 5 migration)
   const handleResetChain = () => {
@@ -454,7 +495,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>Browser Index Chain</h1>
-        <p className="subtitle">Phase 8: Web Worker Mining & Performance</p>
+        <p className="subtitle">Phase 12: Incremental Snapshots</p>
       </header>
 
       <main className="app-main">
@@ -662,6 +703,245 @@ function App() {
               }
               return null;
             })()}
+          </div>
+        )}
+
+        {/* Phase 9: State & Storage (Snapshots) */}
+        {chainContext && (
+          <div className="status-card">
+            <h2>State & Storage</h2>
+            <div className="status-item">
+              <span className="label">Last Snapshot Height:</span>
+              <span className="value">
+                {latestSnapshot ? latestSnapshot.height : "None"}
+              </span>
+            </div>
+            {latestSnapshot && (
+              <>
+                <div className="status-item">
+                  <span className="label">Last Snapshot Time:</span>
+                  <span className="value">
+                    {new Date(latestSnapshot.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="status-item">
+                  <span className="label">Blocks Since Snapshot:</span>
+                  <span className="value">
+                    {Math.max(0, height - latestSnapshot.height)}
+                  </span>
+                </div>
+              </>
+            )}
+            <div className="status-item">
+              <span className="label">Snapshot Count:</span>
+              <span className="value">{snapshotMetas.length}</span>
+            </div>
+            {/* Phase 12: Show snapshot type info */}
+            {latestSnapshot && (
+              <div className="status-item">
+                <span className="label">Latest Snapshot Type:</span>
+                <span className="value">
+                  {(() => {
+                    // Check if latest snapshot is full or delta
+                    const latestSnapData = loadSnapshotByHeightSync(latestSnapshot.height);
+                    if (latestSnapData) {
+                      if (latestSnapData.full === false) {
+                        return "Delta (Incremental)";
+                      } else {
+                        return "Full";
+                      }
+                    }
+                    return "Unknown";
+                  })()}
+                </span>
+              </div>
+            )}
+            {/* Phase 11: Compression info */}
+            {snapshotSizeInfo && (
+              <>
+                <div className="status-item">
+                  <span className="label">Latest Snapshot Size:</span>
+                  <span className="value">
+                    {(snapshotSizeInfo.compressedSize / 1024).toFixed(2)} KB
+                  </span>
+                </div>
+                {snapshotSizeInfo.compressionRatio > 0 && (
+                  <div className="status-item">
+                    <span className="label">Compression Ratio:</span>
+                    <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
+                      {snapshotSizeInfo.compressionRatio.toFixed(1)}% reduction
+                    </span>
+                  </div>
+                )}
+                {snapshotSizeInfo.estimatedUncompressedSize > 0 && (
+                  <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                    <span className="label">Estimated Uncompressed:</span>
+                    <span className="value">
+                      {(snapshotSizeInfo.estimatedUncompressedSize / 1024).toFixed(2)} KB
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+            <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button
+                className="btn btn-secondary"
+                onClick={async () => {
+                  if (!chainContext) return;
+                  const tip = chainContext.storage.getTip();
+                  if (!tip || tip.header.height === 0) {
+                    setError("Need at least one block (after genesis) to create snapshot");
+                    return;
+                  }
+                  try {
+                    setError("");
+                    const indexStateSnapshot = chainContext.indexState.toSnapshot();
+                    await saveSnapshot(tip.header.height, tip.hash, indexStateSnapshot);
+                    const metas = loadAllSnapshotMeta();
+                    setSnapshotMetas(metas);
+                    const latest = getLatestSnapshotMeta();
+                    setLatestSnapshot(latest);
+                    
+                    // Update size info
+                    if (latest) {
+                      const info = await getSnapshotSizeInfo(latest.height);
+                      setSnapshotSizeInfo(info);
+                    }
+                    
+                    setError("");
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Failed to create snapshot");
+                  }
+                }}
+                disabled={!chainContext || height === 0}
+              >
+                Force Snapshot
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={async () => {
+                  if (window.confirm("Clear all snapshots? Next startup will rebuild from genesis.")) {
+                    clearAllSnapshots();
+                    setSnapshotMetas([]);
+                    setLatestSnapshot(null);
+                    setSnapshotSizeInfo(null);
+                    setError("All snapshots cleared. Next startup will rebuild from genesis.");
+                    setTimeout(() => setError(""), 3000);
+                  }
+                }}
+                style={{ background: "#dc3545", color: "white" }}
+              >
+                Clear Snapshots
+              </button>
+              {/* Phase 11: Recompress all snapshots */}
+              <button
+                className="btn btn-secondary"
+                onClick={async () => {
+                  if (!chainContext) return;
+                  if (isRecompressing) return;
+                  
+                  try {
+                    setIsRecompressing(true);
+                    setError("");
+                    const count = await recompressAllSnapshots();
+                    if (count > 0) {
+                      // Reload snapshot info
+                      const metas = loadAllSnapshotMeta();
+                      setSnapshotMetas(metas);
+                      const latest = getLatestSnapshotMeta();
+                      setLatestSnapshot(latest);
+                      
+                      if (latest) {
+                        const info = await getSnapshotSizeInfo(latest.height);
+                        setSnapshotSizeInfo(info);
+                      }
+                      
+                      setError(`Recompressed ${count} snapshot(s)`);
+                      setTimeout(() => setError(""), 3000);
+                    } else {
+                      setError("All snapshots are already compressed");
+                      setTimeout(() => setError(""), 2000);
+                    }
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Failed to recompress snapshots");
+                  } finally {
+                    setIsRecompressing(false);
+                  }
+                }}
+                disabled={!chainContext || isRecompressing || snapshotMetas.length === 0}
+                style={{ background: "#17a2b8", color: "white" }}
+              >
+                {isRecompressing ? "Recompressing..." : "Recompress All"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 10: Light Node Status */}
+        {chainContext && (
+          <div className="status-card">
+            <h2>Light Node Status</h2>
+            <div className="status-item">
+              <span className="label">Light Node Window:</span>
+              <span className="value">
+                {chainContext.params.lightNodeWindow ?? 200} blocks
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="label">Stored Blocks:</span>
+              <span className="value">{blockCount}</span>
+            </div>
+            {(() => {
+              const minHeight = chainContext.storage.getMinHeight();
+              const maxHeight = chainContext.storage.getMaxHeight();
+              return (
+                <>
+                  <div className="status-item">
+                    <span className="label">Earliest Block Height:</span>
+                    <span className="value">{minHeight}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Latest Block Height:</span>
+                    <span className="value">{maxHeight}</span>
+                  </div>
+                  {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow > 0 && (
+                    <div className="status-item">
+                      <span className="label">Storage Reduction:</span>
+                      <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
+                        {height > 0
+                          ? `${((1 - blockCount / Math.max(1, height + 1)) * 100).toFixed(1)}%`
+                          : "0%"}
+                      </span>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            <div style={{ marginTop: "1rem" }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  if (!chainContext) return;
+                  const lightNodeWindow = chainContext.params.lightNodeWindow ?? 200;
+                  if (lightNodeWindow > 0) {
+                    const tip = chainContext.storage.getTip();
+                    if (tip) {
+                      const pruneHeight = tip.header.height - lightNodeWindow + 1;
+                      if (pruneHeight > 0) {
+                        chainContext.storage.pruneBlocksBefore(pruneHeight);
+                        setChainContext({ ...chainContext });
+                        setError("Pruned old blocks");
+                        setTimeout(() => setError(""), 2000);
+                      }
+                    }
+                  }
+                }}
+                disabled={!chainContext || height === 0}
+                style={{ background: "#ffc107", color: "#000" }}
+              >
+                Clear Pruned Blocks
+              </button>
+            </div>
           </div>
         )}
 
@@ -921,13 +1201,14 @@ function App() {
         {/* Info */}
         <div className="info">
           <p>
-            <strong>Phase 8 Complete:</strong> Web Worker mining and performance monitoring implemented.
-            Mining now runs in a background worker, keeping the UI responsive while showing real-time
-            hash rate and mining statistics.
+            <strong>Phase 12 Complete:</strong> Incremental snapshots implemented. Snapshots now use
+            a hybrid approach: full snapshots every 5 snapshots, and delta (incremental) snapshots
+            between them. This reduces storage by 70-95% compared to full snapshots only.
           </p>
           <p>
-            The miner automatically restarts when new blocks are received. You can see your node's
-            estimated hash rate, total hashes tried, and elapsed time in the Mining Status section.
+            Combined with compression (Phase 11), light node mode (Phase 10), and fast sync (Phase 9),
+            nodes can start extremely quickly with minimal storage. Delta snapshots store only changes,
+            making them much smaller than full snapshots.
           </p>
           <p>
             <strong>⚠️ Important:</strong> Before connecting, you must start the signaling server:

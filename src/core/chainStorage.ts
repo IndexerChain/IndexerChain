@@ -56,10 +56,9 @@ export class BrowserChainStorage implements ChainStorage {
   }
 
   getBlockByHeight(height: number): Block | null {
-    if (height < 0 || height >= this.blocks.length) {
-      return null;
-    }
-    return this.blocks[height] ?? null;
+    // Phase 10: In light node mode, blocks may not be indexed by height
+    // Search through blocks array to find matching height
+    return this.blocks.find((b) => b.header.height === height) ?? null;
   }
 
   getBlockByHash(hash: string): Block | null {
@@ -67,7 +66,10 @@ export class BrowserChainStorage implements ChainStorage {
   }
 
   appendBlock(block: Block): void {
-    const expectedHeight = this.blocks.length;
+    // Phase 10: In light node mode, we need to check if block already exists
+    // and validate against tip (not array length)
+    const tip = this.getTip();
+    const expectedHeight = tip ? tip.header.height + 1 : 0;
 
     if (block.header.height !== expectedHeight) {
       throw new Error(
@@ -75,15 +77,20 @@ export class BrowserChainStorage implements ChainStorage {
       );
     }
 
+    // Check if block already exists (shouldn't happen, but safety check)
+    const existing = this.getBlockByHeight(block.header.height);
+    if (existing) {
+      throw new Error(`Block at height ${block.header.height} already exists`);
+    }
+
     // Validate previous hash for non-genesis blocks
     if (expectedHeight > 0) {
-      const prev = this.blocks[expectedHeight - 1];
-      if (!prev) {
-        throw new Error("Previous block not found");
+      if (!tip) {
+        throw new Error("Previous block (tip) not found");
       }
-      if (block.header.prevHash !== prev.hash) {
+      if (block.header.prevHash !== tip.hash) {
         throw new Error(
-          `Invalid prevHash: expected ${prev.hash}, got ${block.header.prevHash}`
+          `Invalid prevHash: expected ${tip.hash}, got ${block.header.prevHash}`
         );
       }
     } else {
@@ -105,6 +112,70 @@ export class BrowserChainStorage implements ChainStorage {
     this.blocks = [];
     if (typeof localStorage !== "undefined") {
       localStorage.removeItem(STORAGE_KEY);
+    }
+  }
+
+  /**
+   * Phase 10: Prune blocks before a given height
+   * Removes all blocks with height < pruneHeight
+   * 
+   * @param pruneHeight Minimum height to keep (blocks below this will be deleted)
+   */
+  pruneBlocksBefore(pruneHeight: number): void {
+    if (pruneHeight <= 0) {
+      return; // Don't prune genesis block
+    }
+
+    // Filter out blocks below pruneHeight
+    const pruned = this.blocks.filter((block) => block.header.height >= pruneHeight);
+    
+    // Only update if we actually removed blocks
+    if (pruned.length < this.blocks.length) {
+      this.blocks = pruned;
+      this.saveToPersistence();
+      console.log(
+        `[Phase 10] Pruned blocks before height ${pruneHeight}, kept ${pruned.length} blocks`
+      );
+    }
+  }
+
+  /**
+   * Phase 10: Get the minimum block height currently stored
+   * Returns 0 if no blocks exist
+   */
+  getMinHeight(): number {
+    if (this.blocks.length === 0) {
+      return 0;
+    }
+    return Math.min(...this.blocks.map((b) => b.header.height));
+  }
+
+  /**
+   * Phase 10: Get the maximum block height currently stored
+   * Returns 0 if no blocks exist
+   */
+  getMaxHeight(): number {
+    if (this.blocks.length === 0) {
+      return 0;
+    }
+    return Math.max(...this.blocks.map((b) => b.header.height));
+  }
+
+  /**
+   * Phase 10: Auto-prune blocks based on window size
+   * Keeps only the most recent N blocks (where N = window)
+   * 
+   * @param currentHeight Current tip height
+   * @param window Number of recent blocks to keep
+   */
+  autoPrune(currentHeight: number, window: number): void {
+    if (window <= 0 || currentHeight < window) {
+      return; // Don't prune if window is invalid or not enough blocks
+    }
+
+    const pruneHeight = currentHeight - window + 1; // Keep blocks from this height onwards
+    if (pruneHeight > 0) {
+      this.pruneBlocksBefore(pruneHeight);
     }
   }
 

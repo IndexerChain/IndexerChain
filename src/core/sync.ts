@@ -56,6 +56,20 @@ export async function handleReceivedBlock(
 
   // If block is ahead, request missing blocks
   if (blockHeight > localHeight + 1) {
+    // Phase 10: In light node mode, check if requested blocks are available
+    const minHeight = context.storage.getMinHeight();
+    const requestedFromHeight = localHeight + 1;
+    
+    // If requested blocks are below our minimum (pruned), we need snapshot
+    if (requestedFromHeight < minHeight) {
+      console.log(
+        `[Phase 10] Requested blocks from ${requestedFromHeight} are pruned (min: ${minHeight}), need snapshot`
+      );
+      // In light node mode, we can't provide old blocks
+      // The peer should use snapshot + recent blocks instead
+      // For now, we'll still request, but the peer may not have them
+    }
+    
     // Request blocks from height (localHeight + 1) to blockHeight
     p2pNode.broadcast("REQUEST_BLOCKS", {
       fromHeight: localHeight + 1,

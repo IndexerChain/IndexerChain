@@ -98,6 +98,7 @@ export interface Block {
  * Chain parameters
  * 
  * Phase 7: Added blockReward for mining rewards
+ * Phase 9: Added snapshot parameters for fast sync
  */
 export interface ChainParams {
   version: number; // Protocol version
@@ -107,6 +108,10 @@ export interface ChainParams {
   targetBlockTime: number; // Target block time in seconds, e.g., 10
   difficultyAdjustmentInterval: number; // Number of blocks between difficulty adjustments, e.g., 10
   blockReward: number; // Block reward in IDC (Phase 7), e.g., 10
+  snapshotInterval?: number; // Phase 9: Number of blocks between snapshots, e.g., 50
+  maxSnapshotCount?: number; // Phase 9: Maximum number of snapshots to keep, e.g., 5
+  lightNodeWindow?: number; // Phase 10: Number of recent blocks to keep (pruned node), e.g., 200
+  fullSnapshotInterval?: number; // Phase 12: Number of snapshots between full snapshots, e.g., 5
   maxBlockSizeBytes?: number; // Maximum block size in bytes, e.g., 1_000_000 (optional)
 }
 
@@ -118,4 +123,33 @@ export interface ChainParams {
 export interface DifficultyAdjustmentResult {
   newDifficulty: number;
   reason: string; // Explanation of the adjustment
+}
+
+/**
+ * Snapshot metadata
+ * 
+ * Phase 9: Metadata for state snapshots used for fast sync
+ */
+export interface SnapshotMeta {
+  id: string; // Snapshot ID, e.g., "snap_0000123"
+  height: number; // Block height at which snapshot was taken
+  blockHash: string; // Hash of the block at snapshot height
+  createdAt: number; // Unix timestamp in milliseconds
+  version: number; // Snapshot format version
+}
+
+/**
+ * Snapshot data
+ * 
+ * Phase 9: Complete snapshot including metadata and state
+ * Phase 11: Support compressed format
+ * Phase 12: Support incremental (delta) snapshots
+ */
+export interface SnapshotData {
+  meta: SnapshotMeta;
+  indexState?: any; // Phase 9: IndexState.toSnapshot() result (legacy format)
+  compressed?: boolean; // Phase 11: Whether data is compressed
+  data?: string; // Phase 11/12: Base64-encoded compressed data (full snapshot when full=true)
+  full?: boolean; // Phase 12: Whether this is a full snapshot (true) or delta snapshot (false)
+  delta?: string; // Phase 12: Base64-encoded compressed delta operations (when full=false)
 }
