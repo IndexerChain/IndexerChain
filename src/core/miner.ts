@@ -46,6 +46,7 @@ export function checkDifficulty(hash: string, difficulty: number): boolean {
 export async function mineBlock(
   pendingTxs: Tx[],
   chainContext: ChainContext,
+  minerAddress: string,
   onProgress?: (hash: string, nonce: number) => void
 ): Promise<Block> {
   const prevBlock = chainContext.storage.getTip();
@@ -53,14 +54,20 @@ export async function mineBlock(
     throw new Error("Cannot mine: no previous block found");
   }
 
-  // Build candidate block
+  // Phase 6: Get all blocks for difficulty calculation
+  const allBlocks = chainContext.storage.getAllBlocks();
+
+  // Phase 7: Build candidate block (with coinbase and dynamic difficulty)
   const block = await buildCandidateBlock(
     pendingTxs,
     prevBlock,
-    chainContext.params
+    allBlocks,
+    chainContext.params,
+    minerAddress as any
   );
 
-  const difficulty = chainContext.params.initialDifficulty;
+  // Phase 6: Use dynamic difficulty from block header
+  const difficulty = block.header.difficulty;
   let nonce = 0;
   const YIELD_INTERVAL = 5000; // Yield every 5000 iterations
 
@@ -115,6 +122,7 @@ export class MiningCancelledError extends Error {
 export async function mineBlockWithCancel(
   pendingTxs: Tx[],
   chainContext: ChainContext,
+  minerAddress: string,
   shouldCancel: () => boolean,
   onProgress?: (hash: string, nonce: number) => void
 ): Promise<Block> {
@@ -123,13 +131,20 @@ export async function mineBlockWithCancel(
     throw new Error("Cannot mine: no previous block found");
   }
 
+  // Phase 6: Get all blocks for difficulty calculation
+  const allBlocks = chainContext.storage.getAllBlocks();
+
+  // Phase 7: Build candidate block (with coinbase and dynamic difficulty)
   const block = await buildCandidateBlock(
     pendingTxs,
     prevBlock,
-    chainContext.params
+    allBlocks,
+    chainContext.params,
+    minerAddress as any
   );
 
-  const difficulty = chainContext.params.initialDifficulty;
+  // Phase 6: Use dynamic difficulty from block header
+  const difficulty = block.header.difficulty;
   let nonce = 0;
   const YIELD_INTERVAL = 5000;
 

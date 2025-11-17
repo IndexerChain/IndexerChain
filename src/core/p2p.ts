@@ -86,13 +86,30 @@ export class BrowserP2PNode implements P2PNode {
       return;
     }
 
-    // Store bootstrap URL for reference
-
     return new Promise((resolve, reject) => {
       try {
+        // Validate URL
+        if (!bootstrapUrl || (!bootstrapUrl.startsWith("ws://") && !bootstrapUrl.startsWith("wss://"))) {
+          reject(new Error("Invalid WebSocket URL. Must start with ws:// or wss://"));
+          return;
+        }
+
         this.ws = new WebSocket(bootstrapUrl);
 
+        // Set connection timeout (10 seconds)
+        const timeout = setTimeout(() => {
+          if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+            this.ws.close();
+            reject(
+              new Error(
+                `Connection timeout. Please check:\n1. Is the signaling server running?\n2. Is the URL correct? (${bootstrapUrl})\n3. Check firewall/network settings.`
+              )
+            );
+          }
+        }, 10000);
+
         this.ws.onopen = () => {
+          clearTimeout(timeout);
           console.log("Connected to signaling server");
           this.isConnected = true;
 
@@ -118,17 +135,58 @@ export class BrowserP2PNode implements P2PNode {
         };
 
         this.ws.onerror = (error) => {
+          clearTimeout(timeout);
           console.error("WebSocket error:", error);
-          reject(error);
+          const errorMessage =
+            this.ws?.readyState === WebSocket.CONNECTING
+              ? `Failed to connect to signaling server at ${bootstrapUrl}.\n\nPlease ensure:\n1. The signaling server is running\n2. The URL is correct\n3. Check the server logs for errors`
+              : "WebSocket connection error occurred";
+          reject(new Error(errorMessage));
         };
 
-        this.ws.onclose = () => {
-          console.log("Disconnected from signaling server");
+        this.ws.onclose = (event) => {
+          clearTimeout(timeout);
+          console.log("Disconnected from signaling server", event.code, event.reason);
           this.isConnected = false;
           this.ws = null;
+
+          // If connection was closed unexpectedly (not by us), reject the promise
+          if (event.code !== 1000 && event.code !== 1001) {
+            // 1000 = normal closure, 1001 = going away
+            // Other codes indicate an error
+            // 1006 = abnormal closure (server not running, network error, etc.)
+            if (!this.isConnected) {
+              // Only reject if we're not already connected (i.e., during initial connection)
+              let errorMsg = `Connection failed (code: ${event.code}).\n\n`;
+              
+              if (event.code === 1006) {
+                errorMsg += `⚠️ Code 1006: Abnormal closure - The server is likely not running.\n\n`;
+                errorMsg += `📋 To fix this:\n`;
+                errorMsg += `1. Open a terminal/command prompt\n`;
+                errorMsg += `2. Navigate to the project directory\n`;
+                errorMsg += `3. Run: npm install ws\n`;
+                errorMsg += `4. Run: node signaling-server-example.js\n`;
+                errorMsg += `5. Wait for "Signaling server started on ws://localhost:8080"\n`;
+                errorMsg += `6. Then click Connect again\n\n`;
+                errorMsg += `💡 Quick start: Use ./start-server.sh (Mac/Linux) or start-server.bat (Windows)`;
+              } else {
+                errorMsg += `Possible causes:\n`;
+                errorMsg += `1. Signaling server is not running\n`;
+                errorMsg += `2. Network connectivity issues\n`;
+                errorMsg += `3. Server rejected the connection\n`;
+                errorMsg += `4. Firewall blocking the connection`;
+              }
+              
+              reject(new Error(errorMsg));
+            }
+          }
         };
       } catch (error) {
-        reject(error);
+        reject(
+          error instanceof Error
+            ? error
+            : new Error("Failed to create WebSocket connection")
+        );
       }
     });
   }

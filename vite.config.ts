@@ -9,5 +9,8 @@ export default defineConfig({
       "@": "/src",
     },
   },
+  worker: {
+    format: "es", // Use ES modules for workers
+  },
 });
 

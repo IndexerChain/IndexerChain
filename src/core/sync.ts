@@ -34,7 +34,9 @@ export async function handleReceivedBlock(
   // If block is next in sequence, append it
   if (blockHeight === localHeight + 1) {
     const prevBlock = localTip;
-    const verification = await verifyBlock(block, prevBlock);
+    // Phase 6: Get all blocks for difficulty verification
+    const allBlocks = context.storage.getAllBlocks();
+    const verification = await verifyBlock(block, prevBlock, allBlocks, context.params);
     
     if (!verification.valid) {
       return { handled: false, error: verification.error };
@@ -86,8 +88,11 @@ export async function handleReceivedBlocks(
       continue;
     }
 
-    // Verify block
-    const verification = await verifyBlock(block, localTip);
+    // Phase 6: Get all blocks for difficulty verification
+    const allBlocks = context.storage.getAllBlocks();
+    
+    // Verify block (with difficulty verification)
+    const verification = await verifyBlock(block, localTip, allBlocks, context.params);
     if (!verification.valid) {
       return {
         success: false,

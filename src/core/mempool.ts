@@ -1,27 +1,42 @@
 /**
  * Mempool - Pending Transaction Pool
  * 
- * Simple in-memory transaction queue for pending transactions
+ * Phase 5: Added signature verification
  */
 
 import type { Tx } from "./types.js";
+import { verifyTxSignature } from "./signatures.js";
 
 /**
  * Mempool class
- * Simple array-based transaction pool
+ * Simple array-based transaction pool with signature verification
  */
 export class Mempool {
   private txs: Tx[] = [];
 
   /**
    * Add a transaction to the mempool
+   * 
+   * Phase 5: Verifies signature before adding
+   * 
+   * @param tx Transaction to add
+   * @returns true if added successfully, false if invalid or duplicate
    */
-  addTx(tx: Tx): void {
+  async addTx(tx: Tx): Promise<boolean> {
     // Check if transaction already exists
     if (this.txs.some((t) => t.txId === tx.txId)) {
-      return; // Already exists, skip
+      return false; // Already exists
     }
+
+    // Phase 5: Verify signature
+    const isValid = await verifyTxSignature(tx);
+    if (!isValid) {
+      console.warn("Transaction signature verification failed:", tx.txId);
+      return false; // Invalid signature
+    }
+
     this.txs.push(tx);
+    return true;
   }
 
   /**

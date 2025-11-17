@@ -22,17 +22,45 @@ export interface ChainContext {
 }
 
 /**
+ * Check if chain data needs migration (Phase 5 compatibility check)
+ * 
+ * Phase 5: Detects old transaction format (without signatures)
+ * 
+ * @param storage Chain storage
+ * @returns true if migration/reset is needed
+ */
+export function needsMigration(storage: BrowserChainStorage): boolean {
+  const blocks = storage.getAllBlocks();
+  
+  // Check if any transaction is missing Phase 5 fields
+  for (const block of blocks) {
+    for (const tx of block.txs) {
+      // Phase 5 transactions must have ownerAddress, ownerPubKey, and signature
+      if (!("ownerAddress" in tx) || !("ownerPubKey" in tx) || !("signature" in tx)) {
+        return true; // Old format detected
+      }
+    }
+  }
+  
+  return false; // All transactions are in Phase 5 format
+}
+
+/**
  * Initialize the local chain:
  * 1. Load blocks from localStorage
- * 2. If no genesis block exists, create and write it
- * 3. Rebuild IndexState by replaying all blocks
+ * 2. Check for Phase 5 compatibility (migration needed)
+ * 3. If no genesis block exists, create and write it
+ * 4. Rebuild IndexState by replaying all blocks
  * 
  * @param params Chain parameters
- * @returns Chain context with storage, state, and params
+ * @returns Chain context with storage, state, and params, and migration status
  */
-export async function initChain(params: ChainParams): Promise<ChainContext> {
+export async function initChain(params: ChainParams): Promise<ChainContext & { needsReset?: boolean }> {
   const storage = new BrowserChainStorage();
   let blocks = storage.getAllBlocks();
+
+  // Phase 5: Check if migration is needed
+  const needsReset = needsMigration(storage);
 
   // If chain is empty, create genesis block
   if (blocks.length === 0) {
@@ -49,6 +77,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext> {
     storage,
     indexState,
     params,
+    needsReset,
   };
 }
 
@@ -61,7 +90,9 @@ export function getDefaultChainParams(): ChainParams {
     networkId: "indexerchain-dev",
     genesisTimestamp: Math.floor(Date.now() / 1000), // Unix timestamp in seconds
     initialDifficulty: 1,
-    targetBlockTime: 10,
+    targetBlockTime: 10, // Target 10 seconds per block
+    difficultyAdjustmentInterval: 10, // Adjust difficulty every 10 blocks
+    blockReward: 10, // Phase 7: Block reward in IDC
     maxBlockSizeBytes: 1_000_000,
   };
 }
@@ -87,8 +118,11 @@ export async function appendMinedBlock(
   // Get previous block
   const prevBlock = context.storage.getTip();
 
-  // Verify block
-  const verification = await verifyBlock(block, prevBlock);
+  // Phase 6: Get all blocks for difficulty verification
+  const allBlocks = context.storage.getAllBlocks();
+
+  // Verify block (with difficulty verification)
+  const verification = await verifyBlock(block, prevBlock, allBlocks, context.params);
   if (!verification.valid) {
     return { success: false, error: verification.error };
   }
