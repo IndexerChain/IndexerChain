@@ -518,11 +518,61 @@ export class BrowserP2PNode implements P2PNode {
 
   /**
    * Initiate WebRTC connection to a peer
+   * Uses deterministic ordering (nodeId comparison) to prevent both sides from creating offers simultaneously
    */
   private async initiatePeerConnection(peerId: string): Promise<void> {
     if (this.peers.has(peerId)) {
-      console.log(`[P2P] Already have connection to ${peerId.substring(0, 16)}..., skipping`);
+      const existingPeer = this.peers.get(peerId);
+      const state = existingPeer?.connection.signalingState;
+      console.log(`[P2P] Already have connection to ${peerId.substring(0, 16)}... (state: ${state}), skipping`);
       return; // Already connected or connecting
+    }
+
+    // Use deterministic ordering to decide who creates the offer
+    // The node with the "smaller" nodeId creates the offer
+    // This prevents both sides from creating offers simultaneously
+    if (peerId < this.nodeId) {
+      console.log(`[P2P] Peer ${peerId.substring(0, 16)}... has smaller nodeId, waiting for their offer instead of creating one`);
+      // Create connection but don't create offer - wait for the other side
+      const connection = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
+
+      const peerInfo: PeerInfo = {
+        id: peerId,
+        connection,
+        dataChannel: null,
+        connected: false,
+        lastSeen: Date.now(),
+      };
+
+      this.peers.set(peerId, peerInfo);
+
+      // Handle incoming data channel (we're the answerer)
+      connection.ondatachannel = (event) => {
+        this.setupDataChannel(event.channel, peerInfo);
+      };
+
+      // Handle ICE candidates
+      connection.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.sendSignalingMessage({
+            type: "ice-candidate",
+            to: peerId,
+            candidate: event.candidate,
+          });
+        }
+      };
+
+      // Handle connection state changes
+      connection.onconnectionstatechange = () => {
+        console.log(`[P2P] Connection state for ${peerId.substring(0, 16)}...: ${connection.connectionState}`);
+        if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
+          console.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
+        }
+      };
+
+      return; // Don't create offer, wait for the other side
     }
 
     console.log(`[P2P] Creating WebRTC connection to ${peerId.substring(0, 16)}...`);
@@ -647,12 +697,32 @@ export class BrowserP2PNode implements P2PNode {
    */
   private async handleAnswer(from: string, answer: RTCSessionDescriptionInit): Promise<void> {
     const peerInfo = this.peers.get(from);
-    if (peerInfo) {
-      try {
-        await peerInfo.connection.setRemoteDescription(answer);
-      } catch (error) {
-        console.error(`Failed to set remote description for ${from}:`, error);
+    if (!peerInfo) {
+      console.warn(`[P2P] Received answer from unknown peer: ${from.substring(0, 16)}...`);
+      return;
+    }
+
+    try {
+      // Check connection state - if we already have a remote offer, we're the answerer
+      // and shouldn't set this answer (it's for the other direction)
+      const connectionState = peerInfo.connection.signalingState;
+      if (connectionState === "have-remote-offer") {
+        // We're already the answerer (we received an offer and created an answer)
+        // This answer is from the other side, which means they also received our offer
+        // We should ignore this answer since we're already handling the connection from our side
+        console.log(`[P2P] Ignoring answer from ${from.substring(0, 16)}... - we're already the answerer (state: ${connectionState})`);
+        return;
       }
+
+      // We're the offerer, so set the remote answer
+      if (connectionState === "have-local-offer") {
+        await peerInfo.connection.setRemoteDescription(answer);
+        console.log(`[P2P] Set remote answer from ${from.substring(0, 16)}... (state: ${connectionState})`);
+      } else {
+        console.log(`[P2P] Ignoring answer from ${from.substring(0, 16)}... - unexpected state: ${connectionState}`);
+      }
+    } catch (error) {
+      console.error(`[P2P] Failed to set remote description for ${from.substring(0, 16)}...:`, error);
     }
   }
 
