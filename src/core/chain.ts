@@ -640,11 +640,47 @@ export async function appendMinedBlock(
         const { getLocalInstanceCoordinator } = await import("./localInstance.js");
         const coordinator = getLocalInstanceCoordinator();
         if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
+          // Get recent headers (last 100) for fast sync
+          const recentHeaders: any[] = [];
+          let currentBlock = block;
+          for (let i = 0; i < 100 && currentBlock; i++) {
+            recentHeaders.push(currentBlock.header);
+            const prevHash = currentBlock.header.prevHash;
+            if (prevHash) {
+              // Try to get previous block from storage
+              const allBlocks = context.storage.getAllBlocks();
+              const prevBlock = allBlocks.find(b => b.hash === prevHash);
+              if (prevBlock) {
+                currentBlock = prevBlock;
+              } else {
+                break;
+              }
+            } else {
+              break;
+            }
+          }
+          recentHeaders.reverse(); // Oldest to newest
+          
+          // Get latest snapshot meta if available
+          let latestSnapshotMeta = null;
+          try {
+            const { getLatestSnapshotMeta } = await import("./snapshot.js");
+            latestSnapshotMeta = getLatestSnapshotMeta();
+          } catch (error) {
+            // Snapshot not available, continue without it
+          }
+          
+          // Phase 37: Send UPDATE_ROOT_TIP with stateCommitment for verification
           (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", {
             header: block.header,
             headerHash: block.hash,
+            latestHeight: block.header.height,
+            recentHeaders: recentHeaders,
+            latestSnapshotMeta: latestSnapshotMeta,
+            stateCommitment: block.header.stateCommitment, // Phase 37: Include stateCommitment for Worker verification
+            // Note: finalityCert can be added here if available from finalityManager
           });
-          console.log(`[Phase 32] Updated root tip on signal server: height=${block.header.height}`);
+          console.log(`[Phase 32] Updated root tip on signal server: height=${block.header.height}, recentHeaders=${recentHeaders.length}, hasSnapshot=${!!latestSnapshotMeta}`);
         }
       }
     }

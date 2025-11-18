@@ -62,6 +62,15 @@ import { useI18n } from "../i18n/useI18n.js";
 import { getLocalInstanceCoordinator, type LocalInstanceRole, type LeaderInfo } from "../core/localInstance.js";
 import { getLocalStateCoordinator } from "../core/localStateCoordinator.js";
 import { NetworkHealthPanel } from "./network/NetworkHealthPanel.js";
+import { MiningMainCard } from "./mining/MiningMainCard.js";
+import { MiningModeSelector } from "./mining/MiningModeSelector.js";
+import { MiningAdvancedPanel } from "./mining/MiningAdvancedPanel.js";
+import { MiningReadinessChipList } from "./mining/MiningReadinessChipList.js";
+import { MiningWarningsPanel } from "./mining/MiningWarningsPanel.js";
+import { MiningLiveStatsCard } from "./mining/MiningLiveStatsCard.js";
+import { MiningOnboardingDialog } from "./mining/MiningOnboardingDialog.js";
+import { QuickStatusDashboard } from "./components/QuickStatusDashboard.js";
+import { AccordionCard } from "./components/AccordionCard.js";
 import "./index.css";
 
 /**
@@ -91,8 +100,7 @@ function App() {
   
   const [isMining, setIsMining] = useState<boolean>(persistedState.isMining ?? false);
   const [loading, setLoading] = useState<boolean>(true);
-  const [miningHash, setMiningHash] = useState<string>("");
-  const [miningNonce, setMiningNonce] = useState<number>(0);
+  // Removed unused state: miningHash, miningNonce (replaced by MiningLiveStatsCard)
   const [error, setError] = useState<string>("");
   const [successMessage, setSuccessMessage] = useState<string>(""); // Success message for transfers
   // Phase 17: Support mainnet mode (default) and dev mode
@@ -131,6 +139,22 @@ function App() {
   // Phase 18: Cluster mining
   const [minerCluster] = useState(() => new MinerCluster());
   const [clusterMining, setClusterMining] = useState<boolean>(persistedState.clusterMining ?? false);
+  
+  // Phase 38: Mining UX state
+  const [miningMode, setMiningMode] = useState<"solo" | "cluster" | "global-pool">(() => {
+    if (persistedState.globalPoolEnabled) return "global-pool";
+    if (persistedState.clusterMining) return "cluster";
+    return "solo";
+  });
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("mining_onboarding_completed") === "true";
+    } catch {
+      return false;
+    }
+  });
   
   // Phase 26: Runtime Manager
   const [runtimeManager] = useState(() => {
@@ -225,14 +249,8 @@ function App() {
     const nodeId = getOrCreateBrowserNodeId();
     return new WorkerNodeManager(nodeId);
   });
-  const [isDelegator, setIsDelegator] = useState<boolean>(false);
+  // Removed unused state: isDelegator, delegatorStats (moved to advanced settings)
   const [globalPoolEnabled, setGlobalPoolEnabled] = useState<boolean>(false);
-  const [delegatorStats, setDelegatorStats] = useState<{
-    totalAllocated: number;
-    activeRanges: number;
-    globalPointer: bigint;
-    totalNodes: number;
-  } | null>(null);
 
   // Phase 20: Global Snapshot Network
   const [snapshotDownloader] = useState(() => new SnapshotDownloader());
@@ -1335,6 +1353,15 @@ function App() {
         recentHeadersCount: payload.recentHeaders?.length || 0
       });
       
+      // Phase 37: Store rootTip info for debug overlay
+      if (typeof window !== "undefined" && payload.latestHeight > 0) {
+        (window as any).lastRootTipHeight = payload.latestHeight;
+        (window as any).lastRootTipHash = payload.latestHeaderHash || "";
+        (window as any).lastBootstrapResponseTime = Date.now();
+        (window as any).lastRootTipTrustLevel = payload.trustLevel || 'root-only';
+        (window as any).lastRootTipStateCommitment = payload.stateCommitment || null;
+      }
+      
       if (!chainContext) {
         console.warn(`[Phase 32] No chainContext available, ignoring BOOTSTRAP_RESPONSE`);
         return;
@@ -1419,16 +1446,31 @@ function App() {
             console.warn(`[Phase 32] Bootstrap response has invalid network height (${networkHeight}), not updating sync status`);
           }
           
-          // If we need to sync, trigger block requests
-          if (result.synced && result.newHeight) {
+          // Phase 37: If we need to sync, trigger block requests immediately
+          // This ensures we actually request blocks even if peers=0 (they'll be requested when peers connect)
+          if (result.synced && result.newHeight && result.newHeight > localHeight) {
             const heightDiff = result.newHeight - localHeight;
             
-            if (heightDiff > 0) {
-              console.log(`[Phase 32] Requesting ${heightDiff} blocks to sync to height ${result.newHeight}`);
+            console.log(`[Phase 32] Bootstrap indicates we need to sync: ${heightDiff} blocks behind (local: ${localHeight}, target: ${result.newHeight})`);
+            
+            // Request blocks via P2P (if we have peers)
+            const peerCount = p2p.getPeerCount();
+            if (peerCount > 0) {
+              console.log(`[Phase 32] Requesting ${heightDiff} blocks from ${peerCount} peer(s) to sync to height ${result.newHeight}`);
               p2p.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: result.newHeight,
               });
+            } else {
+              // Store request for when peers connect
+              console.log(`[Phase 32] No peers yet, storing block request for when peers connect`);
+              if (typeof window !== "undefined") {
+                (window as any).pendingBootstrapBlockRequest = {
+                  fromHeight: localHeight + 1,
+                  toHeight: result.newHeight,
+                  requestedAt: Date.now(),
+                };
+              }
             }
           }
           
@@ -1456,22 +1498,102 @@ function App() {
     p2p.onMessage("ROOT_TIP_UPDATE", async (payload: any, _sender: string) => {
       if (!chainContext) return;
       
+      // Handle both old format (payload.latestHeight) and new format (payload.rootTip)
+      const rootTip = payload.rootTip || payload;
+      const rootHeight = rootTip.latestHeight || payload.latestHeight || 0;
+      const rootHeader = rootTip.latestHeader || payload.latestHeader;
+      const rootHeaderHash = rootTip.latestHeaderHash || payload.latestHeaderHash;
+      const recentHeaders = rootTip.recentHeaders || payload.recentHeaders;
+      const snapshotMeta = rootTip.latestSnapshotMeta || payload.latestSnapshotMeta;
+      
       const localTip = chainContext.storage.getTip();
       const localHeight = localTip?.header.height ?? -1;
-      const rootHeight = payload.latestHeight || 0;
       
-      console.log(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}`);
+      console.log(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
       
-      // If we're behind, trigger sync
+      // Phase 37: Store rootTip info for debug overlay
+      if (typeof window !== "undefined" && rootHeight > 0) {
+        (window as any).lastRootTipHeight = rootHeight;
+        (window as any).lastRootTipHash = rootHeaderHash || "";
+        (window as any).lastBootstrapResponseTime = Date.now();
+        (window as any).lastRootTipTrustLevel = rootTip.trustLevel || payload.trustLevel || 'root-only';
+        (window as any).lastRootTipStateCommitment = rootTip.stateCommitment || payload.stateCommitment || null;
+      }
+      
+      // Use BootstrapSyncManager to handle the update
+      if (rootHeight > 0 && rootHeader && rootHeaderHash) {
+        try {
+          const { BootstrapSyncManager } = await import("../core/bootstrapSync.js");
+          const bootstrapManager = new BootstrapSyncManager(chainContext);
+          
+          // Convert to BootstrapResponse format
+          const bootstrapResponse = {
+            requestId: `root_tip_update_${Date.now()}`,
+            latestHeight: rootHeight,
+            latestHeader: rootHeader,
+            latestHeaderHash: rootHeaderHash,
+            recentHeaders: recentHeaders,
+            latestSnapshotMeta: snapshotMeta,
+            timestamp: Date.now(),
+          };
+          
+          const result = await bootstrapManager.processBootstrapResponse(bootstrapResponse);
+          if (result.success) {
+            console.log(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE: ${result.actions.join(", ")}`);
+            if (result.newHeight) {
+              console.log(`[Phase 32] Synced to height ${result.newHeight}`);
+            }
+            // Phase 37: Mark bootstrap as complete after successful sync
+            setBootstrapComplete(true);
+            console.log(`[Phase 37] Bootstrap sync from ROOT_TIP_UPDATE successful, marking bootstrapComplete=true`);
+          } else {
+            console.warn(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE failed: ${result.error}`);
+          }
+        } catch (error) {
+          console.error(`[Phase 32] Error processing ROOT_TIP_UPDATE:`, error);
+        }
+      }
+      
+      // Also trigger block request if we're still behind (fallback)
       if (rootHeight > localHeight) {
         const heightDiff = rootHeight - localHeight;
-        console.log(`[Phase 32] Root tip update: behind by ${heightDiff} blocks, requesting sync`);
-        p2p.broadcast("REQUEST_BLOCKS", {
-          fromHeight: localHeight + 1,
-          toHeight: rootHeight,
-        });
+        if (heightDiff > 200) { // Only request if significantly behind
+          console.log(`[Phase 32] Root tip update: behind by ${heightDiff} blocks, requesting sync`);
+          p2p.broadcast("REQUEST_BLOCKS", {
+            fromHeight: localHeight + 1,
+            toHeight: rootHeight,
+          });
+        }
       }
     });
+
+    // Phase 37: Handle peer-connected event to execute pending block requests
+    if (typeof window !== "undefined") {
+      window.addEventListener("peer-connected", (event: any) => {
+        const { peerCount } = event.detail || {};
+        console.log(`[Phase 37] Peer connected event: peerCount=${peerCount}`);
+        
+        // Execute pending bootstrap block request if we have one
+        const pendingRequest = (window as any).pendingBootstrapBlockRequest;
+        if (pendingRequest && peerCount > 0) {
+          const { fromHeight, toHeight, requestedAt } = pendingRequest;
+          const age = Date.now() - requestedAt;
+          
+          // Only execute if request is recent (< 5 minutes)
+          if (age < 300000) {
+            console.log(`[Phase 37] Executing pending bootstrap block request: ${fromHeight} to ${toHeight} (age: ${Math.round(age / 1000)}s)`);
+            p2p.broadcast("REQUEST_BLOCKS", {
+              fromHeight,
+              toHeight,
+            });
+            delete (window as any).pendingBootstrapBlockRequest;
+          } else {
+            console.log(`[Phase 37] Pending bootstrap block request expired (age: ${Math.round(age / 1000)}s), removing`);
+            delete (window as any).pendingBootstrapBlockRequest;
+          }
+        }
+      });
+    }
 
     // Phase 30: Handle NETWORK_HANDSHAKE
     p2p.onMessage("NETWORK_HANDSHAKE", async (payload: { networkId: string; genesisHash: string; chainParamsHash: string }, sender: string) => {
@@ -1783,21 +1905,14 @@ function App() {
       // Setup delegator change handler
       if (delegatorManager) {
         let delegatorStatsInterval: ReturnType<typeof setInterval> | null = null;
-        delegatorManager.onDelegatorChange((isDelegator) => {
-          setIsDelegator(isDelegator);
+        delegatorManager.onDelegatorChange((_isDelegator) => {
+          // Removed: setIsDelegator, setDelegatorStats (moved to advanced settings)
           // Clear previous interval if exists
           if (delegatorStatsInterval) {
             clearInterval(delegatorStatsInterval);
             delegatorStatsInterval = null;
           }
-          if (isDelegator && delegatorManager) {
-            // Update stats periodically
-            const updateStats = () => {
-              setDelegatorStats(delegatorManager.getStats());
-            };
-            delegatorStatsInterval = setInterval(updateStats, 2000);
-            updateStats();
-          }
+          // Removed: delegator stats update (moved to advanced settings)
         });
         // Store interval for cleanup
         (p2pNode as any).delegatorStatsInterval = delegatorStatsInterval;
@@ -2218,8 +2333,15 @@ function App() {
   // Phase 18: Start cluster mining
   // Phase 27: Check if this instance can mine (must be LEADER)
   // Phase 30: Add mining guard checks
+  // Phase 38: Check onboarding before starting
   const handleStartClusterMining = async () => {
     if (!chainContext) return;
+    
+    // Phase 38: Check onboarding for first-time users
+    if (!onboardingCompleted && !isMining && !clusterMining) {
+      setShowOnboarding(true);
+      return;
+    }
     
     // Prevent multiple simultaneous starts
     if (isClusterRestartingRef.current && clusterMining) {
@@ -2581,8 +2703,15 @@ function App() {
   // Phase 8: Start mining using Worker (single worker mode)
   // Phase 27: Check if this instance can mine (must be LEADER)
   // Phase 30: Add mining guard checks
+  // Phase 38: Check onboarding before starting
   const handleStartMining = async () => {
     if (!chainContext) return;
+    
+    // Phase 38: Check onboarding for first-time users
+    if (!onboardingCompleted && !isMining && !clusterMining) {
+      setShowOnboarding(true);
+      return;
+    }
     
     // Phase 27: Only LEADER can mine
     if (!localCoordinator.canMine()) {
@@ -2652,8 +2781,7 @@ function App() {
 
       setIsMining(true);
       setError("");
-      setMiningHash("");
-      setMiningNonce(0);
+      // Removed: setMiningHash, setMiningNonce (replaced by MiningLiveStatsCard)
       setMiningStats({ hashesTried: 0, hashRate: null, elapsedTime: 0 });
 
       // Phase 8: Start mining with Worker
@@ -2664,8 +2792,7 @@ function App() {
         dutyCycle: dutyCycle, // Phase 26: Use runtime manager duty cycle
         onProgress: (event) => {
           // Use functional updates to ensure we're using the latest state
-          setMiningHash(() => event.hash);
-          setMiningNonce(() => event.nonce);
+          // Removed: setMiningHash, setMiningNonce (replaced by MiningLiveStatsCard)
           const elapsed = (Date.now() - event.startedAt) / 1000;
           const hashRate = elapsed > 0 ? event.hashesTried / elapsed : null;
           setMiningStats(() => ({
@@ -2746,8 +2873,7 @@ function App() {
           }
 
           setIsMining(false);
-          setMiningHash("");
-          setMiningNonce(0);
+          // Removed: setMiningHash, setMiningNonce (replaced by MiningLiveStatsCard)
           
           // Phase 31: Stop mining epoch
           if (antiInvalidMining) {
@@ -3221,6 +3347,7 @@ function App() {
         {/* Tab Navigation */}
         <div className="tab-container">
           <div className="tab-nav">
+            {/* P0-3: Core Tabs (Most Used) */}
             <button
               className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
               onClick={(e) => {
@@ -3231,15 +3358,6 @@ function App() {
               {t("tabs.overview")}
             </button>
             <button
-              className={`tab-button ${activeTab === "wallet" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("wallet");
-              }}
-            >
-              {t("tabs.wallet")}
-            </button>
-            <button
               className={`tab-button ${activeTab === "mining" ? "active" : ""}`}
               onClick={(e) => {
                 e.preventDefault();
@@ -3247,6 +3365,15 @@ function App() {
               }}
             >
               {t("tabs.mining")}
+            </button>
+            <button
+              className={`tab-button ${activeTab === "wallet" ? "active" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("wallet");
+              }}
+            >
+              {t("tabs.wallet")}
             </button>
             <button
               className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
@@ -3266,6 +3393,13 @@ function App() {
             >
               {t("tabs.network")}
             </button>
+            
+            {/* P1-1: Advanced Tabs (Less Used) */}
+            <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <span style={{ fontSize: "0.75rem", color: "#999", marginRight: "0.5rem" }}>
+                {locale === "zh" ? "高级" : "Advanced"}
+              </span>
+            </div>
             <button
               className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
               onClick={(e) => {
@@ -3313,57 +3447,87 @@ function App() {
             </button>
           </div>
 
-          {/* Overview Tab */}
+          {/* Overview Tab - P0-2: Simplified with Quick Status Dashboard */}
           {activeTab === "overview" && (
             <div className="tab-content active">
-              {/* Phase 30: Global Consistency Sentinel Panel */}
-              {chainContext && chainContext.params.globalSentinelEnabled !== false && (
-                <GlobalSentinelPanel
-                  assessment={driftAssessment}
-                  onReassess={() => {
-                    if (globalSentinel) {
-                      // Trigger immediate drift check
-                      globalSentinel.performDriftCheck();
-                    }
-                  }}
-                  onSyncFromSnapshot={async () => {
-                    if (!chainContext) return;
-                    try {
-                      setError("");
-                      // Use remote snapshot sync if available
-                      if (chainContext.params.remoteSnapshotEnabled) {
-                        const { syncFromRemoteSnapshot } = await import("../core/remoteSnapshot.js");
-                        await syncFromRemoteSnapshot(chainContext.params, chainContext.storage);
-                        setError("✅ Syncing from remote snapshot...");
-                        setTimeout(() => window.location.reload(), 2000);
-                      } else {
-                        setError("Remote snapshot sync is not enabled. Please enable it in chain parameters.");
-                      }
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "Failed to sync from snapshot");
-                    }
-                  }}
-                  onStopMining={() => {
-                    if (isMining) handleStopMining();
-                    if (clusterMining) handleStopClusterMining();
-                    if (autoMining) setAutoMining(false);
-                    setError("✅ Mining stopped due to critical drift");
-                    setTimeout(() => setError(""), 3000);
-                  }}
-                  locale={locale}
-                />
-              )}
-              
-              {/* Phase 34: Network Health Dashboard */}
+              {/* P0-2: Quick Status Dashboard */}
               {chainContext && (
-                <NetworkHealthPanel
+                <QuickStatusDashboard
                   chainContext={chainContext}
                   p2pNode={chainContext?.p2p || null}
-                  finalityManager={finalityManager}
+                  isP2PConnected={isP2PConnected}
+                  peerCount={peerCount}
+                  nodeAddress={nodeAddress}
+                  isMining={isMining}
+                  clusterMining={clusterMining}
+                  miningGuardResult={miningGuardResult}
                   localRole={localCoordinator.getRole()}
-                  bootstrapComplete={bootstrapComplete}
+                  height={height}
                   locale={locale}
+                  onQuickAction={(action) => {
+                    setActiveTab(action);
+                  }}
                 />
+              )}
+
+              {/* Phase 30: Global Consistency Sentinel Panel - Collapsed by default */}
+              {chainContext && chainContext.params.globalSentinelEnabled !== false && (
+                <AccordionCard
+                  title={locale === "zh" ? "🔍 全局一致性监控" : "🔍 Global Consistency Sentinel"}
+                  defaultExpanded={false}
+                  locale={locale}
+                >
+                  <GlobalSentinelPanel
+                    assessment={driftAssessment}
+                    onReassess={() => {
+                      if (globalSentinel) {
+                        globalSentinel.performDriftCheck();
+                      }
+                    }}
+                    onSyncFromSnapshot={async () => {
+                      if (!chainContext) return;
+                      try {
+                        setError("");
+                        if (chainContext.params.remoteSnapshotEnabled) {
+                          const { syncFromRemoteSnapshot } = await import("../core/remoteSnapshot.js");
+                          await syncFromRemoteSnapshot(chainContext.params, chainContext.storage);
+                          setError("✅ Syncing from remote snapshot...");
+                          setTimeout(() => window.location.reload(), 2000);
+                        } else {
+                          setError("Remote snapshot sync is not enabled. Please enable it in chain parameters.");
+                        }
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to sync from snapshot");
+                      }
+                    }}
+                    onStopMining={() => {
+                      if (isMining) handleStopMining();
+                      if (clusterMining) handleStopClusterMining();
+                      if (autoMining) setAutoMining(false);
+                      setError("✅ Mining stopped due to critical drift");
+                      setTimeout(() => setError(""), 3000);
+                    }}
+                    locale={locale}
+                  />
+                </AccordionCard>
+              )}
+              
+              {/* Phase 34: Network Health Dashboard - Collapsed by default */}
+              {chainContext && (
+                <AccordionCard
+                  title={locale === "zh" ? "🌐 网络健康状态" : "🌐 Network Health"}
+                  defaultExpanded={false}
+                  locale={locale}
+                >
+                  <NetworkHealthPanel
+                    chainContext={chainContext}
+                    p2pNode={chainContext?.p2p || null}
+                    finalityManager={finalityManager}
+                    localRole={localCoordinator.getRole()}
+                    bootstrapComplete={bootstrapComplete}
+                    locale={locale}
+                  />
+                </AccordionCard>
               )}
 
               {/* Quick Start Guide - Only show when not fully set up and not auto-connecting */}
@@ -4135,6 +4299,397 @@ function App() {
           {/* Mining Tab */}
           {activeTab === "mining" && (
             <div className="tab-content active">
+              {/* Phase 38: Mining UX & Onboarding */}
+              {/* Phase 38-E: Network Stage & Cold Start Banner */}
+              {chainContext && bootstrapComplete && peerCount === 0 && (
+                <div
+                  className="status-card"
+                  style={{
+                    marginBottom: "1.5rem",
+                    background: "rgba(255, 193, 7, 0.1)",
+                    border: "2px solid #ffc107",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+                    <span style={{ fontSize: "1.5rem" }}>⚠️</span>
+                    <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#856404" }}>
+                      {locale === "zh" ? "冷启动模式" : "Cold Start Mode"}
+                    </h3>
+                  </div>
+                  <div style={{ fontSize: "0.9rem", color: "#856404" }}>
+                    {locale === "zh"
+                      ? "网络处于冷启动阶段：只有少数矿工在线。你的区块仍然有效，但安全性低于成熟阶段。"
+                      : "Network is in Cold Start: only a few miners online. Your blocks are still valid but security is lower than mature phase."}
+                  </div>
+                </div>
+              )}
+
+              {/* Phase 38-E: Mainnet Mature Stage Requirements */}
+              {chainContext &&
+                chainContext.params?.networkId === "IXC_MAINNET_V1" &&
+                miningGuardResult &&
+                !miningGuardResult.ok &&
+                miningGuardResult.code !== "NOT_FINALIZED" && (
+                  <div
+                    className="status-card"
+                    style={{
+                      marginBottom: "1.5rem",
+                      background: "rgba(220, 53, 69, 0.1)",
+                      border: "2px solid #dc3545",
+                    }}
+                  >
+                    <h3 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.1rem", color: "#721c24" }}>
+                      {locale === "zh" ? "🚫 主网准入规则" : "🚫 Mainnet Admission Rules"}
+                    </h3>
+                    <div style={{ fontSize: "0.9rem", color: "#721c24" }}>
+                      {locale === "zh" ? "以下规则未通过：" : "The following rules are not met:"}
+                    </div>
+                    <ul style={{ marginTop: "0.5rem", paddingLeft: "1.5rem", fontSize: "0.85rem", color: "#721c24" }}>
+                      {miningGuardResult.details?.peerCount !== undefined &&
+                        miningGuardResult.details?.requiredPeers !== undefined && (
+                          <li>
+                            {locale === "zh"
+                              ? `规则 1: 需要至少 ${miningGuardResult.details.requiredPeers} 个独立 IP (当前: ${miningGuardResult.details.peerCount})`
+                              : `Rule 1: At least ${miningGuardResult.details.requiredPeers} independent IPs required (current: ${miningGuardResult.details.peerCount})`}
+                          </li>
+                        )}
+                      {miningGuardResult.details?.quorumScore !== undefined &&
+                        miningGuardResult.details?.requiredQuorumScore !== undefined && (
+                          <li>
+                            {locale === "zh"
+                              ? `规则 2: Quorum 分数需要 ≥ ${miningGuardResult.details.requiredQuorumScore} (当前: ${miningGuardResult.details.quorumScore})`
+                              : `Rule 2: Quorum score must be ≥ ${miningGuardResult.details.requiredQuorumScore} (current: ${miningGuardResult.details.quorumScore})`}
+                          </li>
+                        )}
+                      {miningGuardResult.details?.independentPeerCount !== undefined &&
+                        miningGuardResult.details?.requiredIndependentPeers !== undefined && (
+                          <li>
+                            {locale === "zh"
+                              ? `规则 3: 需要至少 ${miningGuardResult.details.requiredIndependentPeers} 个独立节点 (当前: ${miningGuardResult.details.independentPeerCount})`
+                              : `Rule 3: At least ${miningGuardResult.details.requiredIndependentPeers} independent peers required (current: ${miningGuardResult.details.independentPeerCount})`}
+                          </li>
+                        )}
+                      {localRole === "FOLLOWER" && (
+                        <li>
+                          {locale === "zh"
+                            ? "规则 4: 只有 LEADER 标签页可以在主网挖矿"
+                            : "Rule 4: Only LEADER tab can mine on mainnet"}
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+              {/* Phase 38-E: Follower Mode Warning */}
+              {chainContext &&
+                chainContext.params?.networkId === "IXC_MAINNET_V1" &&
+                localRole === "FOLLOWER" && (
+                  <div
+                    className="status-card"
+                    style={{
+                      marginBottom: "1.5rem",
+                      background: "rgba(23, 162, 184, 0.1)",
+                      border: "2px solid #17a2b8",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+                      <span style={{ fontSize: "1.5rem" }}>ℹ️</span>
+                      <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#0c5460" }}>
+                        {locale === "zh" ? "FOLLOWER 模式" : "FOLLOWER Mode"}
+                      </h3>
+                    </div>
+                    <div style={{ fontSize: "0.9rem", color: "#0c5460", marginBottom: "0.5rem" }}>
+                      {locale === "zh"
+                        ? "此标签页是 FOLLOWER。只有本机的 LEADER 标签页可以在主网挖矿。"
+                        : "This tab is FOLLOWER. Only the LEADER tab on this machine can mine on mainnet."}
+                    </div>
+                    <div style={{ fontSize: "0.85rem", color: "#0c5460" }}>
+                      {locale === "zh"
+                        ? "提示：关闭其他标签页后刷新本页，或找到 LEADER 标签页进行挖矿。"
+                        : "Tip: Close other tabs and refresh this page, or find the LEADER tab to mine."}
+                    </div>
+                  </div>
+                )}
+
+              {/* Mining Main Card - Top-level control */}
+              {chainContext && (
+                <>
+                  <MiningMainCard
+                    chainContext={chainContext}
+                    p2pNode={p2pNodeRef.current}
+                    finalityManager={finalityManager}
+                    localRole={localRole}
+                    bootstrapComplete={bootstrapComplete}
+                    nodeAddress={nodeAddress}
+                    isMining={isMining}
+                    clusterMining={clusterMining}
+                    miningMode={miningMode}
+                    onStartMining={() => {
+                      // Check if first time - show onboarding
+                      if (!onboardingCompleted && !isMining && !clusterMining) {
+                        setShowOnboarding(true);
+                        return;
+                      }
+                      
+                      if (miningMode === "global-pool") {
+                        // Global pool mode - handled separately
+                        if (!globalPoolEnabled) {
+                          setGlobalPoolEnabled(true);
+                        }
+                        return;
+                      } else if (miningMode === "cluster" || clusterWorkerCount > 1) {
+                        handleStartClusterMining();
+                      } else {
+                        handleStartMining();
+                      }
+                    }}
+                    onStopMining={() => {
+                      if (clusterMining) {
+                        handleStopClusterMining();
+                      } else {
+                        handleStopMining();
+                      }
+                    }}
+                    locale={locale}
+                  />
+
+                  {/* Phase 38: Live Stats Card */}
+                  {(isMining || clusterMining) && tip && (
+                    <MiningLiveStatsCard
+                      miningMode={miningMode}
+                      currentHeight={tip.header.height}
+                      tipHash={tip.hash}
+                      totalHashRate={clusterMining ? (clusterStats.totalHashRate || 0) : (miningStats.hashRate || 0)}
+                      blocksMined={_miningEffectiveness?.totalBlocksMined || 0}
+                      blocksAccepted={_miningEffectiveness?.acceptedBlocks || 0}
+                      blocksRejected={_miningEffectiveness?.rejectedBlocks || 0}
+                      locale={locale}
+                    />
+                  )}
+
+                  {/* Phase 38: Advanced Settings Toggle */}
+                  <div style={{ marginBottom: "1rem" }}>
+                    <button
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      style={{
+                        padding: "0.75rem 1.5rem",
+                        background: showAdvanced ? "#667eea" : "white",
+                        color: showAdvanced ? "white" : "#667eea",
+                        border: "1px solid #667eea",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        fontSize: "0.9rem",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {showAdvanced
+                        ? (locale === "zh" ? "▼ 隐藏高级设置" : "▼ Hide Advanced Settings")
+                        : (locale === "zh" ? "▶ 显示高级设置" : "▶ Show Advanced Settings")}
+                    </button>
+                  </div>
+
+                  {/* Phase 38: Advanced Settings Panel */}
+                  {showAdvanced && chainContext && (
+                    <div className="status-card" style={{ marginBottom: "1.5rem" }}>
+                      <h2 style={{ marginBottom: "1.5rem" }}>
+                        {locale === "zh" ? "⚙️ 高级设置" : "⚙️ Advanced Settings"}
+                      </h2>
+
+                      {/* Mining Mode Selector */}
+                      <MiningModeSelector
+                        miningMode={miningMode}
+                        onModeChange={(mode) => {
+                          setMiningMode(mode);
+                          if (mode === "global-pool") {
+                            setGlobalPoolEnabled(true);
+                          } else if (mode === "cluster") {
+                            // Ensure cluster worker count is set
+                            if (clusterWorkerCount <= 1) {
+                              setClusterWorkerCount(runtimeManager?.getDeviceCapability().recommendedWorkers || 4);
+                            }
+                          }
+                        }}
+                        isFollower={localRole === "FOLLOWER"}
+                        canUseGlobalPool={miningGuardResult?.ok && (miningGuardResult.details?.quorumScore || 0) >= 200}
+                        globalPoolReason={
+                          miningGuardResult?.ok && (miningGuardResult.details?.quorumScore || 0) < 200
+                            ? (locale === "zh"
+                                ? `需要 Quorum 分数 ≥ 200 (当前: ${miningGuardResult.details?.quorumScore || 0})`
+                                : `Requires Quorum score ≥ 200 (current: ${miningGuardResult.details?.quorumScore || 0})`)
+                            : undefined
+                        }
+                        locale={locale}
+                      />
+
+                      {/* Performance Presets */}
+                      {runtimeManager && (
+                        <MiningAdvancedPanel
+                          currentProfile={runtimeManager.getRecommendedProfile()}
+                          onProfileChange={(profile) => {
+                            // Apply profile to runtime manager and cluster
+                            if (runtimeManager) {
+                              runtimeManager.updateConfig({
+                                maxWorkers: profile.workerCount,
+                                dutyCycle: profile.dutyCycle,
+                              });
+                            }
+                            setClusterWorkerCount(profile.workerCount);
+                            // If mining, restart with new settings
+                            if (clusterMining) {
+                              handleStopClusterMining();
+                              setTimeout(() => {
+                                handleStartClusterMining();
+                              }, 500);
+                            }
+                          }}
+                          onCustomConfig={(workerCount, dutyCycle) => {
+                            if (runtimeManager) {
+                              runtimeManager.updateConfig({
+                                maxWorkers: workerCount,
+                                dutyCycle: dutyCycle,
+                              });
+                            }
+                            setClusterWorkerCount(workerCount);
+                            if (clusterMining) {
+                              handleStopClusterMining();
+                              setTimeout(() => {
+                                handleStartClusterMining();
+                              }, 500);
+                            }
+                          }}
+                          deviceCapability={runtimeManager.getDeviceCapability()}
+                          locale={locale}
+                        />
+                      )}
+
+                      {/* Mining Readiness Chips */}
+                      {miningGuardResult && (
+                        <MiningReadinessChipList
+                          readinessInfo={{
+                            bootstrapCompleted: bootstrapComplete,
+                            quorumScore: miningGuardResult.details?.quorumScore,
+                            threshold: miningGuardResult.details?.requiredQuorumScore || 80,
+                            uniquePeers: miningGuardResult.details?.independentPeerCount || 0,
+                            localRole: localRole,
+                            details: {
+                              syncStatus: miningGuardResult.code === "NOT_SYNCED" ? "syncing" : "synced",
+                              behindBy: miningGuardResult.details?.heightDiff || 0,
+                            },
+                          }}
+                          onShowDetails={() => {
+                            setActiveTab("network");
+                          }}
+                          locale={locale}
+                        />
+                      )}
+
+                      {/* Warnings Panel */}
+                      <MiningWarningsPanel
+                        warnings={(() => {
+                          const warnings: Array<{
+                            type: "error" | "warning" | "info";
+                            message: string;
+                            source: "MiningGuard" | "MinerCluster" | "RuntimeManager";
+                          }> = [];
+
+                          // MiningGuard warnings
+                          if (miningGuardResult && !miningGuardResult.ok) {
+                            warnings.push({
+                              type: "error",
+                              message: miningGuardResult.reason || (locale === "zh" ? "无法挖矿" : "Cannot mine"),
+                              source: "MiningGuard",
+                            });
+                          }
+
+                          // RuntimeManager warnings
+                          if (runtimeManager) {
+                            const metrics = runtimeManager.getPerformanceMetrics();
+                            if (metrics.eventLoopLag > 200) {
+                              warnings.push({
+                                type: "warning",
+                                message: locale === "zh"
+                                  ? `事件循环延迟: ${metrics.eventLoopLag.toFixed(1)}ms`
+                                  : `Event loop lag: ${metrics.eventLoopLag.toFixed(1)}ms`,
+                                source: "RuntimeManager",
+                              });
+                            }
+                            if (metrics.fps < 20) {
+                              warnings.push({
+                                type: "warning",
+                                message: locale === "zh" ? `低 FPS: ${metrics.fps}` : `Low FPS: ${metrics.fps}`,
+                                source: "RuntimeManager",
+                              });
+                            }
+                            if (metrics.workerCrashes > 3) {
+                              warnings.push({
+                                type: "warning",
+                                message:
+                                  locale === "zh"
+                                    ? `Worker 崩溃频率高: ${metrics.workerCrashes} 次/分钟`
+                                    : `High crash rate: ${metrics.workerCrashes} crashes/min`,
+                                source: "RuntimeManager",
+                              });
+                            }
+                          }
+
+                          // MinerCluster warnings
+                          if (clusterMining && clusterStats.workers) {
+                            const errorWorkers = clusterStats.workers.filter((w) => w.status === "error").length;
+                            if (errorWorkers > 0) {
+                              warnings.push({
+                                type: "warning",
+                                message:
+                                  locale === "zh"
+                                    ? `${errorWorkers} 个 Worker 出现错误，正在自动恢复`
+                                    : `${errorWorkers} workers have errors, auto-recovering`,
+                                source: "MinerCluster",
+                              });
+                            }
+                          }
+
+                          return warnings;
+                        })()}
+                        locale={locale}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Phase 38: Onboarding Dialog */}
+              {showOnboarding && runtimeManager && (
+                <MiningOnboardingDialog
+                  deviceCapability={runtimeManager.getDeviceCapability()}
+                  onComplete={async (profile, dontShowAgain) => {
+                    setShowOnboarding(false);
+                    if (dontShowAgain) {
+                      localStorage.setItem("mining_onboarding_completed", "true");
+                      setOnboardingCompleted(true);
+                    }
+                    
+                    // Apply profile
+                    if (runtimeManager) {
+                      runtimeManager.updateConfig({
+                        maxWorkers: profile.workerCount,
+                        dutyCycle: profile.dutyCycle,
+                      });
+                    }
+                    setClusterWorkerCount(profile.workerCount);
+                    
+                    // Start mining based on mode
+                    if (miningMode === "cluster" || profile.workerCount > 1) {
+                      setTimeout(() => handleStartClusterMining(), 500);
+                    } else {
+                      setTimeout(() => handleStartMining(), 500);
+                    }
+                  }}
+                  onCancel={() => {
+                    setShowOnboarding(false);
+                  }}
+                  locale={locale}
+                />
+              )}
+
               {/* Phase 30: Mining Effectiveness Stats */}
               {_miningEffectiveness && _miningEffectiveness.totalBlocksMined > 0 && (() => {
                 const stats = _miningEffectiveness;
@@ -4196,584 +4751,8 @@ function App() {
                 return null;
               })()}
               
-              {/* Mining Guide */}
-              {!isMining && !clusterMining && (
-                <div className="status-card" style={{ 
-                  background: "#e7f3ff",
-                  border: "2px solid #667eea",
-                  marginBottom: "1.5rem"
-                }}>
-                  <h2 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("mining.guide")}</h2>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                    <div>
-                      <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#333" }}>{t("mining.whatIsMining")}</h3>
-                      <p style={{ fontSize: "0.9rem", color: "#666", lineHeight: "1.6", margin: 0 }}>
-                        {t("mining.whatIsMiningDesc")}
-                      </p>
-                    </div>
-                    <div>
-                      <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#333" }}>{t("mining.steps")}</h3>
-                      <ol style={{ fontSize: "0.9rem", color: "#666", lineHeight: "1.8", margin: 0, paddingLeft: "1.5rem" }}>
-                        <li>{t("mining.step1")}</li>
-                        <li>{t("mining.step2")}</li>
-                        <li>{t("mining.step3")}
-                          <ul style={{ marginTop: "0.5rem", paddingLeft: "1.5rem" }}>
-                            <li>{t("mining.step3Single")}</li>
-                            <li>{t("mining.step3Cluster")}</li>
-                          </ul>
-                        </li>
-                        <li>{t("mining.step4")}</li>
-                      </ol>
-                    </div>
-                    <div style={{ 
-                      background: "#fff3cd", 
-                      padding: "0.75rem", 
-                      borderRadius: "6px",
-                      border: "1px solid #ffc107"
-                    }}>
-                      <strong style={{ color: "#856404" }}>{t("mining.tips")}</strong>
-                      <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem", fontSize: "0.9rem", color: "#856404" }}>
-                        <li>{t("mining.tip1")}</li>
-                        <li>{t("mining.tip2")}</li>
-                        <li>{t("mining.tip3")}</li>
-                        <li>{t("mining.tip4")}</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Mining Status Banner */}
-              {(isMining || clusterMining) && (
-                <div className="status-card" style={{ 
-                  background: "linear-gradient(135deg, #28a745 0%, #20c997 100%)",
-                  color: "white",
-                  border: "none",
-                  marginBottom: "1.5rem"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <h2 style={{ color: "white", margin: 0, marginBottom: "0.5rem" }}>{t("mining.active")}</h2>
-                      <div style={{ fontSize: "0.9rem", opacity: 0.9 }}>
-                        {clusterMining ? (
-                          <>
-                            {locale === "zh" ? "集群模式" : "Cluster Mode"} • {clusterStats.totalWorkers || clusterStats.activeWorkers || clusterWorkerCount} {locale === "zh" ? "个工作线程" : "workers"} • 
-                            {t("mining.hashRate")} {clusterStats.totalHashRate ? (clusterStats.totalHashRate / 1000).toFixed(2) + " K hash/s" : t("mining.calculating")} • 
-                            {locale === "zh" ? "已尝试" : "Tried"}: {clusterStats.totalHashesTried.toString()} {locale === "zh" ? "次哈希" : "hashes"}
-                          </>
-                        ) : (
-                          <>
-                            {locale === "zh" ? "单线程模式" : "Single Thread Mode"} • 
-                            {t("mining.hashRate")} {miningStats.hashRate ? (miningStats.hashRate / 1000).toFixed(2) + " K hash/s" : t("mining.calculating")} • 
-                            {locale === "zh" ? "已尝试" : "Tried"}: {miningStats.hashesTried.toLocaleString()} {locale === "zh" ? "次哈希" : "hashes"}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      className="btn"
-                      onClick={clusterMining ? handleStopClusterMining : handleStopMining}
-                      style={{ 
-                        background: "white", 
-                        color: "#28a745",
-                        padding: "0.75rem 1.5rem",
-                        fontSize: "1rem",
-                        fontWeight: "bold"
-                      }}
-                    >
-                      停止挖矿
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Mining Controls */}
-              <div className="status-card">
-                <h2>{t("mining.controls")}</h2>
-                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                  {/* Single Worker Mode */}
-                  <div style={{ 
-                    padding: "1rem", 
-                    background: "#f8f9fa", 
-                    borderRadius: "8px",
-                    border: isMining ? "2px solid #28a745" : "1px solid #dee2e6"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-                      <div>
-                        <h3 style={{ fontSize: "1rem", margin: 0, marginBottom: "0.25rem" }}>{t("mining.singleWorker")}</h3>
-                        <p style={{ fontSize: "0.85rem", color: "#666", margin: 0 }}>
-                          {t("mining.singleWorkerDesc")}
-                        </p>
-                      </div>
-                      {isMining && (
-                        <span style={{ 
-                          background: "#28a745", 
-                          color: "white", 
-                          padding: "0.25rem 0.75rem", 
-                          borderRadius: "4px",
-                          fontSize: "0.85rem",
-                          fontWeight: "bold"
-                        }}>
-                          运行中
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-                      {!isMining && !clusterMining ? (
-                        <>
-                          <button
-                            className="btn btn-primary"
-                            onClick={handleStartMining}
-                            disabled={!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.mode === "BLOCKED")}
-                            style={{ 
-                              fontSize: "1rem", 
-                              padding: "0.75rem 1.5rem",
-                              opacity: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.mode === "BLOCKED")) ? 0.5 : 1,
-                              cursor: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.mode === "BLOCKED")) ? "not-allowed" : "pointer"
-                            }}
-                            title={
-                              !localCoordinator.canMine() 
-                                ? (locale === "zh" 
-                                    ? "🚫 无法挖矿：本实例为 FOLLOWER，请在 LEADER 页面挖矿"
-                                    : "🚫 Cannot mine: This instance is FOLLOWER, please mine on LEADER page")
-                                : miningGuardResult && !miningGuardResult.ok
-                                ? (miningGuardResult.reason || (locale === "zh" ? "挖矿条件未满足" : "Mining conditions not met"))
-                                : !nodeAddress
-                                ? (locale === "zh" ? "请先创建钱包地址" : "Please create wallet address first")
-                                : ""
-                            }
-                          >
-                            {t("mining.startMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
-                            {!localCoordinator.canMine() && (
-                              <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", opacity: 0.8 }}>
-                                ({locale === "zh" ? "只读" : "Read-only"})
-                              </span>
-                            )}
-                          </button>
-                          {/* Show mining guard reason if blocked */}
-                          {miningGuardResult && !miningGuardResult.ok && (
-                            <div style={{ 
-                              fontSize: "0.85rem", 
-                              color: "#dc3545",
-                              padding: "0.5rem",
-                              background: "rgba(220, 53, 69, 0.1)",
-                              borderRadius: "4px",
-                              marginTop: "0.5rem",
-                              width: "100%"
-                            }}>
-                              <strong>🚫 {locale === "zh" ? "无法挖矿：" : "Cannot mine:"}</strong> {
-                                miningGuardResult.code === "NOT_SYNCED"
-                                  ? (locale === "zh" ? "当前高度落后网络多数，请先同步" : "Current height is behind network majority, please sync first")
-                                  : miningGuardResult.code === "INSUFFICIENT_PEERS"
-                                  ? (locale === "zh" 
-                                      ? `对等节点数量不足（当前 ${miningGuardResult.details?.peerCount || 0} / 需要 ≥${miningGuardResult.details?.requiredPeers || 3}）`
-                                      : `Insufficient peers (current ${miningGuardResult.details?.peerCount || 0} / need ≥${miningGuardResult.details?.requiredPeers || 3})`)
-                                  : miningGuardResult.code === "FOLLOWER_MODE"
-                                  ? (locale === "zh" ? "本实例为 FOLLOWER，请在 LEADER 页面挖矿" : "This instance is FOLLOWER, please mine on LEADER page")
-                                  : miningGuardResult.code === "NETWORK_MISMATCH" || miningGuardResult.code === "PARAMS_MISMATCH"
-                                  ? (locale === "zh" ? "主网参数与信令节点不一致" : "Mainnet parameters do not match signaling node")
-                                  : miningGuardResult.code === "NOT_FINALIZED"
-                                  ? (locale === "zh" ? "Finality 未就绪" : "Finality not ready")
-                                  : miningGuardResult.code === "NO_VALID_WALLET"
-                                  ? (locale === "zh" ? "没有有效的挖矿钱包" : "No valid mining wallet")
-                                  : miningGuardResult.reason || (locale === "zh" ? "挖矿条件未满足" : "Mining conditions not met")
-                              }
-                            </div>
-                          )}
-                          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
-                            <input
-                              type="checkbox"
-                              checked={autoMining}
-                              onChange={(e) => {
-                                const newValue = e.target.checked;
-                                setAutoMining(newValue);
-                                // State will be saved automatically by useEffect
-                                if (newValue && chainContext && !isMining && !clusterMining) {
-                                  setTimeout(() => handleStartMining(), 500);
-                                }
-                              }}
-                            />
-                            <span style={{ fontSize: "0.9rem" }}>{t("mining.autoMining")}</span>
-                          </label>
-                        </>
-                      ) : isMining ? (
-                        <>
-                          <button className="btn btn-secondary" onClick={handleStopMining}>
-                            {t("mining.stopMining")}
-                          </button>
-                          {autoMining && (
-                            <span style={{ fontSize: "0.9rem", color: "#666" }}>
-                              ({t("mining.autoMiningDesc")})
-                            </span>
-                          )}
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {/* Cluster Mining Mode */}
-                  {chainContext && (
-                    <div style={{ 
-                      padding: "1rem", 
-                      background: "#f8f9fa", 
-                      borderRadius: "8px",
-                      border: clusterMining ? "2px solid #28a745" : "1px solid #dee2e6"
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-                        <div>
-                          <h3 style={{ fontSize: "1rem", margin: 0, marginBottom: "0.25rem" }}>{t("mining.clusterMining")}</h3>
-                          <p style={{ fontSize: "0.85rem", color: "#666", margin: 0 }}>
-                            {t("mining.clusterMiningDesc")}
-                          </p>
-                        </div>
-                        {clusterMining && (
-                          <span style={{ 
-                            background: "#28a745", 
-                            color: "white", 
-                            padding: "0.25rem 0.75rem", 
-                            borderRadius: "4px",
-                            fontSize: "0.85rem",
-                            fontWeight: "bold"
-                          }}>
-                            运行中
-                          </span>
-                        )}
-                      </div>
-                      {!clusterMining && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                            <label style={{ fontSize: "0.9rem", minWidth: "100px" }}>
-                              {t("mining.workerCount")}
-                            </label>
-                            <input
-                              type="range"
-                              min="1"
-                              max={typeof navigator !== "undefined" && "hardwareConcurrency" in navigator 
-                                ? Math.max(1, (navigator.hardwareConcurrency || 4) * 2)
-                                : 32}
-                              value={clusterWorkerCount}
-                              onChange={(e) => setClusterWorkerCount(parseInt(e.target.value))}
-                              style={{ flex: 1 }}
-                            />
-                            <span style={{ fontWeight: "bold", minWidth: "40px", textAlign: "right" }}>
-                              {clusterWorkerCount}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: "0.85rem", color: "#666" }}>
-                            {t("mining.optimalWorkers", { count: MinerCluster.getOptimalWorkerCount() })}
-                          </div>
-                          {/* Mining Guard Status for Cluster Mining */}
-                          {miningGuardResult && !miningGuardResult.ok && (
-                            <div style={{
-                              padding: "0.75rem",
-                              background: miningGuardResult.code === "NOT_FINALIZED" ? "#fff3cd" : "#f8d7da",
-                              border: `1px solid ${miningGuardResult.code === "NOT_FINALIZED" ? "#ffc107" : "#dc3545"}`,
-                              borderRadius: "6px",
-                              fontSize: "0.9rem",
-                              color: miningGuardResult.code === "NOT_FINALIZED" ? "#856404" : "#721c24"
-                            }}>
-                              {(() => {
-                                let message = "";
-                                switch (miningGuardResult.code) {
-                                  case "NOT_SYNCED":
-                                    message = locale === "zh"
-                                      ? `🚫 无法挖矿：当前高度落后网络多数，请先同步`
-                                      : `🚫 Cannot mine: Node height is behind network majority, please sync first`;
-                                    break;
-                                  case "INSUFFICIENT_PEERS":
-                                    message = locale === "zh"
-                                      ? `🚫 无法挖矿：对等节点不足（当前 ${miningGuardResult.details?.peerCount || 0} / 需要 ≥${miningGuardResult.details?.requiredPeers || 3}）`
-                                      : `🚫 Cannot mine: Insufficient peers (current ${miningGuardResult.details?.peerCount || 0} / need ≥${miningGuardResult.details?.requiredPeers || 3})`;
-                                    break;
-                                  case "NOT_FINALIZED":
-                                    message = locale === "zh"
-                                      ? `⚠️ 挖矿降级：未最终确认的区块过多，挖矿可能无效`
-                                      : `⚠️ Mining degraded: Too many unfinalized blocks, mining may be ineffective`;
-                                    break;
-                                  case "NETWORK_MISMATCH":
-                                  case "PARAMS_MISMATCH":
-                                    message = locale === "zh"
-                                      ? `🚫 无法挖矿：主网参数与信令节点不一致`
-                                      : `🚫 Cannot mine: Network parameters mismatch with signaling server`;
-                                    break;
-                                  case "NO_VALID_WALLET":
-                                    message = locale === "zh"
-                                      ? `🚫 无法挖矿：未选择有效的挖矿钱包`
-                                      : `🚫 Cannot mine: No valid mining wallet selected`;
-                                    break;
-                                  case "FOLLOWER_MODE":
-                                    message = locale === "zh"
-                                      ? `🚫 无法挖矿：本窗口为只读模式（Follower），请在 Leader 页面挖矿`
-                                      : `🚫 Cannot mine: This window is read-only (Follower), please mine on Leader page`;
-                                    break;
-                                  default:
-                                    message = miningGuardResult.reason || (locale === "zh" ? "🚫 无法挖矿" : "🚫 Cannot mine");
-                                }
-                                return message;
-                              })()}
-                            </div>
-                          )}
-                          <button
-                            className="btn btn-primary"
-                            onClick={handleStartClusterMining}
-                            disabled={!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED")}
-                            style={{ 
-                              fontSize: "1rem", 
-                              padding: "0.75rem 1.5rem",
-                              opacity: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED")) ? 0.5 : 1,
-                              cursor: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED")) ? "not-allowed" : "pointer"
-                            }}
-                            title={(() => {
-                              if (!nodeAddress) {
-                                return locale === "zh" ? "请先创建或选择钱包" : "Please create or select a wallet first";
-                              }
-                              if (!localCoordinator.canMine()) {
-                                return locale === "zh" 
-                                  ? "本机已有一个挖矿实例，当前实例为只读模式"
-                                  : "This machine already has a mining instance, current instance is read-only";
-                              }
-                              if (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED") {
-                                return miningGuardResult.reason || (locale === "zh" ? "挖矿条件不满足" : "Mining conditions not met");
-                              }
-                              return "";
-                            })()}
-                          >
-                            {t("mining.startClusterMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
-                            {!localCoordinator.canMine() && (
-                              <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", opacity: 0.8 }}>
-                                ({locale === "zh" ? "只读" : "Read-only"})
-                              </span>
-                            )}
-                          </button>
-                        </div>
-                      )}
-                      {clusterMining && (
-                        <div style={{ marginTop: "0.75rem" }}>
-                          <button
-                            className="btn btn-secondary"
-                            onClick={handleStopClusterMining}
-                            style={{ fontSize: "1rem", padding: "0.75rem 1.5rem" }}
-                          >
-                            {t("mining.stopClusterMining")}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Mining Status */}
-              {(isMining || miningStats.hashesTried > 0) && (
-                <div className="status-card">
-                  <h2>{t("mining.status")}</h2>
-                  <div className="status-item">
-                    <span className="label">{t("status.status")}:</span>
-                    <span className="value">
-                      {isMining ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>⛏️ {t("status.mining")}...</span>
-                      ) : minerClient.getIsMining() ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>⛏️ {t("status.mining")}...</span>
-                      ) : (
-                        <span style={{ color: "#666" }}>{t("status.stopped")}</span>
-                      )}
-                    </span>
-                  </div>
-                  {tip && (
-                    <div className="status-item">
-                      <span className="label">{t("mining.difficulty")}</span>
-                      <span className="value">
-                        {t("mining.difficultyDesc", { difficulty: tip.header.difficulty })}
-                      </span>
-                    </div>
-                  )}
-                  <div className="status-item">
-                    <span className="label">{t("mining.hashRate")}</span>
-                    <span className="value" style={{ fontWeight: "bold", color: "#667eea", fontSize: "1.1rem" }}>
-                      {miningStats.hashRate
-                        ? `${(miningStats.hashRate / 1000).toFixed(2)} K hash/s`
-                        : t("mining.calculating")}
-                    </span>
-                  </div>
-                  <div className="status-item">
-                    <span className="label">{t("mining.hashesTried")}</span>
-                    <span className="value">{miningStats.hashesTried.toLocaleString()}</span>
-                  </div>
-                    {miningStats.elapsedTime > 0 && (
-                    <div className="status-item">
-                      <span className="label">{t("mining.elapsedTime")}</span>
-                      <span className="value">{miningStats.elapsedTime.toFixed(1)} {t("commonExpanded.seconds")}</span>
-                    </div>
-                  )}
-                  {isMining && (
-                    <>
-                      <div className="status-item">
-                        <span className="label">{t("mining.currentHash")}</span>
-                        <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
-                          {miningHash || t("mining.calculating")}
-                        </span>
-                      </div>
-                      <div className="status-item">
-                        <span className="label">{t("mining.currentNonce")}</span>
-                        <span className="value" style={{ fontFamily: "monospace" }}>{miningNonce.toLocaleString()}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Phase 18: Cluster Mining Stats */}
-              {chainContext && clusterMining && (
-                <div className="status-card">
-                  <h2>{t("mining.clusterStats")}</h2>
-                  {clusterMining && (
-                    <>
-                      <div className="status-item">
-                        <span className="label">{t("mining.totalHashRate")}</span>
-                        <span className="value" style={{ fontWeight: "bold", color: "#667eea", fontSize: "1.1rem" }}>
-                          {clusterStats.totalHashRate
-                            ? `${(clusterStats.totalHashRate / 1000).toFixed(2)} K hash/s`
-                            : t("mining.calculating")}
-                        </span>
-                      </div>
-                      <div className="status-item">
-                        <span className="label">{t("mining.activeWorkers")}</span>
-                        <span className="value">
-                          {clusterStats.activeWorkers} / {clusterStats.totalWorkers}
-                        </span>
-                      </div>
-                      <div className="status-item">
-                        <span className="label">{t("mining.totalHashes")}</span>
-                        <span className="value">{clusterStats.totalHashesTried.toString()}</span>
-                      </div>
-                      {clusterStats.workers.length > 0 && (
-                        <div style={{ marginTop: "1rem" }}>
-                          <strong>{t("mining.workerDetails")}</strong>
-                          <div style={{ maxHeight: "200px", overflowY: "auto", marginTop: "0.5rem" }}>
-                            {clusterStats.workers.map((worker) => (
-                              <div
-                                key={worker.workerId}
-                                style={{
-                                  padding: "0.5rem",
-                                  marginBottom: "0.25rem",
-                                  background: "#f0f0f0",
-                                  borderRadius: "4px",
-                                  fontSize: "0.85rem",
-                                }}
-                              >
-                                <div>
-                                  <strong>{t("mining.workerStatus", { id: worker.workerId })}</strong>{" "}
-                                  <span style={{ color: worker.status === "running" ? "#28a745" : "#666" }}>
-                                    {worker.status === "running" ? t("mining.running") : worker.status === "stopped" ? t("mining.stopped") : t("mining.exhausted")}
-                                  </span>
-                                </div>
-                                <div>
-                                  {t("mining.hashRate")} {worker.hashRate ? `${(worker.hashRate / 1000).toFixed(2)} K hash/s` : "—"}
-                                </div>
-                                <div style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
-                                  {t("mining.nonceRange")} {worker.currentNonceStart.toString()} -{" "}
-                                  {worker.currentNonceEnd ? worker.currentNonceEnd.toString() : "∞"}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Phase 19: Global Miner Pool */}
-              {chainContext && isP2PConnected && (
-                <div className="status-card">
-                  <h2>🌐 {t("network.globalPool")}</h2>
-                  <div className="status-item">
-                    <span className="label">{t("networkExpanded.mode")}</span>
-                    <span className="value">
-                      {globalPoolEnabled ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("networkExpanded.enabled")}</span>
-                      ) : (
-                        <span style={{ color: "#666" }}>{t("networkExpanded.disabled")}</span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="status-item">
-                    <span className="label">{t("networkExpanded.role")}</span>
-                    <span className="value">
-                      {isDelegator ? (
-                        <span style={{ color: "#667eea", fontWeight: "bold" }}>{t("networkExpanded.delegator")}</span>
-                      ) : (
-                        <span style={{ color: "#666" }}>{t("networkExpanded.workerNode")}</span>
-                      )}
-                    </span>
-                  </div>
-                  {isDelegator && delegatorStats && (
-                    <>
-                      <div className="status-item">
-                        <span className="label">{t("networkExpanded.activeRanges")}:</span>
-                        <span className="value">{delegatorStats.activeRanges}</span>
-                      </div>
-                      <div className="status-item">
-                        <span className="label">{t("networkExpanded.totalNodes")}:</span>
-                        <span className="value">{delegatorStats.totalNodes}</span>
-                      </div>
-                      <div className="status-item">
-                        <span className="label">{t("network.globalPointer")}:</span>
-                        <span className="value" style={{ fontSize: "0.85rem", fontFamily: "monospace" }}>
-                          {delegatorStats.globalPointer.toString()}
-                        </span>
-                      </div>
-                    </>
-                  )}
-                  {!globalPoolEnabled && (
-                    <div style={{ marginTop: "1rem" }}>
-                      <button
-                        className="btn btn-primary"
-                        onClick={() => {
-                          setGlobalPoolEnabled(true);
-                          const nodeId = getOrCreateBrowserNodeId();
-                          const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
-                            ? navigator.hardwareConcurrency || 4
-                            : 4;
-                          const capability: NodeCapability = {
-                            nodeId,
-                            workerCount: clusterWorkerCount,
-                            threads: cores,
-                            hasWebGL: typeof WebGLRenderingContext !== "undefined",
-                            hasWebGPU: typeof (globalThis as any).GPU !== "undefined" && (globalThis as any).GPU !== undefined,
-                            hasSIMD: typeof WebAssembly !== "undefined" && WebAssembly.validate !== undefined,
-                            estimatedHashrate: clusterStats.totalHashRate || 100_000,
-                            lastSeen: Date.now(),
-                          };
-                          for (let i = 0; i < clusterWorkerCount; i++) {
-                            workerNodeManager.requestNonceRange(i, capability);
-                          }
-                        }}
-                      >
-                        {t("network.enableGlobalPool")}
-                      </button>
-                    </div>
-                  )}
-                  {globalPoolEnabled && (
-                    <div style={{ marginTop: "1rem" }}>
-                      <button
-                        className="btn btn-secondary"
-                        onClick={() => {
-                          setGlobalPoolEnabled(false);
-                          workerNodeManager.reset();
-                        }}
-                      >
-                        {t("network.disableGlobalPool")}
-                      </button>
-                    </div>
-                  )}
-                  <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-                    💡 <strong>{t("network.globalPool")}:</strong> {t("network.globalPoolDesc")}
-                    {isDelegator && ` ${t("network.isDelegator")}`}
-                  </div>
-                </div>
-              )}
+              {/* P0-1: Removed duplicate content - Mining Guide, Mining Status Banner, Mining Controls, Mining Status, Cluster Mining Stats, Global Miner Pool */}
+              {/* These are now handled by Phase 38 components (MiningMainCard, MiningLiveStatsCard, MiningAdvancedPanel) */}
             </div>
           )}
 

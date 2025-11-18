@@ -515,6 +515,161 @@ export function NetworkHealthPanel({
 
       {/* Phase 36: State Lock Status - placeholder for future implementation */}
 
+      {/* Phase 37: Bootstrap Debug Overlay */}
+      <div
+        className="status-card"
+        style={{
+          marginBottom: "1rem",
+          background: "rgba(0, 123, 255, 0.05)",
+          border: "1px solid #007bff",
+        }}
+      >
+        <h2 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.2rem" }}>
+          {isZh ? "🔍 Bootstrap 调试信息" : "🔍 Bootstrap Debug Info"}
+        </h2>
+        
+        <div style={{ display: "grid", gap: "0.75rem" }}>
+          {/* Bootstrap Status */}
+          <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
+            <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
+              {isZh ? "Bootstrap 状态" : "Bootstrap Status"}
+            </div>
+            <div
+              style={{
+                fontSize: "1.2rem",
+                fontWeight: "bold",
+                color: bootstrapComplete ? "#28a745" : "#ffc107",
+              }}
+            >
+              {bootstrapComplete ? (isZh ? "✅ 已完成" : "✅ Complete") : (isZh ? "⏳ 进行中" : "⏳ Pending")}
+            </div>
+          </div>
+
+          {/* Signal Server RootTip Info */}
+          {chainContext && (() => {
+            const localTip = chainContext.storage.getTip();
+            const localHeight = localTip?.header.height ?? -1;
+            const rootTipHeight = (window as any).lastRootTipHeight || 0;
+            const rootTipHash = (window as any).lastRootTipHash || "N/A";
+            const lastBootstrapTime = (window as any).lastBootstrapResponseTime || null;
+            
+            return (
+              <>
+                <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
+                  <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
+                    {isZh ? "Signal Server RootTip" : "Signal Server RootTip"}
+                  </div>
+                  <div style={{ fontSize: "0.9rem" }}>
+                    <div>
+                      <strong>{isZh ? "高度:" : "Height:"}</strong> {rootTipHeight > 0 ? rootTipHeight : "N/A"}
+                    </div>
+                    <div style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#666", wordBreak: "break-all" }}>
+                      <strong>{isZh ? "Hash:" : "Hash:"}</strong> {rootTipHash.substring(0, 16)}...
+                    </div>
+                    {lastBootstrapTime && (
+                      <div style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#666" }}>
+                        <strong>{isZh ? "更新时间:" : "Updated:"}</strong> {new Date(lastBootstrapTime).toLocaleTimeString()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
+                  <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
+                    {isZh ? "本地 Tip" : "Local Tip"}
+                  </div>
+                  <div style={{ fontSize: "0.9rem" }}>
+                    <div>
+                      <strong>{isZh ? "高度:" : "Height:"}</strong> {localHeight}
+                    </div>
+                    {rootTipHeight > 0 && (
+                      <div style={{ marginTop: "0.25rem" }}>
+                        <strong>{isZh ? "差距:" : "Behind:"}</strong>{" "}
+                        <span style={{ color: rootTipHeight - localHeight > 0 ? "#dc3545" : "#28a745" }}>
+                          {rootTipHeight - localHeight} {isZh ? "区块" : "blocks"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* RootTip Trust Level */}
+                {(() => {
+                  const trustLevel = (window as any).lastRootTipTrustLevel || 'root-only';
+                  const getTrustColor = (level: string) => {
+                    switch (level) {
+                      case 'local-majority': return '#28a745';
+                      case 'root-only': return '#ffc107';
+                      case 'stale': return '#dc3545';
+                      default: return '#666';
+                    }
+                  };
+                  const getTrustLabel = (level: string) => {
+                    switch (level) {
+                      case 'local-majority': return isZh ? '✅ 本地多数验证' : '✅ Local Majority';
+                      case 'root-only': return isZh ? '⚠️ 仅根节点' : '⚠️ Root Only';
+                      case 'stale': return isZh ? '❌ 已过期' : '❌ Stale';
+                      default: return level;
+                    }
+                  };
+                  
+                  return (
+                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
+                      <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
+                        {isZh ? "RootTip 信任状态" : "RootTip Trust Level"}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "1rem",
+                          fontWeight: "bold",
+                          color: getTrustColor(trustLevel),
+                        }}
+                      >
+                        {getTrustLabel(trustLevel)}
+                      </div>
+                      <div style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#666" }}>
+                        {trustLevel === 'root-only' && (isZh
+                          ? "仅来自 Signal Server，建议与 P2P 多数对比"
+                          : "From Signal Server only, recommend comparing with P2P majority")}
+                        {trustLevel === 'local-majority' && (isZh
+                          ? "已通过本地多数节点验证"
+                          : "Verified by local majority of peers")}
+                        {trustLevel === 'stale' && (isZh
+                          ? "RootTip 可能已过期，建议重新同步"
+                          : "RootTip may be stale, recommend re-sync")}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Sync Status */}
+                {rootTipHeight > 0 && rootTipHeight !== localHeight && (
+                  <div
+                    style={{
+                      padding: "0.75rem",
+                      background: "#fff3cd",
+                      borderRadius: "6px",
+                      border: "1px solid #ffc107",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.85rem", color: "#856404" }}>
+                      {isZh
+                        ? `⚠️ 需要同步: 本地高度 ${localHeight} < Signal Server 高度 ${rootTipHeight}`
+                        : `⚠️ Sync needed: Local height ${localHeight} < Signal Server height ${rootTipHeight}`}
+                    </div>
+                    {(window as any).pendingBootstrapBlockRequest && (
+                      <div style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "#856404" }}>
+                        {isZh ? "📋 待执行的区块请求已存储" : "📋 Pending block request stored"}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* Quorum Panel */}
       <QuorumPanel chainContext={chainContext} p2pNode={p2pNode} locale={locale} />
     </div>

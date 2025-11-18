@@ -263,9 +263,21 @@ export class BrowserP2PNode implements P2PNode {
     // Close all peer connections
     for (const peer of this.peers.values()) {
       if (peer.dataChannel) {
-        peer.dataChannel.close();
+        // Phase 38: Remove error handler before closing to avoid false error logs
+        // The onerror handler will still fire, but we check for normal close operations
+        try {
+          peer.dataChannel.close();
+        } catch (error) {
+          // Ignore errors when closing (channel might already be closed)
+          console.log(`[P2P] Data channel already closed for peer ${peer.id.substring(0, 16)}...`);
+        }
       }
-      peer.connection.close();
+      try {
+        peer.connection.close();
+      } catch (error) {
+        // Ignore errors when closing (connection might already be closed)
+        console.log(`[P2P] Connection already closed for peer ${peer.id.substring(0, 16)}...`);
+      }
     }
     this.peers.clear();
 
@@ -375,6 +387,64 @@ export class BrowserP2PNode implements P2PNode {
    */
   private handleSignalingMessage(message: any): void {
     switch (message.type) {
+      case "JOIN_ACK":
+        // Phase 37: Handle JOIN_ACK with rootTip
+        console.log(`[P2P] Received JOIN_ACK:`, {
+          peerCount: message.peers?.length || 0,
+          hasRootTip: !!message.rootTip,
+          rootTipHeight: message.rootTip?.latestHeight || 0,
+        });
+        
+        // Handle peers list (same as "peers" message)
+        const joinAckPeerIds: string[] = message.peers || [];
+        console.log(`[P2P] Processing ${joinAckPeerIds.length} peers from JOIN_ACK`);
+        
+        for (const peerId of joinAckPeerIds) {
+          if (peerId !== this.nodeId && !this.peers.has(peerId)) {
+            console.log(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
+            this.initiatePeerConnection(peerId);
+          }
+        }
+        
+        // Handle IP hash
+        if (message.ipHash) {
+          if (typeof window !== "undefined") {
+            (async () => {
+              try {
+                const { getQuorumManager } = await import("./quorumManager.js");
+                const quorumManager = getQuorumManager();
+                quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
+              } catch (error) {
+                console.warn("[P2P] Failed to set IP hash:", error);
+              }
+            })();
+          }
+        }
+        
+        // Handle rootTip - forward to bootstrap sync manager
+        if (message.rootTip && message.rootTip.latestHeight > 0) {
+          console.log(`[P2P] JOIN_ACK contains rootTip (height: ${message.rootTip.latestHeight}), forwarding to bootstrap handlers`);
+          
+          // Phase 37: Store rootTip info for debug overlay
+          if (typeof window !== "undefined") {
+            (window as any).lastRootTipHeight = message.rootTip.latestHeight;
+            (window as any).lastRootTipHash = message.rootTip.latestHeaderHash || "";
+            (window as any).lastBootstrapResponseTime = Date.now();
+            (window as any).lastRootTipTrustLevel = message.rootTip.trustLevel || 'root-only';
+            (window as any).lastRootTipStateCommitment = message.rootTip.stateCommitment || null;
+          }
+          
+          const handlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
+          if (handlers && handlers.size > 0) {
+            for (const handler of handlers) {
+              handler({ rootTip: message.rootTip }, "signal-server");
+            }
+          } else {
+            console.warn(`[P2P] ⚠️ No handlers registered for ROOT_TIP_UPDATE - bootstrap sync may not work`);
+          }
+        }
+        break;
+
       case "peers":
         console.log(`[P2P] Received peers list:`, {
           peerCount: message.peers?.length || 0,
@@ -472,9 +542,19 @@ export class BrowserP2PNode implements P2PNode {
           const peerInfo = this.peers.get(leftPeerId);
           if (peerInfo) {
             if (peerInfo.dataChannel) {
-              peerInfo.dataChannel.close();
+              try {
+                peerInfo.dataChannel.close();
+              } catch (error) {
+                // Ignore errors when closing (channel might already be closed)
+                console.log(`[P2P] Data channel already closed for peer ${leftPeerId.substring(0, 16)}...`);
+              }
             }
-            peerInfo.connection.close();
+            try {
+              peerInfo.connection.close();
+            } catch (error) {
+              // Ignore errors when closing (connection might already be closed)
+              console.log(`[P2P] Connection already closed for peer ${leftPeerId.substring(0, 16)}...`);
+            }
             this.peers.delete(leftPeerId);
           }
         }
@@ -486,9 +566,11 @@ export class BrowserP2PNode implements P2PNode {
           latestHeight: message.latestHeight,
           hasHeader: !!message.latestHeader,
           hasSnapshotMeta: !!message.latestSnapshotMeta,
-          recentHeadersCount: message.recentHeaders?.length || 0
+          recentHeadersCount: message.recentHeaders?.length || 0,
+          requestId: message.requestId,
         });
-        // Forward to message handlers
+        
+        // Even if latestHeight is 0, forward to handlers (they will handle it appropriately)
         const handlers = this.messageHandlers.get("BOOTSTRAP_RESPONSE");
         if (handlers && handlers.size > 0) {
           console.log(`[Phase 32] Forwarding BOOTSTRAP_RESPONSE to ${handlers.size} handler(s)`);
@@ -496,18 +578,27 @@ export class BrowserP2PNode implements P2PNode {
             handler(message, "signal-server");
           }
         } else {
-          console.warn(`[Phase 32] No handlers registered for BOOTSTRAP_RESPONSE`);
+          console.warn(`[Phase 32] ⚠️ No handlers registered for BOOTSTRAP_RESPONSE - bootstrap sync may not work`);
         }
         break;
 
       // Phase 32: Handle root tip update from signal server
       case "ROOT_TIP_UPDATE":
+        console.log(`[Phase 32] Received ROOT_TIP_UPDATE from signal server:`, {
+          latestHeight: message.rootTip?.latestHeight || message.latestHeight,
+          hasHeader: !!message.rootTip?.latestHeader || !!message.latestHeader,
+          timestamp: message.timestamp,
+        });
+        
         // Forward to message handlers
         const tipHandlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
-        if (tipHandlers) {
+        if (tipHandlers && tipHandlers.size > 0) {
+          console.log(`[Phase 32] Forwarding ROOT_TIP_UPDATE to ${tipHandlers.size} handler(s)`);
           for (const handler of tipHandlers) {
             handler(message, "signal-server");
           }
+        } else {
+          console.warn(`[Phase 32] ⚠️ No handlers registered for ROOT_TIP_UPDATE`);
         }
         break;
 
@@ -777,12 +868,39 @@ export class BrowserP2PNode implements P2PNode {
     };
 
     dataChannel.onclose = () => {
-      console.log(`Data channel closed with peer ${peerInfo.id}`);
+      console.log(`[P2P] Data channel closed with peer ${peerInfo.id.substring(0, 16)}...`);
       peerInfo.connected = false;
     };
 
     dataChannel.onerror = (error) => {
-      console.error(`Data channel error with peer ${peerInfo.id}:`, error);
+      // Phase 38: Improved error handling - ignore "User-Initiated Abort" errors
+      // These occur when dataChannel.close() is called, which is normal behavior
+      const rtcError = (error as any).error;
+      if (rtcError) {
+        const errorName = rtcError.name || rtcError.constructor?.name || '';
+        const errorReason = rtcError.reason || '';
+        
+        // Ignore normal close operations
+        if (
+          errorName === 'OperationError' &&
+          (errorReason === 'Close called' || errorReason.includes('User-Initiated Abort'))
+        ) {
+          // This is a normal close operation, not a real error
+          console.log(`[P2P] Data channel closed normally with peer ${peerInfo.id.substring(0, 16)}... (reason: ${errorReason})`);
+          peerInfo.connected = false;
+          return;
+        }
+        
+        // Check if channel is already closed
+        if (dataChannel.readyState === 'closed') {
+          console.log(`[P2P] Data channel already closed with peer ${peerInfo.id.substring(0, 16)}..., ignoring error`);
+          peerInfo.connected = false;
+          return;
+        }
+      }
+      
+      // Only log as error if it's a real error, not a normal close
+      console.error(`[P2P] Data channel error with peer ${peerInfo.id.substring(0, 16)}...:`, error);
       peerInfo.connected = false;
     };
   }

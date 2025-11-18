@@ -76,35 +76,46 @@ export class MiningGuard {
     bootstrapComplete?: boolean // Phase 32: Bootstrap sync status (currently not used, but kept for future use)
   ): Promise<MiningGuardResult> {
     // Phase 32: Check bootstrap sync status
-    // Note: bootstrapComplete === false means we're still waiting for bootstrap
-    // This is not an error condition - it's a normal state during initial sync
-    // We should only block mining if bootstrapComplete === false AND we have no peers
-    // For now, we'll allow mining even if bootstrap is not complete, as long as we have peers
-    // The bootstrap check is informational, not a hard block
-    // Future: May use bootstrapComplete to determine mining mode
-    void bootstrapComplete; // Suppress unused parameter warning
+    // bootstrapComplete === true means we've synced from signal server's rootTip
+    // This is important for Cold Start phase: even with 0 peers, if bootstrapComplete === true,
+    // we should allow mining (subject to QuorumScore and other checks)
     
-    // Check 1: P2P connection
+    // Check 1: P2P connection to signal server (required for bootstrap)
     if (!p2pNode || !p2pNode.isConnected) {
-      return {
-        ok: false,
-        code: "INSUFFICIENT_PEERS",
-        reason: "Not connected to P2P network",
-        details: {
-          peerCount: 0,
-          requiredPeers: 3,
-        },
-      };
+      // If bootstrap is complete, we might still allow mining (Cold Start mode)
+      if (bootstrapComplete) {
+        console.log(`[Phase 32] P2P disconnected but bootstrap complete - allowing Cold Start mining`);
+        // Continue to other checks, but note that we're in Cold Start mode
+      } else {
+        return {
+          ok: false,
+          code: "INSUFFICIENT_PEERS",
+          reason: "Not connected to P2P network and bootstrap not complete",
+          details: {
+            peerCount: 0,
+            requiredPeers: 3,
+          },
+        };
+      }
     }
 
-    const peerCount = p2pNode.getPeerCount();
+    const peerCount = p2pNode?.getPeerCount() ?? 0;
     const isMainnetNetwork = isMainnet(chainContext.params);
     
     // Phase 33: Intelligent Peer Quorum System
     // Use QuorumManager to evaluate peer quality instead of simple peer count
     const quorumManager = getQuorumManager();
-    quorumManager.initialize(p2pNode, chainContext);
-    const quorumStatus = quorumManager.getQuorumStatus();
+    if (p2pNode) {
+      quorumManager.initialize(p2pNode, chainContext);
+    }
+    // Initialize with empty status if no P2P node
+    const quorumStatus = p2pNode ? quorumManager.getQuorumStatus() : {
+      ready: false,
+      totalScore: 0,
+      requiredScore: 80,
+      peerCount: 0,
+      independentPeerCount: 0,
+    };
     
     // Phase 33: Three-tier mining permission levels (with quorum support)
     const minPeersRequired = chainContext.params.minPeersRequired ?? 3;
@@ -117,11 +128,19 @@ export class MiningGuard {
       localStorage.getItem("INDEXER_LOCAL_MINE") === "1"
     );
     
-    // Phase 33: Determine mining mode based on quorum status and configuration
+    // Phase 33: Determine mining mode based on quorum status, bootstrap status, and configuration
     let miningMode: MiningMode = "BLOCKED";
     
-    // Phase 35: Check mainnet admission rules first
-    if (isMainnetNetwork) {
+    // Phase 37: Cold Start mode - allow mining if bootstrapComplete === true, even with 0 peers
+    // This is for early network phase where nodes can mine based on signal server's rootTip
+    const isColdStartMode = bootstrapComplete && peerCount === 0;
+    if (isColdStartMode) {
+      console.log(`[Phase 37] Cold Start mode: bootstrapComplete=true, peers=0, allowing mining`);
+      miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
+    }
+    
+    // Phase 35: Check mainnet admission rules first (unless in Cold Start mode)
+    if (isMainnetNetwork && !isColdStartMode && p2pNode) {
       const admissionStatus = quorumManager.getMainnetAdmissionStatus();
       
       if (admissionStatus.admissionReady) {
@@ -211,11 +230,15 @@ export class MiningGuard {
       // Level 3: LOCAL_ONLY Mining - Training mode
       miningMode = "LOCAL_ONLY";
       console.log(`[Phase 33] Local-only mining mode enabled (peers: ${peerCount})`);
+    } else if (bootstrapComplete && peerCount === 0) {
+      // Phase 37: Cold Start mode - bootstrap complete but no peers yet
+      miningMode = "GUARDED";
+      console.log(`[Phase 37] Cold Start mining mode: bootstrapComplete=true, peers=0`);
     } else if (allowGuardedMining) {
       // Level 2: GUARDED Mining - Dev/testnet with warnings
       miningMode = "GUARDED";
       console.log(`[Phase 33] Guarded mining mode: ${peerCount} peers < ${minPeersRequired} (dev/testnet mode)`);
-    } else if (isMainnetNetwork && !quorumStatus.ready) {
+    } else if (isMainnetNetwork && !quorumStatus.ready && !bootstrapComplete) {
       // BLOCKED: Mainnet quorum not satisfied
       return {
         ok: false,
