@@ -617,7 +617,12 @@ function App() {
     const savedState = loadPersistedState();
     console.log(`[Auto-Connect] Checking saved state:`, { autoConnect: savedState.autoConnect, bootstrapUrl: savedState.bootstrapUrl });
     
-    if (savedState.autoConnect && savedState.bootstrapUrl) {
+    // Auto-connect if:
+    // 1. Previously connected (autoConnect: true) OR
+    // 2. Has a saved bootstrapUrl (user has connected before)
+    const shouldAutoConnect = (savedState.autoConnect === true) || (savedState.bootstrapUrl && savedState.bootstrapUrl !== DEFAULT_MAINNET_SIGNALING);
+    
+    if (shouldAutoConnect && savedState.bootstrapUrl) {
       autoConnectAttemptedRef.current = true; // Mark as attempted
       console.log(`[Auto-Connect] Restoring P2P connection to ${savedState.bootstrapUrl}`);
       
@@ -638,7 +643,16 @@ function App() {
         }, 1000); // Small delay to ensure everything is ready
       }
     } else {
-      console.log(`[Auto-Connect] No saved connection state or bootstrap URL`);
+      // Even if no saved state, try to auto-connect to default mainnet signaling if we have bootstrapUrl
+      if (bootstrapUrl && bootstrapUrl === DEFAULT_MAINNET_SIGNALING) {
+        autoConnectAttemptedRef.current = true;
+        console.log(`[Auto-Connect] No saved state, but attempting default mainnet connection to ${bootstrapUrl}`);
+        setTimeout(() => {
+          handleConnectP2P();
+        }, 1500);
+      } else {
+        console.log(`[Auto-Connect] No saved connection state or bootstrap URL`);
+      }
     }
   }, [chainContext, loading]); // Only depend on chainContext and loading, not isP2PConnected or bootstrapUrl
 
@@ -1069,11 +1083,28 @@ function App() {
       }
     });
 
-    // Update peer count periodically
+    // Update peer count periodically and save connection state
     const interval = setInterval(() => {
       if (p2p.isConnected) {
         setPeerCount(p2p.getPeerCount());
+        const wasConnected = isP2PConnected;
         setIsP2PConnected(true);
+        
+        // Save connection state immediately when connected (only once to avoid excessive writes)
+        if (!wasConnected) {
+          try {
+            const savedState = loadPersistedState();
+            const state = {
+              ...savedState,
+              autoConnect: true,
+              bootstrapUrl: bootstrapUrl,
+            };
+            localStorage.setItem("indexerchain_app_state", JSON.stringify(state));
+            console.log(`[Auto-Connect] Saved connection state: autoConnect=true, bootstrapUrl=${bootstrapUrl}`);
+          } catch (e) {
+            console.warn("Failed to save connection state:", e);
+          }
+        }
       } else {
         setPeerCount(0);
         setIsP2PConnected(false);
@@ -3119,8 +3150,8 @@ function App() {
                 />
               )}
 
-              {/* Quick Start Guide - Only show when not fully set up */}
-              {(!isP2PConnected || !nodeAddress || (!isMining && !clusterMining)) && (
+              {/* Quick Start Guide - Only show when not fully set up and not auto-connecting */}
+              {(!isP2PConnected || !nodeAddress || (!isMining && !clusterMining)) && !autoConnectAttemptedRef.current && (
                 <div className="status-card" style={{ 
                   background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                   color: "white",
