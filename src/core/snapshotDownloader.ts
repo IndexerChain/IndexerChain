@@ -91,7 +91,7 @@ export class SnapshotDownloader {
     });
     
     // Handle SNAPSHOT_CHUNK
-    this.p2pNode.onMessage("SNAPSHOT_CHUNK", (chunk: SnapshotChunk, sender: string) => {
+    this.p2pNode.onMessage("SNAPSHOT_CHUNK", async (chunk: SnapshotChunk, sender: string) => {
       const download = this.activeDownloads.get(chunk.snapshotId);
       if (download) {
         const startTime = Date.now();
@@ -106,7 +106,7 @@ export class SnapshotDownloader {
           
           // Phase 21: Record valid snapshot chunk
           if (this.params?.peerScoreEnabled) {
-            const { getGlobalPeerReputationManager } = require("./peerReputation.js");
+            const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
             const reputationManager = getGlobalPeerReputationManager(this.params);
             reputationManager.onValidSnapshotChunkFrom(sender, latency);
           }
@@ -161,10 +161,10 @@ export class SnapshotDownloader {
     });
     
     // Wait for responses (with timeout)
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
+    return new Promise(async (resolve) => {
+      const timeout = setTimeout(async () => {
         // Return ranked sources
-        const sources = this.ranker.getRankedSources(targetHeight);
+        const sources = await this.ranker.getRankedSources(targetHeight);
         resolve(sources.map(s => s.snapshotMeta));
       }, 2000); // 2 second timeout
       
@@ -197,7 +197,7 @@ export class SnapshotDownloader {
     }
     
     // Get top sources
-    const sources = this.ranker.getTopSources(finalConfig.maxParallelPeers, snapshotMeta.height);
+    const sources = await this.ranker.getTopSources(finalConfig.maxParallelPeers, snapshotMeta.height);
     
     if (sources.length === 0) {
       throw new Error("No available sources for snapshot");

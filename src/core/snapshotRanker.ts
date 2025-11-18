@@ -117,7 +117,7 @@ export class SnapshotRanker {
   /**
    * Get ranked sources for a specific snapshot height
    */
-  getRankedSources(targetHeight?: number): SnapshotSource[] {
+  async getRankedSources(targetHeight?: number): Promise<SnapshotSource[]> {
     const sources = Array.from(this.sources.values());
     
     // Filter by target height if specified
@@ -126,11 +126,14 @@ export class SnapshotRanker {
       : sources;
     
     // Calculate scores and sort
-    const ranked = filtered
-      .map(source => ({
+    const scored = await Promise.all(
+      filtered.map(async (source) => ({
         source,
-        score: this.calculateScore(source),
+        score: await this.calculateScore(source),
       }))
+    );
+    
+    const ranked = scored
       .sort((a, b) => b.score - a.score)
       .map(item => item.source);
     
@@ -149,7 +152,7 @@ export class SnapshotRanker {
    * Calculate composite score for a source
    * Phase 21: Includes peer reputation score
    */
-  private calculateScore(source: SnapshotSource): number {
+  private async calculateScore(source: SnapshotSource): Promise<number> {
     // Normalize latency (lower is better, so invert)
     // Assume max latency of 5000ms
     const latencyScore = Math.max(0, 1 - source.latency / 5000);
@@ -162,7 +165,7 @@ export class SnapshotRanker {
     let peerScoreNormalized = 0.5; // Default neutral score
     if (this.params?.peerScoreEnabled) {
       try {
-        const { getGlobalPeerReputationManager } = require("./peerReputation.js");
+        const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
         const reputationManager = getGlobalPeerReputationManager(this.params);
         const effectiveScore = reputationManager.getEffectiveScore(source.nodeId);
         peerScoreNormalized = effectiveScore / 100; // Normalize 0-100 to 0-1
@@ -194,16 +197,16 @@ export class SnapshotRanker {
   /**
    * Get best source for a snapshot height
    */
-  getBestSource(targetHeight?: number): SnapshotSource | null {
-    const ranked = this.getRankedSources(targetHeight);
+  async getBestSource(targetHeight?: number): Promise<SnapshotSource | null> {
+    const ranked = await this.getRankedSources(targetHeight);
     return ranked.length > 0 ? ranked[0] : null;
   }
   
   /**
    * Get top N sources
    */
-  getTopSources(n: number, targetHeight?: number): SnapshotSource[] {
-    const ranked = this.getRankedSources(targetHeight);
+  async getTopSources(n: number, targetHeight?: number): Promise<SnapshotSource[]> {
+    const ranked = await this.getRankedSources(targetHeight);
     return ranked.slice(0, n);
   }
   

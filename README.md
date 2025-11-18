@@ -136,894 +136,184 @@ IndexerChain 支持两种模式：
 
 ## 🚀 快速开始
 
-### 安装
+### 安装和运行
 
-#### 1. 安装依赖
+#### 第一步：安装依赖
+
+打开终端，进入项目目录，运行：
 
 ```bash
 npm install
 ```
 
-#### 2. 启动开发服务器
+这会自动安装所有必需的依赖包。
+
+#### 第二步：启动应用
+
+运行开发服务器：
 
 ```bash
 npm run dev
 ```
 
-浏览器访问：`http://localhost:5173`
+启动成功后，浏览器会自动打开，或手动访问：`http://localhost:5173`
 
-### 运行
+#### 第三步：连接网络
 
-#### ⚠️ 重要：信令服务器说明
+IndexerChain 需要连接到网络才能与其他节点通信。有两种模式可选：
 
-IndexerChain 需要信令服务器来建立 P2P 连接。默认配置尝试连接 `wss://signal.indexerchain.io`，如果该服务器未部署，连接会失败。
+**本地测试模式（推荐新手）**
 
-**解决方案**：
+1. 在项目目录中找到并运行信令服务器启动脚本：
+   - **Mac/Linux 用户**：双击运行 `start-server.sh` 或在终端执行 `./start-server.sh`
+   - **Windows 用户**：双击运行 `start-server.bat`
 
-#### 方式一：本地开发模式（推荐用于测试）
+2. 在浏览器页面的 "P2P Network" 部分：
+   - 确保 **未勾选** "Mainnet Mode"
+   - 信令服务器地址输入：`ws://localhost:8080`
+   - 点击 "Connect" 按钮
 
-1. **启动本地信令服务器**：
-   ```bash
-   # Mac/Linux
-   ./start-server.sh
-   
-   # Windows
-   start-server.bat
-   
-   # 或手动启动
-   npm install ws
-   node signaling-server-example.js
-   ```
+3. 连接成功后，状态会显示 "Connected"，你可以开始使用所有功能。
 
-2. 打开浏览器访问 `http://localhost:5173`
-3. 在 "P2P Network" 部分：
-   - **取消勾选 "Mainnet Mode"**
-   - 输入信令服务器地址：`ws://localhost:8080`
-   - 点击 "Connect" 连接
+**主网模式（需要部署服务器）**
 
-**特点**：适合本地测试、单机挖矿、私有链、开发调试
+1. 首先需要部署一个公网可访问的信令服务器（详见下方「部署」章节）
 
-#### 方式二：主网模式（需要部署信令服务器）
+2. 在浏览器页面的 "P2P Network" 部分：
+   - **勾选** "Mainnet Mode"
+   - 输入你的信令服务器地址（例如：`wss://signal.yourdomain.com`）
+   - 点击 "Connect" 按钮
 
-1. **先部署信令服务器**（详见下方「部署根节点」章节）：
-   - 选项 A：使用 Cloudflare Workers（推荐，免费，5 分钟）
-   - 选项 B：使用 VPS 部署（需要服务器）
+3. 连接成功后，你将与全球用户共享同一条链。
 
-2. 更新 `src/ui/App.tsx` 中的 `DEFAULT_MAINNET_SIGNALING` 为你的服务器地址
+> 💡 **提示**：如果只是想测试功能，建议使用本地测试模式，无需部署服务器。
 
-3. 打开浏览器访问 `http://localhost:5173`
-4. 在 "P2P Network" 部分勾选 "Mainnet Mode"
-5. 点击 "Connect" 连接到主网
+### 部署到生产环境
 
-**特点**：全球用户共享同一条链
+#### 部署前准备
 
-> 💡 **快速部署指南**：查看 [DEPLOY_SIGNALING.md](./DEPLOY_SIGNALING.md) 获取详细的信令服务器部署步骤。
+部署 IndexerChain 需要完成两个部分：
 
-### 部署
+1. **前端应用**：用户访问的网页界面
+2. **信令服务器**：让用户之间建立连接的服务器（必需）
 
-#### ⚠️ 部署前必读
+> ⚠️ **重要**：如果只部署前端，用户将无法连接到网络。必须同时部署信令服务器。
 
-IndexerChain 的完整部署包括两部分：
-1. **前端应用**：部署到 Cloudflare Pages（用户访问的网页）
-2. **信令服务器**：部署信令服务器（P2P 网络基础设施）
+#### 第一步：构建前端应用
 
-**如果只部署前端，用户将无法连接 P2P 网络！**
-
-> 📖 **详细部署指南**：查看 [DEPLOY_SIGNALING.md](./DEPLOY_SIGNALING.md) 获取信令服务器快速部署步骤。
-
-#### 1. 构建生产版本
+在项目目录运行：
 
 ```bash
 npm run build
 ```
 
-构建产物在 `dist/` 目录。
+构建完成后，会在 `dist/` 目录生成所有文件。
 
-#### 2. 部署前端应用到 Cloudflare Pages
+#### 第二步：部署前端到 Cloudflare Pages（推荐）
 
-**方式一：通过 Cloudflare Dashboard（推荐）**
+Cloudflare Pages 提供免费的全球 CDN 和自动 HTTPS，非常适合部署前端应用。
 
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. 进入 "Pages" → "Create a project"
-3. 连接 Git 仓库（GitHub/GitLab/Bitbucket）
-4. 构建设置：
-   - **Build command**: `npm run build`
-   - **Build output directory**: `dist`
-   - **Root directory**: `/`（项目根目录）
-5. 点击 "Save and Deploy"
-6. 等待构建完成，获得 `*.pages.dev` 域名
+**通过网页界面部署（最简单）**：
 
-**方式二：通过 Wrangler CLI**
-
-```bash
-# 安装 Wrangler
-npm install -g wrangler
-
-# 登录 Cloudflare
-wrangler login
-
-# 部署到 Pages
-wrangler pages deploy dist --project-name=indexerchain
-```
+1. 访问 [Cloudflare Dashboard](https://dash.cloudflare.com/) 并登录
+2. 点击左侧菜单的 "Pages"，然后点击 "Create a project"
+3. 选择 "Connect to Git"，连接你的 GitHub/GitLab 仓库
+4. 配置构建设置：
+   - **Build command**：输入 `npm run build`
+   - **Build output directory**：输入 `dist`
+   - **Root directory**：留空或输入 `/`
+5. 点击 "Save and Deploy" 开始部署
+6. 等待几分钟，部署完成后会获得一个 `*.pages.dev` 的免费域名
 
 **配置自定义域名（可选）**：
 
-1. 在 Cloudflare Pages 项目中进入 "Custom domains"
-2. 添加你的域名（如 `indexerchain.io`）
-3. Cloudflare 会自动配置 DNS 和 SSL 证书
+1. 在项目设置中找到 "Custom domains"
+2. 点击 "Set up a custom domain"
+3. 输入你的域名（如 `indexerchain.com`）
+4. 按照提示配置 DNS 记录
+5. Cloudflare 会自动配置 SSL 证书
 
-部署完成后，用户可通过 Cloudflare Pages 提供的域名访问应用。
+#### 第三步：部署信令服务器
 
-#### 3. 部署信令服务器（必需，用于主网模式）
+信令服务器是必需的，它帮助用户之间建立连接。有两种部署方式：
 
-**快速选择**：
+**方式一：使用 Cloudflare Workers（推荐，免费且简单）**
 
-- **方案 A：Cloudflare Workers**（推荐，无需 VPS，全球 CDN）
-  - 适合：快速部署、全球用户、无服务器架构
-  - 成本：免费额度充足，超出后按量付费
-  - 详见下方「部署根节点 → 方案二：Cloudflare Workers」
+适合：快速部署、全球用户、无需服务器
 
-- **方案 B：VPS 部署**（传统方案，需要服务器）
-  - 适合：完全控制、自定义配置、高并发
-  - 成本：$5-10/月 VPS 费用
-  - 详见下方「部署根节点 → 方案一：VPS 部署」
+1. 访问 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. 点击左侧菜单的 "Workers & Pages"
+3. 点击 "Create application" → "Create Worker"
+4. 将项目中的信令服务器代码复制到 Worker 编辑器
+5. 点击 "Deploy" 部署
+6. 获得 Worker 地址（如 `your-worker.your-subdomain.workers.dev`）
+7. 配置自定义域名（可选）：在 Worker 设置中添加你的域名
 
-**注意**：如果只是本地测试，可以跳过信令服务器部署，使用本地开发模式。
+**方式二：使用 VPS 服务器（需要购买服务器）**
 
-#### 部署根节点（Root Node Deployment）
+适合：完全控制、高并发、自定义配置
 
-IndexerChain 的根节点包括两个可选组件：
+1. 购买一台 VPS 服务器（推荐：DigitalOcean、Vultr、阿里云等，约 $5/月）
+2. 在服务器上安装 Node.js（版本 20 或更高）
+3. 上传信令服务器文件到服务器
+4. 安装依赖并启动服务
+5. 配置域名和 SSL 证书（使用 Let's Encrypt 免费证书）
+6. 配置防火墙开放必要端口
 
-1. **信令服务器（Signaling Server）**：用于 WebRTC P2P 连接建立（必需）
-2. **远程快照服务器（Remote Snapshot Server）**：用于快速同步（可选）
+> 📖 **详细步骤**：查看 [DEPLOY_SIGNALING.md](./DEPLOY_SIGNALING.md) 获取信令服务器的详细部署步骤。
 
----
+#### 第四步：更新应用配置
 
-##### 1. 部署信令服务器（Signaling Server）
+部署完成后，需要在前端应用中配置信令服务器地址：
 
-信令服务器是 IndexerChain 网络的核心基础设施，负责帮助浏览器节点建立 WebRTC 连接。
+1. 打开项目中的配置文件
+2. 将主网信令服务器地址更新为你部署的地址
+3. 重新构建并部署前端应用
+
+#### 部署检查清单
+
+部署完成后，请验证：
+
+- ✅ 前端应用可以正常访问
+- ✅ 信令服务器可以正常连接
+- ✅ 在浏览器中可以成功连接网络
+- ✅ 可以创建交易和开始挖矿
+- ✅ 多个用户之间可以正常同步
+
+#### 成本估算
+
+- **前端部署**：Cloudflare Pages 免费
+- **信令服务器（Workers）**：免费额度充足，超出后按量付费（通常免费额度足够使用）
+- **信令服务器（VPS）**：约 $5-10/月
+- **域名**：约 $10-15/年（可选）
+
+**总计**：如果使用 Cloudflare Workers，几乎完全免费；如果使用 VPS，约 $5-10/月。
+
+#### 关于信令服务器
+
+**什么是信令服务器？**
+
+信令服务器是 IndexerChain 网络的基础设施，它的作用是帮助用户的浏览器之间建立连接。可以把它想象成"电话交换机"——它只负责介绍用户给彼此认识，之后用户之间直接通信。
 
 **重要说明**：
 - ✅ 信令服务器**不存储任何区块链数据**
-- ✅ 信令服务器**不参与共识**
-- ✅ 信令服务器**不广播区块**
-- ✅ 区块链数据完全通过 WebRTC DataChannel 传输，不经过信令服务器
-- ✅ 即使信令服务器被攻破，也无法影响链的安全性
-
-**方案一：VPS 部署（推荐）**
-
-1. **选择 VPS 提供商**：
-   - DigitalOcean（$5/月，1GB RAM）
-   - Vultr（$5/月，1GB RAM）
-   - 阿里云 / 腾讯云（按需付费）
-   - AWS Lightsail（$5/月）
-
-2. **服务器要求**：
-   - **最低配置**：1 CPU，512MB RAM，10GB 存储
-   - **推荐配置**：1 CPU，1GB RAM，20GB 存储
-   - **操作系统**：Ubuntu 20.04+ / Debian 11+ / CentOS 8+
-   - **网络**：公网 IP，开放 80/443 端口（用于 WebSocket）
-
-3. **完整部署步骤**：
-
-```bash
-# ============================================
-# 步骤 1: 安装 Node.js
-# ============================================
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# 验证安装
-node --version  # 应显示 v20.x.x
-npm --version
-
-# ============================================
-# 步骤 2: 准备项目文件
-# ============================================
-# 方式 A: 从 Git 克隆（推荐）
-git clone <your-repo-url>
-cd IndexerChain
-
-# 方式 B: 手动上传文件
-# 只需上传 signaling-server-example.js 文件即可
-
-# ============================================
-# 步骤 3: 安装依赖
-# ============================================
-npm install ws
-
-# ============================================
-# 步骤 4: 配置服务器（可选）
-# ============================================
-# 编辑 signaling-server-example.js，修改端口（如果需要）
-# const PORT = process.env.PORT || 8080;
-
-# ============================================
-# 步骤 5: 使用 PM2 启动服务（推荐）
-# ============================================
-# 安装 PM2（进程管理器，自动重启、日志管理）
-npm install -g pm2
-
-# 启动服务
-pm2 start signaling-server-example.js --name indexerchain-signaling
-
-# 查看状态
-pm2 status
-
-# 查看日志
-pm2 logs indexerchain-signaling
-
-# 保存配置（开机自启）
-pm2 save
-pm2 startup  # 按提示执行生成的命令
-
-# ============================================
-# 步骤 6: 配置防火墙
-# ============================================
-# Ubuntu/Debian (ufw)
-sudo ufw allow 8080/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-
-# CentOS/RHEL (firewalld)
-sudo firewall-cmd --permanent --add-port=8080/tcp
-sudo firewall-cmd --permanent --add-port=80/tcp
-sudo firewall-cmd --permanent --add-port=443/tcp
-sudo firewall-cmd --reload
-```
-
-4. **配置域名和 SSL（HTTPS/WSS）**：
-
-**选项 A: 使用 Nginx 反向代理（推荐）**
-
-```bash
-# 安装 Nginx
-sudo apt-get update
-sudo apt-get install -y nginx
-
-# 安装 Certbot（Let's Encrypt SSL 证书）
-sudo apt-get install -y certbot python3-certbot-nginx
-
-# 配置 Nginx
-sudo nano /etc/nginx/sites-available/indexerchain-signaling
-```
-
-Nginx 配置内容：
-```nginx
-server {
-    listen 80;
-    server_name signal.indexerchain.io;  # 替换为你的域名
-
-    # 重定向到 HTTPS
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name signal.indexerchain.io;  # 替换为你的域名
-
-    # SSL 证书（Certbot 会自动配置）
-    ssl_certificate /etc/letsencrypt/live/signal.indexerchain.io/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/signal.indexerchain.io/privkey.pem;
-
-    # SSL 配置
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    # WebSocket 代理
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_http_version 1.1;
-        
-        # WebSocket 升级
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        
-        # 标准代理头
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # 超时设置
-        proxy_read_timeout 86400;  # 24 小时（WebSocket 长连接）
-        proxy_send_timeout 86400;
-    }
-}
-```
-
-```bash
-# 启用配置
-sudo ln -s /etc/nginx/sites-available/indexerchain-signaling /etc/nginx/sites-enabled/
-sudo nginx -t  # 测试配置
-sudo systemctl restart nginx
-
-# 获取 SSL 证书
-sudo certbot --nginx -d signal.indexerchain.io
-
-# 自动续期（Certbot 会自动配置 cron）
-sudo certbot renew --dry-run
-```
-
-**选项 B: 使用 Cloudflare Tunnel（免费，自动 SSL）**
-
-```bash
-# 1. 安装 cloudflared
-wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-sudo dpkg -i cloudflared-linux-amd64.deb
-
-# 2. 登录 Cloudflare
-cloudflared tunnel login
-
-# 3. 创建隧道
-cloudflared tunnel create indexerchain-signaling
-
-# 4. 配置隧道
-cloudflared tunnel route dns indexerchain-signaling signal.indexerchain.io
-
-# 5. 创建配置文件 ~/.cloudflared/config.yml
-tunnel: <tunnel-id>
-credentials-file: /root/.cloudflared/<tunnel-id>.json
-
-ingress:
-  - hostname: signal.indexerchain.io
-    service: http://localhost:8080
-  - service: http_status:404
-
-# 6. 启动隧道（使用 systemd）
-sudo cloudflared service install
-sudo systemctl start cloudflared
-sudo systemctl enable cloudflared
-```
-
-5. **更新应用配置**：
-
-在 `src/ui/App.tsx` 中修改主网信令服务器地址：
-```typescript
-const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.io";
-```
-
-6. **验证部署**：
-
-```bash
-# 检查服务状态
-pm2 status
-pm2 logs indexerchain-signaling
-
-# 测试 WebSocket 连接
-wscat -c wss://signal.indexerchain.io
-# 或使用浏览器控制台：
-# const ws = new WebSocket('wss://signal.indexerchain.io');
-# ws.onopen = () => console.log('Connected!');
-```
-
-**方案二：使用 Cloudflare Workers（推荐，无需 VPS）**
-
-Cloudflare Workers 支持 WebSocket，可以部署无服务器信令服务，无需 VPS，全球低延迟。
-
-**优势**：
-- ✅ **无需 VPS**：完全无服务器架构
-- ✅ **全球 CDN**：自动边缘部署，低延迟
-- ✅ **自动扩缩容**：根据流量自动调整
-- ✅ **免费额度**：每天 100,000 次请求免费
-- ✅ **自动 SSL**：HTTPS/WSS 自动配置
-
-**部署步骤**：
-
-1. **安装 Wrangler CLI**：
-
-```bash
-npm install -g wrangler
-# 或使用 npx（无需全局安装）
-npx wrangler --version
-```
-
-2. **登录 Cloudflare**：
-
-```bash
-wrangler login
-```
-
-这会打开浏览器，登录你的 Cloudflare 账户。
-
-3. **创建 Worker 项目**：
-
-```bash
-# 创建新项目
-wrangler init indexerchain-signaling
-
-# 或使用现有项目
-cd IndexerChain
-mkdir -p workers
-cd workers
-```
-
-4. **创建信令服务器 Worker**：
-
-创建 `workers/signaling-server.js`：
-
-```javascript
-/**
- * IndexerChain Signaling Server (Cloudflare Worker)
- * 
- * WebSocket-based signaling server for IndexerChain P2P networking
- */
-
-const peers = new Map(); // peerId -> WebSocket
-
-export default {
-  async fetch(request, env, ctx) {
-    // 处理 WebSocket 升级请求
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader !== 'websocket') {
-      return new Response('Expected WebSocket', { status: 426 });
-    }
-
-    // 创建 WebSocket 连接
-    const { 0: client, 1: server } = new WebSocketPair();
-    
-    // 接受 WebSocket 连接
-    server.accept();
-    
-    let nodeId = null;
-
-    // 处理消息
-    server.addEventListener('message', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'join') {
-          // 节点加入
-          nodeId = data.nodeId;
-          peers.set(nodeId, server);
-          console.log(`Node ${nodeId} joined. Total peers: ${peers.size}`);
-
-          // 发送现有节点列表
-          const peerList = Array.from(peers.keys()).filter((id) => id !== nodeId);
-          server.send(JSON.stringify({
-            type: 'peers',
-            peers: peerList,
-          }));
-
-          // 通知其他节点
-          for (const [id, peer] of peers.entries()) {
-            if (id !== nodeId && peer.readyState === WebSocket.READY_STATE_OPEN) {
-              peer.send(JSON.stringify({
-                type: 'new-peer',
-                peerId: nodeId,
-              }));
-            }
-          }
-        } else if (data.type === 'request-peers') {
-          // 请求节点列表
-          const peerList = Array.from(peers.keys()).filter((id) => id !== nodeId);
-          server.send(JSON.stringify({
-            type: 'peers',
-            peers: peerList,
-          }));
-        } else if (
-          data.type === 'offer' ||
-          data.type === 'answer' ||
-          data.type === 'ice-candidate'
-        ) {
-          // 转发 WebRTC 信令消息
-          const target = peers.get(data.to);
-          if (target && target.readyState === WebSocket.READY_STATE_OPEN) {
-            target.send(JSON.stringify({
-              ...data,
-              from: nodeId,
-            }));
-          }
-        }
-      } catch (error) {
-        console.error('Error handling message:', error);
-      }
-    });
-
-    // 处理连接关闭
-    server.addEventListener('close', () => {
-      if (nodeId) {
-        peers.delete(nodeId);
-        console.log(`Node ${nodeId} disconnected. Total peers: ${peers.size}`);
-
-        // 通知其他节点
-        for (const [id, peer] of peers.entries()) {
-          if (peer.readyState === WebSocket.READY_STATE_OPEN) {
-            peer.send(JSON.stringify({
-              type: 'peer-left',
-              peerId: nodeId,
-            }));
-          }
-        }
-      }
-    });
-
-    // 返回 WebSocket 响应
-    return new Response(null, {
-      status: 101,
-      webSocket: client,
-    });
-  },
-};
-```
-
-5. **配置 Wrangler**：
-
-创建或编辑 `workers/wrangler.toml`：
-
-```toml
-name = "indexerchain-signaling"
-main = "signaling-server.js"
-compatibility_date = "2024-01-01"
-
-# WebSocket 支持
-[triggers]
-[triggers.routes]
-pattern = "signal.yourdomain.com/*"
-```
-
-6. **部署 Worker**：
-
-```bash
-cd workers
-wrangler deploy
-```
-
-部署成功后，你会获得一个 URL，例如：
-- `https://indexerchain-signaling.your-subdomain.workers.dev`
-
-7. **配置自定义域名（可选）**：
-
-```bash
-# 添加自定义域名
-wrangler route add "signal.indexerchain.io/*"
-```
-
-然后在 Cloudflare Dashboard 中：
-1. 进入你的域名 DNS 设置
-2. 添加 CNAME 记录：
-   - 名称：`signal`
-   - 目标：`indexerchain-signaling.your-subdomain.workers.dev`
-   - 代理状态：已代理（橙色云）
-
-8. **更新应用配置**：
-
-在 `src/ui/App.tsx` 中修改：
-
-```typescript
-const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.io";
-// 或使用 Workers 默认域名
-// const DEFAULT_MAINNET_SIGNALING = "wss://indexerchain-signaling.your-subdomain.workers.dev";
-```
-
-9. **验证部署**：
-
-```bash
-# 查看 Worker 状态
-wrangler tail
-
-# 测试 WebSocket 连接（浏览器控制台）
-const ws = new WebSocket('wss://signal.indexerchain.io');
-ws.onopen = () => console.log('Connected!');
-ws.onerror = (e) => console.error('Error:', e);
-```
-
-**注意事项**：
-
-- ⚠️ **Durable Objects（推荐）**：对于生产环境，建议使用 Cloudflare Durable Objects 来持久化节点连接状态，避免 Worker 重启导致连接丢失
-- ⚠️ **免费额度限制**：每天 100,000 次请求免费，超出后按量付费
-- ⚠️ **WebSocket 连接数**：每个 Worker 实例最多支持约 30,000 个并发 WebSocket 连接
-- ✅ **自动扩缩容**：Cloudflare 会根据流量自动创建多个 Worker 实例
-
-**使用 Durable Objects（生产环境推荐）**：
-
-对于高可用性需求，可以使用 Durable Objects 来管理节点状态：
-
-```javascript
-// workers/signaling-server.js (使用 Durable Objects)
-export class SignalingRoom {
-  constructor(state, env) {
-    this.state = state;
-    this.env = env;
-    this.peers = new Map();
-  }
-
-  async fetch(request) {
-    // WebSocket 处理逻辑
-    // ...
-  }
-}
-
-export default {
-  async fetch(request, env) {
-    const id = env.SIGNALING_ROOM.idFromName('main');
-    const room = env.SIGNALING_ROOM.get(id);
-    return room.fetch(request);
-  },
-};
-```
-
-在 `wrangler.toml` 中配置：
-
-```toml
-[[durable_objects.bindings]]
-name = "SIGNALING_ROOM"
-class_name = "SignalingRoom"
-```
-
-这样可以确保节点连接状态在 Worker 重启后仍然保持。
-
----
-
-##### 2. 部署远程快照服务器（Remote Snapshot Server，可选）
-
-远程快照服务器用于帮助新节点快速同步，无需从创世块重放。
-
-**API 规范**：
-
-远程快照服务器需要提供两个 HTTP 端点：
-
-1. **GET `/snapshots/meta`** - 获取快照列表
-   - 返回：`SnapshotMeta[]` JSON 数组
-   - 示例响应：
-   ```json
-   [
-     {
-       "id": "snap_0001234",
-       "height": 1234,
-       "blockHash": "abc123...",
-       "stateHash": "def456...",
-       "createdAt": 1730000000000,
-       "version": 1,
-       "compressedSize": 40960,
-       "uncompressedSize": 200000,
-       "verifiedAt": 1730000000000
-     }
-   ]
-   ```
-
-2. **GET `/snapshots/:id`** - 获取快照数据
-   - 返回：`SnapshotData` JSON 对象
-   - 示例响应：
-   ```json
-   {
-     "meta": { ... },
-     "compressed": true,
-     "data": "<base64-gzip-string>",
-     "full": true
-   }
-   ```
-
-**部署方案**：
-
-**方案 A: 静态文件服务器（最简单）**
-
-使用 Nginx 或 Cloudflare Pages 托管快照文件：
-
-```bash
-# 1. 准备快照文件
-# 从运行中的 IndexerChain 节点导出快照
-# 文件结构：
-# /snapshots/
-#   ├── meta.json          # 快照列表
-#   ├── snap_0001234.json  # 快照数据
-#   └── snap_0005678.json
-
-# 2. 使用 Nginx 提供静态文件服务
-server {
-    listen 443 ssl;
-    server_name snap.indexerchain.io;
-    
-    location /snapshots/ {
-        alias /var/www/snapshots/;
-        add_header Access-Control-Allow-Origin *;
-        add_header Content-Type application/json;
-    }
-}
-```
-
-**方案 B: Node.js 服务器（推荐，支持动态更新）**
-
-创建 `snapshot-server.js`：
-
-```javascript
-import express from 'express';
-import fs from 'fs/promises';
-import path from 'path';
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-const SNAPSHOTS_DIR = process.env.SNAPSHOTS_DIR || './snapshots';
-
-// CORS
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET');
-  next();
-});
-
-// GET /snapshots/meta - 返回快照列表
-app.get('/snapshots/meta', async (req, res) => {
-  try {
-    const metaFile = path.join(SNAPSHOTS_DIR, 'meta.json');
-    const meta = JSON.parse(await fs.readFile(metaFile, 'utf-8'));
-    res.json(meta);
-  } catch (error) {
-    console.error('Error reading snapshot meta:', error);
-    res.status(500).json({ error: 'Failed to read snapshot metadata' });
-  }
-});
-
-// GET /snapshots/:id - 返回快照数据
-app.get('/snapshots/:id', async (req, res) => {
-  try {
-    const snapshotFile = path.join(SNAPSHOTS_DIR, `${req.params.id}.json`);
-    const data = JSON.parse(await fs.readFile(snapshotFile, 'utf-8'));
-    res.json(data);
-  } catch (error) {
-    console.error('Error reading snapshot:', error);
-    res.status(404).json({ error: 'Snapshot not found' });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Snapshot server running on port ${PORT}`);
-  console.log(`Snapshots directory: ${SNAPSHOTS_DIR}`);
-});
-```
-
-部署步骤：
-
-```bash
-# 1. 安装依赖
-npm install express
-
-# 2. 准备快照文件
-mkdir -p snapshots
-# 将快照文件复制到 snapshots/ 目录
-
-# 3. 启动服务（使用 PM2）
-pm2 start snapshot-server.js --name indexerchain-snapshots
-pm2 save
-```
-
-**方案 C: Cloudflare Pages / R2（推荐，全球 CDN）**
-
-1. 将快照文件上传到 Cloudflare R2 存储桶
-2. 配置 R2 公共访问
-3. 使用 Cloudflare Pages 提供 API 端点（或直接使用 R2 公共 URL）
-
-**配置客户端**：
-
-在 `src/core/chain.ts` 的 `getDefaultChainParams()` 中配置：
-
-```typescript
-remoteSnapshotEnabled: true,
-remoteSnapshotEndpoints: [
-  "https://snap.indexerchain.io/api/v1",  // 你的快照服务器 URL
-],
-remoteSnapshotMinHeight: 100,  // 只考虑高度 >= 100 的快照
-```
-
----
-
-##### 3. 根节点部署检查清单
-
-**信令服务器**：
-- ✅ Node.js 20+ 已安装
-- ✅ `ws` 包已安装
-- ✅ PM2 已安装并配置开机自启
-- ✅ 防火墙已开放 8080 端口（或通过 Nginx 代理）
-- ✅ 域名已配置并指向服务器 IP
-- ✅ SSL 证书已配置（HTTPS/WSS）
-- ✅ Nginx 反向代理已配置（如使用）
-- ✅ 服务正常运行（`pm2 status` 显示 online）
-- ✅ WebSocket 连接测试通过
-
-**远程快照服务器（可选）**：
-- ✅ 快照文件已准备并上传
-- ✅ HTTP 服务器已部署（Nginx/Node.js/Cloudflare）
-- ✅ `/snapshots/meta` 端点可访问
-- ✅ `/snapshots/:id` 端点可访问
-- ✅ CORS 已配置（允许跨域访问）
-- ✅ SSL 证书已配置（HTTPS）
-
-**应用配置更新**：
-- ✅ `DEFAULT_MAINNET_SIGNALING` 已更新为实际信令服务器地址
-- ✅ `remoteSnapshotEndpoints` 已配置（如使用远程快照）
-
----
-
-##### 4. 监控和维护
-
-**监控信令服务器**：
-
-```bash
-# 查看实时日志
-pm2 logs indexerchain-signaling --lines 100
-
-# 查看服务状态
-pm2 status
-pm2 monit
-
-# 查看资源使用
-pm2 list
-```
-
-**自动重启和故障恢复**：
-
-PM2 已自动配置：
-- ✅ 进程崩溃自动重启
-- ✅ 开机自启
-- ✅ 日志轮转
-
-**备份和恢复**：
-
-```bash
-# 备份 PM2 配置
-pm2 save
-cp ~/.pm2/dump.pm2 /backup/
-
-# 恢复
-pm2 resurrect
-```
-
-**性能优化**：
-
-- 使用 Nginx 作为反向代理，减少 Node.js 负载
-- 配置 Nginx 缓存（对静态快照文件）
-- 使用 Cloudflare CDN 加速快照下载
-- 监控服务器资源使用，必要时升级配置
-
----
-
-##### 5. 安全建议
-
-1. **防火墙配置**：
-   - 只开放必要的端口（80, 443, 22）
-   - 使用 fail2ban 防止暴力破解
-
-2. **SSL/TLS**：
-   - 使用 Let's Encrypt 免费证书
-   - 配置 HSTS 头
-   - 定期更新证书
-
-3. **访问控制**（可选）：
-   - 对快照服务器实施 IP 白名单
-   - 使用 Cloudflare 的 DDoS 保护
-
-4. **日志监控**：
-   - 定期检查 PM2 日志
-   - 设置异常告警
-
----
-
-##### 6. 故障排除
-
-**信令服务器无法启动**：
-```bash
-# 检查端口占用
-sudo netstat -tulpn | grep 8080
-
-# 检查 Node.js 版本
-node --version
-
-# 查看详细错误
-pm2 logs indexerchain-signaling --err
-```
-
-**WebSocket 连接失败**：
-- 检查防火墙设置
-- 检查 Nginx 配置（如使用）
-- 检查 SSL 证书是否有效
-- 检查域名 DNS 解析
-
-**快照服务器 404**：
-- 检查文件路径是否正确
-- 检查文件权限
-- 检查 Nginx 配置（如使用）
+- ✅ 信令服务器**不参与共识和挖矿**
+- ✅ 信令服务器**不广播区块和交易**
+- ✅ 所有区块链数据直接在用户浏览器之间传输
+- ✅ 即使信令服务器出现问题，也不会影响链的安全性
+
+#### 信令服务器部署方式对比
+
+| 方式 | 难度 | 成本 | 适合场景 |
+|------|------|------|----------|
+| Cloudflare Workers | ⭐ 简单 | 免费 | 快速部署、全球用户 |
+| VPS 服务器 | ⭐⭐ 中等 | $5-10/月 | 完全控制、高并发 |
+
+**推荐选择**：
+- 如果是第一次部署或用户量不大，推荐使用 **Cloudflare Workers**，免费且简单
+- 如果需要完全控制或预期高并发，可以选择 **VPS 服务器**
+
+> 📖 **详细部署步骤**：查看 [DEPLOY_SIGNALING.md](./DEPLOY_SIGNALING.md) 获取信令服务器的详细部署指南，包括完整的命令和配置说明。
 
 ## 📖 使用指南
 

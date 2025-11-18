@@ -489,7 +489,7 @@ function App() {
   useEffect(() => {
     const initialize = async () => {
       try {
-        const params = getDefaultChainParams();
+        const params = await getDefaultChainParams();
         const context = await initChain(params);
         setChainContext(context);
         

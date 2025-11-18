@@ -360,7 +360,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
 /**
  * Get default chain parameters for development
  */
-export function getDefaultChainParams(): ChainParams {
+export async function getDefaultChainParams(): Promise<ChainParams> {
   // Phase 30: Check if we should use mainnet params
   // In production, this should default to mainnet
   // For development, you can set MAINNET_MODE=false in environment
@@ -370,7 +370,7 @@ export function getDefaultChainParams(): ChainParams {
      localStorage.getItem("indexerchain_force_mainnet") === "true");
   
   if (useMainnet) {
-    const { MAINNET_PARAMS } = require("./networkParams.js");
+    const { MAINNET_PARAMS } = await import("./networkParams.js");
     return MAINNET_PARAMS;
   }
   

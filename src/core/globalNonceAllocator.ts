@@ -75,7 +75,7 @@ export class GlobalNonceAllocator {
    * Calculate optimal range size based on node capability
    * Phase 21: Also consider peer reputation score
    */
-  private calculateRangeSize(capability: NodeCapability): bigint {
+  private async calculateRangeSize(capability: NodeCapability): Promise<bigint> {
     // Base range size proportional to hashrate
     // Higher hashrate = larger range to reduce communication overhead
     const baseRange = this.DEFAULT_RANGE_SIZE;
@@ -89,7 +89,7 @@ export class GlobalNonceAllocator {
     // Phase 21: Adjust based on peer reputation
     if (this.params.peerScoreEnabled) {
       try {
-        const { getGlobalPeerReputationManager } = require("./peerReputation.js");
+        const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
         const reputationManager = getGlobalPeerReputationManager(this.params);
         const trustLevel = reputationManager.getTrustLevel(capability.nodeId);
         
@@ -126,7 +126,7 @@ export class GlobalNonceAllocator {
   /**
    * Allocate a new nonce range for a node/worker
    */
-  allocateRange(nodeId: string, workerId: number): NonceRange | null {
+  async allocateRange(nodeId: string, workerId: number): Promise<NonceRange | null> {
     // Check if node already has a range for this worker
     const existingKey = `${nodeId}_${workerId}`;
     const existing = this.allocatedRanges.get(existingKey);
@@ -154,7 +154,7 @@ export class GlobalNonceAllocator {
     }
     
     const updatedCapability = this.nodeCapabilities.get(nodeId)!;
-    const rangeSize = this.calculateRangeSize(updatedCapability);
+    const rangeSize = await this.calculateRangeSize(updatedCapability);
     
     // Check if we have space
     if (this.globalPointer + rangeSize > this.MAX_NONCE) {
@@ -177,7 +177,7 @@ export class GlobalNonceAllocator {
             (start <= range.start && end >= range.end)) {
           // Overlap detected, skip to after this range
           this.globalPointer = range.end;
-          return this.allocateRange(nodeId, workerId); // Retry
+          return await this.allocateRange(nodeId, workerId); // Retry
         }
       }
     }

@@ -95,9 +95,9 @@ export class DelegatorManager {
     });
 
     // Handle REQUEST_NONCE_RANGE messages
-    this.p2pNode.onMessage("REQUEST_NONCE_RANGE", (request: { nodeId: string; workerId: number }) => {
+    this.p2pNode.onMessage("REQUEST_NONCE_RANGE", async (request: { nodeId: string; workerId: number }) => {
       if (this.state.isDelegator) {
-        this.handleRangeRequest(request.nodeId, request.workerId);
+        await this.handleRangeRequest(request.nodeId, request.workerId);
       }
     });
 
@@ -109,9 +109,9 @@ export class DelegatorManager {
     });
 
     // Handle NONCE_RANGE_EXHAUSTED messages
-    this.p2pNode.onMessage("NONCE_RANGE_EXHAUSTED", (request: { nodeId: string; workerId: number }) => {
+    this.p2pNode.onMessage("NONCE_RANGE_EXHAUSTED", async (request: { nodeId: string; workerId: number }) => {
       if (this.state.isDelegator) {
-        this.handleRangeExhausted(request.nodeId, request.workerId);
+        await this.handleRangeExhausted(request.nodeId, request.workerId);
       }
     });
 
@@ -130,10 +130,10 @@ export class DelegatorManager {
    * Handle range request
    * Phase 21: Consider peer reputation when allocating ranges
    */
-  private handleRangeRequest(nodeId: string, workerId: number): void {
+  private async handleRangeRequest(nodeId: string, workerId: number): Promise<void> {
     // Phase 21: Check if peer is banned
     if (this.params.peerScoreEnabled) {
-      const { getGlobalPeerReputationManager } = require("./peerReputation.js");
+      const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
       const reputationManager = getGlobalPeerReputationManager(this.params);
       if (reputationManager.isBanned(nodeId)) {
         console.log(`[Phase 21] Rejecting range request from banned peer: ${nodeId.substring(0, 16)}...`);
@@ -141,12 +141,12 @@ export class DelegatorManager {
       }
     }
     
-    const range = this.allocator.allocateRange(nodeId, workerId);
+    const range = await this.allocator.allocateRange(nodeId, workerId);
     
     if (range && this.p2pNode) {
       // Phase 21: Record work assigned
       if (this.params.peerScoreEnabled) {
-        const { getGlobalPeerReputationManager } = require("./peerReputation.js");
+        const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
         const reputationManager = getGlobalPeerReputationManager(this.params);
         reputationManager.onWorkAssigned(nodeId);
       }
@@ -190,17 +190,17 @@ export class DelegatorManager {
    * Handle range exhausted
    * Phase 21: Record work completion for reputation
    */
-  private handleRangeExhausted(nodeId: string, workerId: number): void {
+  private async handleRangeExhausted(nodeId: string, workerId: number): Promise<void> {
     // Phase 21: Record work completed (normal exhaustion means they finished the range)
     if (this.params.peerScoreEnabled) {
-      const { getGlobalPeerReputationManager } = require("./peerReputation.js");
+      const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
       const reputationManager = getGlobalPeerReputationManager(this.params);
       reputationManager.onWorkCompleted(nodeId);
     }
     
     // Release old range and allocate new one
     this.allocator.releaseRange(nodeId, workerId);
-    this.handleRangeRequest(nodeId, workerId);
+    await this.handleRangeRequest(nodeId, workerId);
   }
 
   /**
