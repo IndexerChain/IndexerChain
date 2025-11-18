@@ -53,8 +53,10 @@ import { WalletBackupPanel } from "./WalletBackupPanel.js";
 import { WalletManagerPanel } from "./WalletManagerPanel.js";
 import { ConfigChecker } from "./ConfigChecker.js";
 import { RuntimePanel } from "./RuntimePanel.js";
+import { PrivacyPanel } from "./privacy/PrivacyPanel.js";
 import { RuntimeManager } from "../core/runtimeManager.js";
 import { useI18n } from "../i18n/useI18n.js";
+import { getLocalInstanceCoordinator, type LocalInstanceRole, type LeaderInfo } from "../core/localInstance.js";
 import "./index.css";
 
 /**
@@ -133,6 +135,12 @@ function App() {
     }
     return 4;
   });
+  
+  // Phase 27: Local Instance Coordinator
+  const [localCoordinator] = useState(() => getLocalInstanceCoordinator());
+  const [localRole, setLocalRole] = useState<LocalInstanceRole>("FOLLOWER");
+  const [leaderInfo, setLeaderInfo] = useState<LeaderInfo | null>(null);
+  const [localConflictDetected, setLocalConflictDetected] = useState<boolean>(false);
   
   // Phase 26: Duty cycle state
   const [dutyCycle, setDutyCycle] = useState<number>(1.0);
@@ -260,6 +268,78 @@ function App() {
       initFinality();
     }
   }, [chainContext, finalityManager]);
+
+  // Phase 27: Initialize Local Instance Coordinator
+  useEffect(() => {
+    const initCoordinator = async () => {
+      await localCoordinator.init();
+      
+      // Set initial state
+      setLocalRole(localCoordinator.getRole());
+      setLeaderInfo(localCoordinator.getLeaderInfo());
+      
+      // Register callbacks
+      const unregisterRoleChange = localCoordinator.onRoleChange((role, leaderInfo) => {
+        setLocalRole(role);
+        setLeaderInfo(leaderInfo);
+        
+        // If we became follower, stop mining
+        if (role === "FOLLOWER") {
+          if (isMining) {
+            minerClient.stopMining("user");
+            setIsMining(false);
+          }
+          if (clusterMining) {
+            minerCluster.stopMining("user");
+            setClusterMining(false);
+          }
+        }
+        
+        // If we became leader and auto-mining is enabled, start mining
+        if (role === "LEADER" && autoMining && !isMining && !clusterMining && chainContext) {
+          // Use setTimeout to avoid calling handleStartMining before it's defined
+          setTimeout(() => {
+            if (chainContext && !isMining && !clusterMining) {
+              handleStartMining();
+            }
+          }, 100);
+        }
+      });
+      
+      const unregisterLeaderChange = localCoordinator.onLeaderChange((leaderInfo) => {
+        setLeaderInfo(leaderInfo);
+      });
+      
+      const unregisterConflict = localCoordinator.onConflictDetected((localHeight, leaderHeight, finalizedHeight) => {
+        setLocalConflictDetected(true);
+        setError(
+          locale === "zh"
+            ? `⚠️ 检测到本地分叉冲突：本地高度 ${localHeight}，Leader 高度 ${leaderHeight}，已最终确认高度 ${finalizedHeight}。将自动回滚并重新同步。`
+            : `⚠️ Local fork conflict detected: Local height ${localHeight}, Leader height ${leaderHeight}, Finalized height ${finalizedHeight}. Will auto-rollback and resync.`
+        );
+      });
+      
+      return () => {
+        unregisterRoleChange();
+        unregisterLeaderChange();
+        unregisterConflict();
+        localCoordinator.destroy();
+      };
+    };
+    
+    initCoordinator();
+  }, [localCoordinator]);
+
+  // Phase 27: Report local status to coordinator
+  useEffect(() => {
+    if (chainContext) {
+      const tip = chainContext.storage.getTip();
+      if (tip) {
+        const finalizedHeight = finalityStats?.finalizedCount || 0;
+        localCoordinator.reportLocalStatus(tip.header.height, tip.hash, finalizedHeight);
+      }
+    }
+  }, [chainContext, finalityStats]);
 
   // Form state for creating transactions
   const [txNamespace, setTxNamespace] = useState<string>("test");
@@ -945,8 +1025,20 @@ function App() {
   };
 
   // Phase 18: Start cluster mining
+  // Phase 27: Check if this instance can mine (must be LEADER)
   const handleStartClusterMining = async () => {
     if (!chainContext) return;
+    
+    // Phase 27: Only LEADER can mine
+    if (!localCoordinator.canMine()) {
+      const leaderId = leaderInfo?.instanceId || "unknown";
+      setError(
+        locale === "zh"
+          ? `⚠️ 本机已有一个挖矿实例：${leaderId}，当前实例为只读模式。如需在本实例挖矿，请先在其他实例中关闭挖矿或关闭页面。`
+          : `⚠️ This machine already has a mining instance: ${leaderId}. Current instance is read-only. To mine on this instance, please stop mining on other instances or close their pages.`
+      );
+      return;
+    }
 
     const pendingTxs = mempool.getAll();
 
@@ -1113,8 +1205,20 @@ function App() {
   };
 
   // Phase 8: Start mining using Worker (single worker mode)
+  // Phase 27: Check if this instance can mine (must be LEADER)
   const handleStartMining = async () => {
     if (!chainContext) return;
+    
+    // Phase 27: Only LEADER can mine
+    if (!localCoordinator.canMine()) {
+      const leaderId = leaderInfo?.instanceId || "unknown";
+      setError(
+        locale === "zh"
+          ? `⚠️ 本机已有一个挖矿实例：${leaderId}，当前实例为只读模式。如需在本实例挖矿，请先在其他实例中关闭挖矿或关闭页面。`
+          : `⚠️ This machine already has a mining instance: ${leaderId}. Current instance is read-only. To mine on this instance, please stop mining on other instances or close their pages.`
+      );
+      return;
+    }
     
     // Allow mining even without pending transactions (coinbase only blocks are valid)
     const pendingTxs = mempool.getAll();
@@ -1184,9 +1288,13 @@ function App() {
               const txIds = event.block.txs.map((tx) => tx.txId);
               mempool.removeTxs(txIds);
 
-              // Update context (but don't create new object if nothing changed)
-              // Only update if we need to trigger a re-render
-              // setChainContext({ ...chainContext });
+              // Update lastHeightRef to prevent immediate restart
+              const newTip = chainContext.storage.getTip();
+              if (newTip) {
+                lastHeightRef.current = newTip.header.height;
+              }
+
+              // Don't update chainContext here - let the useEffect handle it
               setError("");
             } else {
               setError(result.error || "Failed to append block");
@@ -1199,14 +1307,8 @@ function App() {
           setMiningHash("");
           setMiningNonce(0);
           
-          // Auto-restart mining if auto-mining is enabled
-          if (autoMining && chainContext) {
-            setTimeout(() => {
-              if (!isMining) {
-                handleStartMining();
-              }
-            }, 1000);
-          }
+          // Don't auto-restart here - let the useEffect handle it based on tip change
+          // This prevents immediate restart and gives time for state to stabilize
         },
         onStopped: (event) => {
           setIsMining(false);
@@ -1240,6 +1342,23 @@ function App() {
   // Phase 8: Auto-restart mining when tip changes
   // Use useRef to persist lastHeight across re-renders
   const lastHeightRef = useRef<number>(0);
+  const isRestartingRef = useRef<boolean>(false); // Prevent multiple simultaneous restarts
+  const chainContextRef = useRef<ChainContext | null>(chainContext);
+  const isMiningRef = useRef<boolean>(isMining);
+  const autoMiningRef = useRef<boolean>(autoMining);
+  
+  // Update refs when values change
+  useEffect(() => {
+    chainContextRef.current = chainContext;
+  }, [chainContext]);
+  
+  useEffect(() => {
+    isMiningRef.current = isMining;
+  }, [isMining]);
+  
+  useEffect(() => {
+    autoMiningRef.current = autoMining;
+  }, [autoMining]);
   
   useEffect(() => {
     if (!chainContext) return;
@@ -1252,32 +1371,61 @@ function App() {
 
     // Check if tip changed (new block received)
     const checkTip = () => {
-      if (!chainContext) return;
-      const newTip = chainContext.storage.getTip();
+      const currentContext = chainContextRef.current;
+      if (!currentContext || isRestartingRef.current) return;
+      
+      const newTip = currentContext.storage.getTip();
       const newHeight = newTip?.header.height ?? 0;
+      const currentIsMining = isMiningRef.current;
+      const currentAutoMining = autoMiningRef.current;
+      
       if (newHeight > lastHeightRef.current) {
         // Tip changed, restart mining if currently mining or auto-mining is enabled
         console.log("[App] Tip height changed:", lastHeightRef.current, "->", newHeight);
         lastHeightRef.current = newHeight;
-        if (isMining) {
+        
+        // Only restart if we're actually mining (not just auto-mining enabled)
+        if (currentIsMining) {
+          isRestartingRef.current = true;
           minerClient.stopMining("replaced");
-        }
-        // Restart after a short delay (allow mining even without pending transactions)
-        // Only restart if currently mining or auto-mining is enabled
-        if (isMining || autoMining) {
+          // Restart after a short delay
           setTimeout(() => {
-            if (chainContext && (!isMining || autoMining)) {
+            const ctx = chainContextRef.current;
+            const mining = isMiningRef.current;
+            if (ctx && mining && !isRestartingRef.current) {
+              // Double-check we're still supposed to be mining
               handleStartMining();
+              setTimeout(() => {
+                isRestartingRef.current = false;
+              }, 2000);
+            } else {
+              isRestartingRef.current = false;
             }
-          }, 500);
+          }, 1500);
+        } else if (currentAutoMining && !currentIsMining) {
+          // Auto-mining enabled but not currently mining, start it
+          isRestartingRef.current = true;
+          setTimeout(() => {
+            const ctx = chainContextRef.current;
+            const auto = autoMiningRef.current;
+            const mining = isMiningRef.current;
+            if (ctx && auto && !mining) {
+              handleStartMining();
+              setTimeout(() => {
+                isRestartingRef.current = false;
+              }, 2000);
+            } else {
+              isRestartingRef.current = false;
+            }
+          }, 1500);
         }
       }
     };
 
-    const interval = setInterval(checkTip, 1000); // Check every second
+    const interval = setInterval(checkTip, 2000); // Check every 2 seconds (less frequent)
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainContext, isMining, autoMining]);
+  }, []); // Empty deps - we use refs to access current values
 
   if (loading) {
     return (
@@ -1506,6 +1654,12 @@ function App() {
             >
               {t("tabs.token")}
             </button>
+            <button
+              className={`tab-button ${activeTab === "privacy" ? "active" : ""}`}
+              onClick={() => setActiveTab("privacy")}
+            >
+              {locale === "zh" ? "🔒 隐私" : "🔒 Privacy"}
+            </button>
           </div>
 
           {/* Overview Tab */}
@@ -1674,6 +1828,70 @@ function App() {
                 </div>
               )}
 
+              {/* Phase 27: Local Instance Status */}
+              {localRole && (
+                <div className="status-card" style={{ 
+                  background: localRole === "LEADER" ? "#e7f3ff" : "#fff3cd",
+                  border: localRole === "LEADER" ? "2px solid #667eea" : "2px solid #ffc107",
+                  marginBottom: "1.5rem"
+                }}>
+                  <h2>🖥️ {locale === "zh" ? "本地实例状态" : "Local Instance Status"}</h2>
+                  <div className="status-item">
+                    <span className="label">{locale === "zh" ? "角色" : "Role"}:</span>
+                    <span className="value" style={{ 
+                      fontWeight: "bold",
+                      color: localRole === "LEADER" ? "#667eea" : "#ffc107"
+                    }}>
+                      {localRole === "LEADER" 
+                        ? (locale === "zh" ? "主节点 (LEADER)" : "Leader")
+                        : (locale === "zh" ? "跟随节点 (FOLLOWER)" : "Follower")}
+                    </span>
+                  </div>
+                  {leaderInfo && (
+                    <>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "Leader 实例" : "Leader Instance"}:</span>
+                        <span className="value" style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>
+                          {leaderInfo.instanceId.substring(0, 20)}...
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "Leader 高度" : "Leader Height"}:</span>
+                        <span className="value">{leaderInfo.height}</span>
+                      </div>
+                    </>
+                  )}
+                  {localRole === "FOLLOWER" && (
+                    <div style={{ 
+                      marginTop: "0.75rem", 
+                      padding: "0.75rem", 
+                      background: "rgba(255, 193, 7, 0.1)",
+                      borderRadius: "4px",
+                      fontSize: "0.85rem",
+                      color: "#856404"
+                    }}>
+                      {locale === "zh" 
+                        ? "⚠️ 当前实例为只读模式。如需挖矿，请先在其他实例中关闭挖矿或关闭页面。"
+                        : "⚠️ Current instance is read-only. To mine, please stop mining on other instances or close their pages."}
+                    </div>
+                  )}
+                  {localConflictDetected && (
+                    <div style={{ 
+                      marginTop: "0.75rem", 
+                      padding: "0.75rem", 
+                      background: "#f8d7da",
+                      borderRadius: "4px",
+                      fontSize: "0.85rem",
+                      color: "#721c24"
+                    }}>
+                      {locale === "zh" 
+                        ? "⚠️ 检测到本地分叉冲突，将自动回滚并重新同步。"
+                        : "⚠️ Local fork conflict detected, will auto-rollback and resync."}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Quick Stats Grid */}
               <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
                 {/* Chain Status Card */}
@@ -1685,6 +1903,14 @@ function App() {
                       {height}
                     </span>
                   </div>
+                  {finalityStats && (
+                    <div className="status-item">
+                      <span className="label">{locale === "zh" ? "已最终确认高度" : "Finalized Height"}:</span>
+                      <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
+                        {finalityStats.finalizedCount}
+                      </span>
+                    </div>
+                  )}
                   <div className="status-item">
                     <span className="label">{t("chain.blockCount")}:</span>
                     <span className="value">{blockCount}</span>
@@ -1744,12 +1970,68 @@ function App() {
                     </span>
                   </div>
                   {nodeAddress && chainContext && (
-                    <div className="status-item">
-                      <span className="label">{t("wallet.balance")}:</span>
-                      <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
-                        {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
-                      </span>
-                    </div>
+                    <>
+                      <div className="status-item">
+                        <span className="label">{t("wallet.balance")}:</span>
+                        <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
+                          {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                        </span>
+                      </div>
+                      {/* Balance Debug Info */}
+                      <div className="status-item" style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
+                        <details style={{ cursor: "pointer" }}>
+                          <summary style={{ userSelect: "none" }}>
+                            {locale === "zh" ? "🔍 余额诊断" : "🔍 Balance Debug"}
+                          </summary>
+                          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f8f9fa", borderRadius: "4px", fontFamily: "monospace", fontSize: "0.7rem" }}>
+                            <div><strong>{locale === "zh" ? "地址" : "Address"}:</strong> {nodeAddress}</div>
+                            <div><strong>{locale === "zh" ? "区块高度" : "Block Height"}:</strong> {tip?.header.height ?? 0}</div>
+                            <div><strong>{locale === "zh" ? "区块数量" : "Block Count"}:</strong> {chainContext.storage.getAllBlocks().length}</div>
+                            <div><strong>{locale === "zh" ? "余额 (balances namespace)" : "Balance (balances namespace)"}:</strong> {chainContext.indexState.get("balances", nodeAddress) ?? (locale === "zh" ? "未设置" : "not set")}</div>
+                            <div><strong>{locale === "zh" ? "P2P 连接" : "P2P Connection"}:</strong> {isP2PConnected ? (peerCount > 0 ? (locale === "zh" ? `已连接 (${peerCount} 个节点)` : `Connected (${peerCount} peers)`) : (locale === "zh" ? "未连接" : "Not connected")) : (locale === "zh" ? "未初始化" : "Not initialized")}</div>
+                            {tip && (
+                              <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                                <div><strong>{locale === "zh" ? "最新区块哈希" : "Latest Block Hash"}:</strong> {tip.hash.substring(0, 20)}...</div>
+                                <div><strong>{locale === "zh" ? "最新区块时间" : "Latest Block Time"}:</strong> {new Date(tip.header.timestamp * 1000).toLocaleString()}</div>
+                              </div>
+                            )}
+                            {/* Force Sync Button */}
+                            {isP2PConnected && peerCount > 0 && chainContext.p2p && (
+                              <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const localTip = chainContext.storage.getTip();
+                                      const localHeight = localTip?.header.height ?? -1;
+                                      // Request blocks from network
+                                      chainContext.p2p!.broadcast("REQUEST_BLOCKS", {
+                                        fromHeight: localHeight + 1,
+                                        toHeight: localHeight + 100, // Request up to 100 blocks ahead
+                                      });
+                                      setError(locale === "zh" ? "已请求同步区块，请等待..." : "Requested block sync, please wait...");
+                                      setTimeout(() => setError(""), 3000);
+                                    } catch (err) {
+                                      setError(err instanceof Error ? err.message : "Failed to request sync");
+                                    }
+                                  }}
+                                  style={{
+                                    padding: "0.25rem 0.5rem",
+                                    fontSize: "0.7rem",
+                                    background: "#667eea",
+                                    color: "white",
+                                    border: "none",
+                                    borderRadius: "3px",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {locale === "zh" ? "🔄 强制同步区块" : "🔄 Force Sync Blocks"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      </div>
+                    </>
                   )}
                   <div className="status-item">
                     <span className="label">{t("wallet.nodeId")}:</span>
@@ -1814,7 +2096,7 @@ function App() {
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(nodeAddress);
-                        setError(locale === "zh" ? "地址已复制到剪贴板！" : "Address copied to clipboard!");
+                        setError(t("wallet.addressCopied"));
                         setTimeout(() => setError(""), 2000);
                       }}
                       style={{
@@ -1869,14 +2151,14 @@ function App() {
                 <h2>🔐 {t("wallet.backup")}</h2>
                 <WalletBackupPanel
                   onExportSuccess={() => {
-                    setError(locale === "zh" ? "✅ 钱包备份导出成功！请安全保存文件。" : "✅ Wallet backup exported successfully! Save the file securely.");
+                    setError(t("wallet.exportSuccess"));
                     setTimeout(() => setError(""), 5000);
                   }}
                   onImportSuccess={async () => {
                     // Reload address after import
                     const address = await getOrCreateNodeAddress();
                     setNodeAddress(address);
-                    setError(locale === "zh" ? "✅ 钱包导入成功！您的身份已恢复。" : "✅ Wallet imported successfully! Your identity has been restored.");
+                    setError(t("wallet.importSuccess"));
                     setTimeout(() => setError(""), 5000);
                   }}
                   onError={(err) => {
@@ -2018,10 +2300,25 @@ function App() {
                           <button
                             className="btn btn-primary"
                             onClick={handleStartMining}
-                            disabled={!nodeAddress}
-                            style={{ fontSize: "1rem", padding: "0.75rem 1.5rem" }}
+                            disabled={!nodeAddress || !localCoordinator.canMine()}
+                            style={{ 
+                              fontSize: "1rem", 
+                              padding: "0.75rem 1.5rem",
+                              opacity: (!nodeAddress || !localCoordinator.canMine()) ? 0.5 : 1,
+                              cursor: (!nodeAddress || !localCoordinator.canMine()) ? "not-allowed" : "pointer"
+                            }}
+                            title={!localCoordinator.canMine() 
+                              ? (locale === "zh" 
+                                  ? "本机已有一个挖矿实例，当前实例为只读模式"
+                                  : "This machine already has a mining instance, current instance is read-only")
+                              : ""}
                           >
                             {t("mining.startMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
+                            {!localCoordinator.canMine() && (
+                              <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", opacity: 0.8 }}>
+                                ({locale === "zh" ? "只读" : "Read-only"})
+                              </span>
+                            )}
                           </button>
                           <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
                             <input
@@ -2106,10 +2403,25 @@ function App() {
                           <button
                             className="btn btn-primary"
                             onClick={handleStartClusterMining}
-                            disabled={!chainContext || clusterMining || !nodeAddress}
-                            style={{ fontSize: "1rem", padding: "0.75rem 1.5rem" }}
+                            disabled={!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine()}
+                            style={{ 
+                              fontSize: "1rem", 
+                              padding: "0.75rem 1.5rem",
+                              opacity: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine()) ? 0.5 : 1,
+                              cursor: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine()) ? "not-allowed" : "pointer"
+                            }}
+                            title={!localCoordinator.canMine() 
+                              ? (locale === "zh" 
+                                  ? "本机已有一个挖矿实例，当前实例为只读模式"
+                                  : "This machine already has a mining instance, current instance is read-only")
+                              : ""}
                           >
                             {t("mining.startClusterMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
+                            {!localCoordinator.canMine() && (
+                              <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", opacity: 0.8 }}>
+                                ({locale === "zh" ? "只读" : "Read-only"})
+                              </span>
+                            )}
                           </button>
                         </div>
                       )}
@@ -3807,8 +4119,22 @@ function App() {
             </div>
           )}
 
+          {/* Privacy Tab */}
+          {activeTab === "privacy" && (
+            <div className="tab-content active">
+              <PrivacyPanel
+                chainContext={chainContext}
+                onBroadcastTx={(tx) => {
+                  if (chainContext) {
+                    broadcastTransaction(tx, chainContext);
+                  }
+                }}
+              />
+            </div>
+          )}
+
           {/* Other tabs placeholder - to be implemented */}
-          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && activeTab !== "token" && (
+          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && activeTab !== "token" && activeTab !== "privacy" && activeTab !== "runtime" && (
             <div className="tab-content active">
               <div className="status-card">
                 <h2>🚧 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Tab</h2>

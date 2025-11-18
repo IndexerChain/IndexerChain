@@ -34,6 +34,10 @@ export class IndexState {
   // Phase 12: Change log for incremental snapshots
   private changeLog: Operation[] = [];
   private isRecording: boolean = false;
+  
+  // Phase 27: Privacy layer - commitments and nullifiers
+  private commitments: Map<string, string> = new Map(); // commitment -> noteId
+  private nullifierSet: Set<string> = new Set(); // Set of used nullifiers
 
   /**
    * Create an empty state
@@ -44,6 +48,8 @@ export class IndexState {
 
   /**
    * Restore state from snapshot
+   * 
+   * Phase 27: Also restores commitments and nullifier set from snapshot
    */
   static fromSnapshot(snapshot: IndexStateSnapshot): IndexState {
     const inst = new IndexState();
@@ -54,6 +60,24 @@ export class IndexState {
       }
       inst.state.set(ns, inner);
     }
+    
+    // Phase 27: Restore commitments and nullifiers from shielded_pool namespace
+    const shieldedPool = inst.state.get("shielded_pool");
+    if (shieldedPool) {
+      for (const [commitment] of shieldedPool) {
+        const noteId = `${commitment}_${Date.now()}`;
+        inst.commitments.set(commitment, noteId);
+      }
+    }
+    
+    // Nullifiers are stored in a separate namespace "nullifiers"
+    const nullifiers = inst.state.get("nullifiers");
+    if (nullifiers) {
+      for (const nullifier of nullifiers.keys()) {
+        inst.nullifierSet.add(nullifier);
+      }
+    }
+    
     return inst;
   }
 
@@ -212,6 +236,21 @@ export class IndexState {
       return;
     }
 
+    // Phase 27: Handle SHIELDED_TRANSFER operation
+    if (type === "SHIELDED_TRANSFER") {
+      if (!op.commitment) {
+        throw new Error("SHIELDED_TRANSFER operation requires 'commitment' field");
+      }
+      
+      // Phase 12: Record operation before applying
+      if (this.isRecording) {
+        this.changeLog.push(op);
+      }
+      
+      this.applyShieldedTransfer(op);
+      return;
+    }
+
     // Handle other operation types (PUT, APPEND, DELETE)
     let nsMap = this.state.get(namespace);
     if (!nsMap) {
@@ -298,12 +337,25 @@ export class IndexState {
   /**
    * Rebuild state from a list of blocks (used during initialization)
    * Clears current state and applies all blocks in order
+   * 
+   * Phase 16: Also updates total_minted for coinbase rewards
+   * 
+   * Note: This is synchronous, but total_minted update is async.
+   * For now, we skip total_minted update here since it's handled in chain.ts during initialization.
+   * The balance calculation doesn't depend on total_minted.
    */
   rebuildFromBlocks(blocks: Block[]): void {
     this.state.clear();
+    // Also clear commitments and nullifiers (Phase 27)
+    this.commitments.clear();
+    this.nullifierSet.clear();
+    
     for (const block of blocks) {
       this.applyBlock(block);
     }
+    
+    // Note: total_minted is updated in chain.ts during initialization
+    // after rebuildFromBlocks completes, to avoid async issues
   }
 
   /**
@@ -311,6 +363,83 @@ export class IndexState {
    */
   getInternalState(): Map<string, Map<string, string>> {
     return this.state;
+  }
+
+  /**
+   * Phase 27: Apply a shielded transfer operation
+   * 
+   * Handles privacy-preserving transfers:
+   * 1. Validates nullifier (if spending)
+   * 2. Adds nullifier to set (if spending)
+   * 3. Stores commitment (output)
+   * 
+   * @param op Shielded transfer operation
+   */
+  private applyShieldedTransfer(op: Operation): void {
+    // Validate nullifier if spending
+    if (op.nullifier) {
+      // Check if nullifier has been used before
+      if (this.nullifierSet.has(op.nullifier)) {
+        throw new Error(`Double-spend detected: nullifier ${op.nullifier} already used`);
+      }
+      
+      // Add nullifier to set
+      this.nullifierSet.add(op.nullifier);
+      
+      // Also store in nullifiers namespace for persistence
+      let nullifierMap = this.state.get("nullifiers");
+      if (!nullifierMap) {
+        nullifierMap = new Map<string, string>();
+        this.state.set("nullifiers", nullifierMap);
+      }
+      nullifierMap.set(op.nullifier, "1"); // Value is just a marker
+    }
+    
+    // Store commitment in shielded_pool namespace
+    // Key format: commitment value, Value: oneTimePublic (if available) or empty
+    const shieldedNamespace = "shielded_pool";
+    let nsMap = this.state.get(shieldedNamespace);
+    if (!nsMap) {
+      nsMap = new Map<string, string>();
+      this.state.set(shieldedNamespace, nsMap);
+    }
+    
+    // Store commitment
+    const commitmentKey = op.commitment!;
+    const commitmentValue = op.oneTimePublic || op.ephemeralPub || "";
+    nsMap.set(commitmentKey, commitmentValue);
+    
+    // Also track in commitments map for quick lookup
+    const noteId = `${op.commitment}_${Date.now()}`;
+    this.commitments.set(op.commitment!, noteId);
+  }
+
+  /**
+   * Phase 27: Check if a nullifier has been used
+   * 
+   * @param nullifier Nullifier to check
+   * @returns true if nullifier has been used
+   */
+  isNullifierUsed(nullifier: string): boolean {
+    return this.nullifierSet.has(nullifier);
+  }
+
+  /**
+   * Phase 27: Get all commitments
+   * 
+   * @returns Map of commitment -> noteId
+   */
+  getCommitments(): Map<string, string> {
+    return new Map(this.commitments);
+  }
+
+  /**
+   * Phase 27: Get nullifier set
+   * 
+   * @returns Set of used nullifiers
+   */
+  getNullifierSet(): Set<string> {
+    return new Set(this.nullifierSet);
   }
 }
 

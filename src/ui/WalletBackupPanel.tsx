@@ -6,14 +6,16 @@
  * UI component for exporting and importing wallet backups
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
-  exportWallet,
-  importWallet,
   validatePassword,
   downloadBackupFile,
   readBackupFile,
+  type WalletBackup,
 } from "../core/walletBackup.js";
+import { getMultiWalletStore } from "../core/multiWallet.js";
+import { getOrCreateNodeAddress } from "../core/keys.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 interface WalletBackupPanelProps {
   onExportSuccess?: () => void;
@@ -26,6 +28,7 @@ export function WalletBackupPanel({
   onImportSuccess,
   onError,
 }: WalletBackupPanelProps) {
+  const { t } = useI18n();
   const [exportPassword, setExportPassword] = useState("");
   const [exportConfirmPassword, setExportConfirmPassword] = useState("");
   const [exportPasswordStrength, setExportPasswordStrength] = useState<{
@@ -33,10 +36,27 @@ export function WalletBackupPanel({
     message: string;
   } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [currentAddress, setCurrentAddress] = useState<string>("");
+  const [exportSuccess, setExportSuccess] = useState<string>("");
   
   const [importPassword, setImportPassword] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<{
+    name: string;
+    size: string;
+    createdAt?: string;
+  } | null>(null);
+  const [importSuccess, setImportSuccess] = useState<{
+    walletName: string;
+    address: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load current address
+  useEffect(() => {
+    getOrCreateNodeAddress().then(setCurrentAddress).catch(() => {});
+  }, []);
 
   const handleExport = async () => {
     if (!exportPassword) {
@@ -58,56 +78,151 @@ export function WalletBackupPanel({
     try {
       setIsExporting(true);
       onError?.("");
+      setExportSuccess("");
       
-      const backupData = await exportWallet(exportPassword);
-      downloadBackupFile(backupData);
+      // Phase 24: Use MultiWalletStore to export current wallet
+      const walletStore = getMultiWalletStore();
+      const currentWallet = walletStore.getCurrentWallet();
+      
+      if (!currentWallet) {
+        throw new Error(t("wallet.pleaseEnterWalletName"));
+      }
+      
+      // Export current wallet using MultiWalletStore
+      const backupData = await walletStore.exportEncryptedWallet(currentWallet.id, exportPassword);
+      
+      // Verify exported address matches current address
+      const exportedAddress = await getOrCreateNodeAddress();
+      if (exportedAddress !== currentAddress) {
+        console.warn("[WalletBackup] Address mismatch after export:", {
+          currentAddress,
+          exportedAddress,
+        });
+      }
+      
+      const filename = `indexerchain-wallet-backup-${Date.now()}.idcbackup`;
+      downloadBackupFile(backupData, filename);
+      
+      // Show success message with address confirmation
+      setExportSuccess(
+        t("wallet.backupFileDownloaded", {
+          filename,
+          address: currentAddress.substring(0, 20),
+        })
+      );
       
       // Clear passwords
       setExportPassword("");
       setExportConfirmPassword("");
       setExportPasswordStrength(null);
       
+      // Clear success message after 10 seconds
+      setTimeout(() => setExportSuccess(""), 10000);
+      
       onExportSuccess?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to export wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToExport"));
     } finally {
       setIsExporting(false);
     }
   };
 
-  const handleImport = async (file: File) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Check if password is entered
     if (!importPassword) {
-      onError?.("Please enter your backup password");
+      onError?.(t("wallet.pleaseEnterBackupPassword"));
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
+    
+    setSelectedFile(file);
+    setFilePreview(null);
+    setImportSuccess(null);
+    onError?.("");
+    
+    // Preview file info
+    try {
+      const backupData = await readBackupFile(file);
+      const backup: WalletBackup = JSON.parse(backupData);
+      
+      setFilePreview({
+        name: file.name,
+        size: `${(file.size / 1024).toFixed(2)} KB`,
+        createdAt: backup.createdAt ? new Date(backup.createdAt).toLocaleString() : undefined,
+      });
+    } catch (err) {
+      onError?.(t("wallet.failedToReadBackup"));
+      setSelectedFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleImport = async () => {
+    if (!selectedFile) {
+      onError?.(t("wallet.selectBackupFile"));
+      return;
+    }
+    
+    if (!importPassword) {
+      onError?.(t("wallet.pleaseEnterBackupPassword"));
       return;
     }
     
     try {
       setIsImporting(true);
       onError?.("");
+      setImportSuccess(null);
       
-      const backupData = await readBackupFile(file);
-      const success = await importWallet(importPassword, backupData);
+      const backupData = await readBackupFile(selectedFile);
       
-      if (success) {
-        setImportPassword("");
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-        onImportSuccess?.();
-      } else {
-        onError?.("Failed to import wallet");
+      // Use MultiWalletStore to import wallet (this adds it to the wallet list)
+      const walletStore = getMultiWalletStore();
+      const importedWallet = await walletStore.importEncryptedWallet(
+        backupData,
+        importPassword,
+        `Imported Wallet ${new Date().toLocaleString()}`
+      );
+      
+      // Set imported wallet as current wallet
+      walletStore.setCurrentWallet(importedWallet.id);
+      
+      // Update current address
+      setCurrentAddress(importedWallet.address);
+      
+      // Show success message
+      setImportSuccess({
+        walletName: importedWallet.name,
+        address: importedWallet.address,
+      });
+      
+      // Clear form
+      setImportPassword("");
+      setSelectedFile(null);
+      setFilePreview(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
       }
+      
+      // Clear success message after 10 seconds
+      setTimeout(() => setImportSuccess(null), 10000);
+      
+      onImportSuccess?.();
     } catch (err) {
       onError?.(err instanceof Error ? err.message : "Failed to import wallet");
+      setSelectedFile(null);
+      setFilePreview(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     } finally {
       setIsImporting(false);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleImport(file);
     }
   };
 
@@ -116,13 +231,54 @@ export function WalletBackupPanel({
       {/* Export Section */}
       <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          🔐 Export Wallet
+          {t("wallet.exportTitle")}
         </h4>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+        
+        {/* Current Wallet Info */}
+        {currentAddress && (
+          <div style={{ 
+            padding: "0.75rem", 
+            background: "#e7f3ff", 
+            borderRadius: "4px", 
+            marginBottom: "0.75rem",
+            fontSize: "0.85rem",
+            border: "1px solid #b3d9ff"
+          }}>
+            <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+              {t("wallet.currentWalletAddress")}:
+            </div>
+            <div style={{ fontFamily: "monospace", fontSize: "0.9rem", color: "#0066cc" }}>
+              {currentAddress}
+            </div>
+          </div>
+        )}
+        
+        {/* Export Success Message */}
+        {exportSuccess && (
+          <div style={{ 
+            padding: "0.75rem", 
+            background: "#d4edda", 
+            borderRadius: "4px", 
+            marginBottom: "0.75rem",
+            fontSize: "0.85rem",
+            border: "1px solid #c3e6cb",
+            color: "#155724"
+          }}>
+            {exportSuccess}
+          </div>
+        )}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleExport();
+          }}
+          style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
+        >
           <div>
             <input
               type="password"
-              placeholder="Enter password (min 8 characters)"
+              placeholder={t("wallet.enterPassword")}
               value={exportPassword}
               onChange={(e) => {
                 setExportPassword(e.target.value);
@@ -150,7 +306,7 @@ export function WalletBackupPanel({
           <div>
             <input
               type="password"
-              placeholder="Confirm password"
+              placeholder={t("wallet.confirmPassword")}
               value={exportConfirmPassword}
               onChange={(e) => setExportConfirmPassword(e.target.value)}
               style={{ width: "100%", padding: "0.5rem" }}
@@ -158,13 +314,13 @@ export function WalletBackupPanel({
             />
             {exportConfirmPassword && exportPassword !== exportConfirmPassword && (
               <div style={{ fontSize: "0.8rem", marginTop: "0.25rem", color: "#dc3545" }}>
-                Passwords do not match
+                {t("wallet.passwordsNotMatch")}
               </div>
             )}
           </div>
           <button
+            type="submit"
             className="btn btn-primary"
-            onClick={handleExport}
             disabled={
               isExporting ||
               !exportPassword ||
@@ -174,56 +330,147 @@ export function WalletBackupPanel({
             }
             style={{ width: "100%" }}
           >
-            {isExporting ? "Exporting..." : "Export Wallet (.idcbackup)"}
+            {isExporting ? t("common.loading") : `${t("wallet.exportWallet")} (.idcbackup)`}
           </button>
           <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
-            💡 Your private key will be encrypted with PBKDF2 (200k iterations) + AES-GCM.
-            Save the backup file securely - you'll need it to recover your wallet.
+            {t("wallet.encryptionNotice")}
           </div>
-        </div>
+        </form>
       </div>
 
       {/* Import Section */}
       <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          ♻️ Import Wallet
+          {t("wallet.importTitle")}
         </h4>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+        
+        {/* Import Success Message */}
+        {importSuccess && (
+          <div style={{ 
+            padding: "0.75rem", 
+            background: "#d4edda", 
+            borderRadius: "4px", 
+            marginBottom: "0.75rem",
+            fontSize: "0.85rem",
+            border: "1px solid #c3e6cb",
+            color: "#155724"
+          }}>
+            <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+              {t("wallet.importSuccess")}
+            </div>
+            <div style={{ marginBottom: "0.25rem" }}>
+              <strong>{t("common.name")}:</strong> {importSuccess.walletName}
+            </div>
+            <div>
+              <strong>{t("wallet.address")}:</strong>{" "}
+              <span style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>
+                {importSuccess.address}
+              </span>
+            </div>
+          </div>
+        )}
+        
+        {/* File Preview */}
+        {filePreview && (
+          <div style={{ 
+            padding: "0.75rem", 
+            background: "#fff3cd", 
+            borderRadius: "4px", 
+            marginBottom: "0.75rem",
+            fontSize: "0.85rem",
+            border: "1px solid #ffc107"
+          }}>
+            <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+              📄 {t("wallet.selectBackupFile")}:
+            </div>
+            <div style={{ marginBottom: "0.1rem" }}>
+              <strong>{t("common.name")}:</strong> {filePreview.name}
+            </div>
+            <div style={{ marginBottom: "0.1rem" }}>
+              <strong>{t("common.size")}:</strong> {filePreview.size}
+            </div>
+            {filePreview.createdAt && (
+              <div>
+                <strong>{t("common.created")}:</strong> {filePreview.createdAt}
+              </div>
+            )}
+          </div>
+        )}
+        
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleImport();
+          }}
+          style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
+        >
           <div>
+            <label style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.85rem", fontWeight: "bold" }}>
+              {t("wallet.step1EnterPassword")}
+            </label>
+            <input
+              type="password"
+              placeholder={t("wallet.enterBackupPassword")}
+              value={importPassword}
+              onChange={(e) => {
+                setImportPassword(e.target.value);
+                onError?.(""); // Clear any previous errors when typing
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && selectedFile && importPassword) {
+                  e.preventDefault();
+                  handleImport();
+                }
+              }}
+              style={{ width: "100%", padding: "0.5rem" }}
+              disabled={isImporting}
+              autoFocus
+            />
+            <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
+              {t("wallet.passwordHint")}
+            </div>
+          </div>
+          <div>
+            <label style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.85rem", fontWeight: "bold" }}>
+              {t("wallet.step2SelectFile")}
+            </label>
             <input
               type="file"
               accept=".idcbackup,application/json"
               ref={fileInputRef}
               onChange={handleFileSelect}
               style={{ width: "100%", padding: "0.5rem" }}
-              disabled={isImporting}
+              disabled={isImporting || !importPassword}
             />
+            {!importPassword && (
+              <div style={{ fontSize: "0.75rem", color: "#ff9800", marginTop: "0.25rem" }}>
+                {t("wallet.enterPasswordFirst")}
+              </div>
+            )}
           </div>
-          <div>
-            <input
-              type="password"
-              placeholder="Enter backup password"
-              value={importPassword}
-              onChange={(e) => setImportPassword(e.target.value)}
-              style={{ width: "100%", padding: "0.5rem" }}
-              disabled={isImporting}
-            />
-          </div>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={isImporting || !selectedFile || !importPassword}
+            style={{ width: "100%" }}
+          >
+            {isImporting ? `⏳ ${t("common.loading")}` : `📥 ${t("wallet.importWallet")}`}
+          </button>
           <div style={{ fontSize: "0.75rem", color: "#666" }}>
-            💡 Select your .idcbackup file and enter the password you used when exporting.
-            Your wallet identity will be restored to this browser.
+            {t("wallet.fileHint")}
           </div>
-        </div>
+        </form>
       </div>
 
       {/* Security Notice */}
       <div style={{ padding: "0.75rem", background: "#fff3cd", borderRadius: "4px", border: "1px solid #ffc107", fontSize: "0.85rem" }}>
-        <strong>⚠️ Security Notice:</strong>
+        <strong>{t("wallet.securityNotice")}</strong>
         <ul style={{ margin: "0.5rem 0 0 1.5rem", padding: 0 }}>
-          <li>Backup files are encrypted - never share your password</li>
-          <li>Store backups in a secure location (password manager, encrypted drive)</li>
-          <li>Without the backup file and password, you cannot recover your wallet</li>
-          <li>This is a zero-trust system - no server stores your keys</li>
+          <li>{t("wallet.securityNotice1")}</li>
+          <li>{t("wallet.securityNotice2")}</li>
+          <li>{t("wallet.securityNotice3")}</li>
+          <li>{t("wallet.securityNotice4")}</li>
         </ul>
       </div>
     </div>

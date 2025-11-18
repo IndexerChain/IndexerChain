@@ -316,29 +316,42 @@ export class MultiWalletStore {
     // Check if we have private key in memory
     let privateKey = this.keyPairs.get(walletId);
     if (!privateKey) {
-      // Try to load from legacy storage (for migrated wallets)
+      // Try to load from legacy storage
+      // Check if legacy storage has a key pair that matches this wallet's address
       if (typeof localStorage !== "undefined") {
+        const legacyPubKey = localStorage.getItem(STORAGE_KEY_LEGACY_PUBKEY);
         const legacyPrivKey = localStorage.getItem(STORAGE_KEY_LEGACY_PRIVKEY);
-        if (legacyPrivKey && walletId === "wallet_01") {
+        
+        if (legacyPubKey && legacyPrivKey) {
           try {
-            const privateKeyJwk = JSON.parse(legacyPrivKey) as JsonWebKey;
-            privateKey = await crypto.subtle.importKey(
-              "jwk",
-              privateKeyJwk,
-              { name: "ECDSA", namedCurve: "P-256" },
-              true,
-              ["sign"]
-            );
-            this.keyPairs.set(walletId, privateKey);
-          } catch {
-            // Failed to load, return null
-            return null;
+            const publicKeyJwk = JSON.parse(legacyPubKey) as JsonWebKey;
+            const legacyAddress = await getNodeAddressFromPublicKey(publicKeyJwk);
+            
+            // If legacy address matches this wallet's address, use legacy keys
+            if (legacyAddress === wallet.address) {
+              const privateKeyJwk = JSON.parse(legacyPrivKey) as JsonWebKey;
+              privateKey = await crypto.subtle.importKey(
+                "jwk",
+                privateKeyJwk,
+                { name: "ECDSA", namedCurve: "P-256" },
+                true,
+                ["sign"]
+              );
+              // Store in memory for future use
+              this.keyPairs.set(walletId, privateKey);
+              console.log(`[MultiWallet] Loaded private key for wallet ${walletId} from legacy storage`);
+            }
+          } catch (error) {
+            console.warn(`[MultiWallet] Failed to load private key from legacy storage for wallet ${walletId}:`, error);
           }
         }
       }
     }
 
-    if (!privateKey) return null;
+    if (!privateKey) {
+      console.warn(`[MultiWallet] Private key not available for wallet ${walletId}. Wallet may need to be re-imported.`);
+      return null;
+    }
 
     return {
       publicKey: wallet.publicKey,
@@ -409,7 +422,41 @@ export class MultiWalletStore {
 
     const address = await getNodeAddressFromPublicKey(publicKeyJwk);
 
-    // Create wallet entry
+    // Check if wallet with this address already exists
+    const existingWallet = Object.entries(this.storage.list).find(
+      ([_, info]) => info.address === address
+    );
+    
+    if (existingWallet) {
+      // Wallet already exists, update it instead of creating a new one
+      const [walletId, _] = existingWallet;
+      
+      // Update wallet info
+      this.storage.list[walletId] = {
+        ...this.storage.list[walletId],
+        name: name || this.storage.list[walletId].name,
+        publicKey: publicKeyJwk, // Update public key in case it changed
+      };
+      
+      // Update private key in memory
+      this.keyPairs.set(walletId, privateKey);
+      
+      // Clear legacy keys (they're now in multi-wallet)
+      localStorage.removeItem(STORAGE_KEY_LEGACY_PUBKEY);
+      localStorage.removeItem(STORAGE_KEY_LEGACY_PRIVKEY);
+      
+      this.saveToStorage();
+      
+      return {
+        id: walletId,
+        name: this.storage.list[walletId].name,
+        address,
+        publicKey: publicKeyJwk,
+        createdAt: this.storage.list[walletId].createdAt,
+      };
+    }
+
+    // Create new wallet entry
     const walletId = `wallet_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     this.storage.list[walletId] = {
       name: name || `Imported Wallet ${Object.keys(this.storage.list).length + 1}`,

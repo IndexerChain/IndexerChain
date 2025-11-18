@@ -187,16 +187,27 @@ export async function buildCandidateBlock(
   // Phase 15: Compute stateCommitment by dry-running all transactions
   let stateCommitment: string | undefined;
   try {
-    // Create a temporary copy of current state
+    // IMPORTANT: Rebuild state from blocks to ensure consistency with verification
+    // This matches the logic in verify.ts which uses rebuildFromBlocks
     const tempState = IndexState.createEmpty();
-    const currentSnapshot = currentIndexState.toSnapshot();
-    const restoredState = IndexState.fromSnapshot(currentSnapshot);
-    const restoredInternalState = (restoredState as any).getInternalState();
-    const tempInternalState = (tempState as any).getInternalState();
-    tempInternalState.clear();
-    for (const [ns, kvMap] of restoredInternalState) {
-      const newMap = new Map(kvMap);
-      tempInternalState.set(ns, newMap);
+    // Get all blocks up to and including prevBlock
+    const prevBlockIndex = allBlocks.findIndex((b) => b.hash === prevBlock.hash);
+    const previousBlocks = prevBlockIndex >= 0 ? allBlocks.slice(0, prevBlockIndex + 1) : allBlocks;
+    tempState.rebuildFromBlocks(previousBlocks);
+    
+    // Phase 16: Update total_minted for all previous blocks (matching verify.ts logic)
+    // rebuildFromBlocks doesn't update total_minted, so we need to do it manually
+    for (const prevBlockItem of previousBlocks) {
+      if (prevBlockItem.txs.length > 0) {
+        const coinbaseTx = prevBlockItem.txs[0];
+        if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+          const rewardOp = coinbaseTx.ops[0];
+          if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
+            const rewardUIDC = IDCToUIDC(rewardOp.amount);
+            tempState.incrementTotalMinted(rewardUIDC);
+          }
+        }
+      }
     }
 
     // Apply all transactions to temporary state
@@ -217,6 +228,14 @@ export async function buildCandidateBlock(
     // Compute stateCommitment from the resulting state
     const finalSnapshot = tempState.toSnapshot();
     stateCommitment = await computeSnapshotStateHash(finalSnapshot);
+    
+    // Debug: Log state commitment computation details
+    console.log(`[Phase 15] State commitment computed:`, {
+      height,
+      totalMintedBefore: tempState.getTotalMinted().toString(),
+      txCount: allTxs.length,
+      stateCommitment: stateCommitment.substring(0, 16) + "...",
+    });
   } catch (error) {
     console.error(`[Phase 15] Failed to compute stateCommitment:`, error);
     // Continue without stateCommitment for backward compatibility

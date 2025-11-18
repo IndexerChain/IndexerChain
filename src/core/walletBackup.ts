@@ -42,7 +42,19 @@ export async function exportWallet(password: string): Promise<string> {
   }
   
   // Get current node key pair
+  // IMPORTANT: This should always return the current wallet's key pair from MultiWalletStore
   const keyPair = await getOrCreateNodeKeyPair();
+  
+  // Verify address before export (for debugging)
+  const { getNodeAddressFromPublicKey } = await import("./keys.js");
+  const calculatedAddress = await getNodeAddressFromPublicKey(keyPair.publicKey);
+  console.log("[WalletBackup] Exporting wallet - calculated address:", calculatedAddress);
+  console.log("[WalletBackup] Public key JWK (for address calculation):", JSON.stringify({
+    kty: keyPair.publicKey.kty,
+    crv: keyPair.publicKey.crv,
+    x: keyPair.publicKey.x,
+    y: keyPair.publicKey.y,
+  }));
   
   // Export private key as JWK
   const privateKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
@@ -196,12 +208,31 @@ export async function importWallet(password: string, backupData: string): Promis
     );
     
     // Get public key from private key
-    const publicKeyJwk = {
+    // IMPORTANT: Only include core fields (kty, crv, x, y) for address calculation consistency
+    // Optional fields (alg, use, key_ops, ext) are ignored in address calculation
+    const publicKeyJwk: JsonWebKey = {
       kty: privateKeyJwk.kty,
       crv: privateKeyJwk.crv,
       x: privateKeyJwk.x,
       y: privateKeyJwk.y,
     };
+    
+    // Copy optional fields for storage (but they won't affect address calculation)
+    if (privateKeyJwk.alg) publicKeyJwk.alg = privateKeyJwk.alg;
+    if (privateKeyJwk.use) publicKeyJwk.use = privateKeyJwk.use;
+    if (privateKeyJwk.key_ops) publicKeyJwk.key_ops = privateKeyJwk.key_ops;
+    if (privateKeyJwk.ext !== undefined) publicKeyJwk.ext = privateKeyJwk.ext;
+    
+    // Verify address calculation (for debugging)
+    const { getNodeAddressFromPublicKey } = await import("./keys.js");
+    const calculatedAddress = await getNodeAddressFromPublicKey(publicKeyJwk);
+    console.log("[WalletBackup] Imported wallet address:", calculatedAddress);
+    console.log("[WalletBackup] Public key JWK (for address calculation):", JSON.stringify({
+      kty: publicKeyJwk.kty,
+      crv: publicKeyJwk.crv,
+      x: publicKeyJwk.x,
+      y: publicKeyJwk.y,
+    }));
     
     // Store keys in localStorage
     if (typeof localStorage !== "undefined") {

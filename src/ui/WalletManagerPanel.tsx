@@ -9,6 +9,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getMultiWalletStore, type Wallet } from "../core/multiWallet.js";
 import { downloadBackupFile, readBackupFile } from "../core/walletBackup.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 interface WalletManagerPanelProps {
   onWalletChanged?: () => void;
@@ -19,6 +20,7 @@ export function WalletManagerPanel({
   onWalletChanged,
   onError,
 }: WalletManagerPanelProps) {
+  const { t } = useI18n();
   const walletStore = getMultiWalletStore();
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [currentWallet, setCurrentWallet] = useState<Wallet | null>(null);
@@ -46,7 +48,7 @@ export function WalletManagerPanel({
 
   const handleCreateWallet = async () => {
     if (!newWalletName.trim()) {
-      onError?.("Please enter a wallet name");
+      onError?.(t("wallet.pleaseEnterWalletName"));
       return;
     }
     try {
@@ -56,7 +58,7 @@ export function WalletManagerPanel({
       refreshWallets();
       onWalletChanged?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to create wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToExport"));
     } finally {
       setIsCreating(false);
     }
@@ -68,7 +70,7 @@ export function WalletManagerPanel({
       refreshWallets();
       onWalletChanged?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to switch wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToExport"));
     }
   };
 
@@ -78,7 +80,7 @@ export function WalletManagerPanel({
       refreshWallets();
       onWalletChanged?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to set mining wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToExport"));
     }
   };
 
@@ -93,12 +95,13 @@ export function WalletManagerPanel({
       setEditingName("");
       refreshWallets();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to rename wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToExport"));
     }
   };
 
   const handleDeleteWallet = (walletId: string) => {
-    if (!window.confirm(`Delete wallet "${wallets.find(w => w.id === walletId)?.name}"? This cannot be undone.`)) {
+    const walletName = wallets.find(w => w.id === walletId)?.name || "";
+    if (!window.confirm(`${t("wallet.deleteConfirm")} "${walletName}"? ${t("wallet.cannotUndone")}`)) {
       return;
     }
     try {
@@ -106,13 +109,13 @@ export function WalletManagerPanel({
       refreshWallets();
       onWalletChanged?.();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to delete wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToDelete"));
     }
   };
 
   const handleExportWallet = async (walletId: string) => {
     if (!exportPassword) {
-      onError?.("Please enter a password");
+      onError?.(t("wallet.pleaseEnterPassword"));
       return;
     }
     try {
@@ -121,17 +124,17 @@ export function WalletManagerPanel({
       downloadBackupFile(backupData, `wallet-${wallets.find(w => w.id === walletId)?.name || walletId}-${Date.now()}.idcbackup`);
       setExportPassword("");
       setExportingWalletId(null);
-      onError?.("✅ Wallet exported successfully!");
+      onError?.(t("wallet.walletExported"));
       setTimeout(() => onError?.(""), 3000);
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to export wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToExport"));
       setExportingWalletId(null);
     }
   };
 
   const handleImportWallet = async (file: File) => {
     if (!importPassword) {
-      onError?.("Please enter the backup password");
+      onError?.(t("wallet.pleaseEnterBackupPassword"));
       return;
     }
     try {
@@ -144,10 +147,10 @@ export function WalletManagerPanel({
       }
       refreshWallets();
       onWalletChanged?.();
-      onError?.("✅ Wallet imported successfully!");
+      onError?.(t("wallet.walletImported"));
       setTimeout(() => onError?.(""), 3000);
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : "Failed to import wallet");
+      onError?.(err instanceof Error ? err.message : t("wallet.failedToImport"));
     } finally {
       setImporting(false);
     }
@@ -158,19 +161,19 @@ export function WalletManagerPanel({
       {/* Current & Mining Wallet Info */}
       <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          📋 Active Wallets
+          {t("wallet.activeWallets")}
         </h4>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", fontSize: "0.9rem" }}>
           <div>
-            <strong>Current Wallet:</strong>{" "}
+            <strong>{t("wallet.currentWallet")}:</strong>{" "}
             <span style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>
-              {currentWallet ? `${currentWallet.name} (${currentWallet.address.substring(0, 20)}...)` : "None"}
+              {currentWallet ? `${currentWallet.name} (${currentWallet.address.substring(0, 20)}...)` : t("common.none")}
             </span>
           </div>
           <div>
-            <strong>Mining Wallet:</strong>{" "}
+            <strong>{t("wallet.miningWallet")}:</strong>{" "}
             <span style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>
-              {miningWallet ? `${miningWallet.name} (${miningWallet.address.substring(0, 20)}...)` : "None"}
+              {miningWallet ? `${miningWallet.name} (${miningWallet.address.substring(0, 20)}...)` : t("common.none")}
             </span>
           </div>
         </div>
@@ -179,11 +182,11 @@ export function WalletManagerPanel({
       {/* Wallet List */}
       <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          💼 Wallet List ({wallets.length})
+          {t("wallet.walletList")} ({wallets.length})
         </h4>
         {wallets.length === 0 ? (
           <div style={{ fontSize: "0.9rem", color: "#666", padding: "1rem", textAlign: "center" }}>
-            No wallets yet. Create your first wallet below.
+            {t("wallet.noWallets")}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
@@ -239,12 +242,12 @@ export function WalletManagerPanel({
                   <div style={{ display: "flex", gap: "0.25rem", fontSize: "0.75rem" }}>
                     {wallet.id === currentWallet?.id && (
                       <span style={{ background: "#667eea", color: "white", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>
-                        Current
+                        {t("wallet.currentWallet")}
                       </span>
                     )}
                     {wallet.id === miningWallet?.id && (
                       <span style={{ background: "#28a745", color: "white", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>
-                        Mining
+                        {t("wallet.miningWallet")}
                       </span>
                     )}
                   </div>
@@ -258,7 +261,7 @@ export function WalletManagerPanel({
                       onClick={() => handleSwitchWallet(wallet.id)}
                       style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#667eea", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
-                      Set as Current
+                      {t("wallet.setAsCurrent")}
                     </button>
                   )}
                   {wallet.id !== miningWallet?.id && (
@@ -266,7 +269,7 @@ export function WalletManagerPanel({
                       onClick={() => handleSetMiningWallet(wallet.id)}
                       style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#28a745", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
-                      Set as Mining
+                      {t("wallet.setAsMining")}
                     </button>
                   )}
                   {editingWalletId !== wallet.id && (
@@ -277,30 +280,32 @@ export function WalletManagerPanel({
                       }}
                       style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#ffc107", color: "#000", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
-                      Rename
+                      {t("wallet.rename")}
                     </button>
                   )}
                   {exportingWalletId === wallet.id ? (
-                    <div style={{ display: "flex", gap: "0.25rem", alignItems: "center" }}>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleExportWallet(wallet.id);
+                      }}
+                      style={{ display: "flex", gap: "0.25rem", alignItems: "center" }}
+                    >
                       <input
                         type="password"
-                        placeholder="Password"
+                        placeholder={t("wallet.enterPassword")}
                         value={exportPassword}
                         onChange={(e) => setExportPassword(e.target.value)}
                         style={{ padding: "0.25rem", fontSize: "0.8rem", width: "100px" }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            handleExportWallet(wallet.id);
-                          }
-                        }}
                       />
                       <button
                         onClick={() => handleExportWallet(wallet.id)}
                         style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem" }}
                       >
-                        Export
+                        {t("wallet.export")}
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setExportingWalletId(null);
                           setExportPassword("");
@@ -309,13 +314,13 @@ export function WalletManagerPanel({
                       >
                         ✗
                       </button>
-                    </div>
+                    </form>
                   ) : (
                     <button
                       onClick={() => setExportingWalletId(wallet.id)}
                       style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#17a2b8", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
-                      Export
+                      {t("wallet.export")}
                     </button>
                   )}
                   {wallets.length > 1 && (
@@ -323,7 +328,7 @@ export function WalletManagerPanel({
                       onClick={() => handleDeleteWallet(wallet.id)}
                       style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#dc3545", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
-                      Delete
+                      {t("wallet.delete")}
                     </button>
                   )}
                 </div>
@@ -336,12 +341,12 @@ export function WalletManagerPanel({
       {/* Create New Wallet */}
       <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          ➕ Create New Wallet
+          ➕ {t("wallet.createNewWallet")}
         </h4>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <input
             type="text"
-            placeholder="Wallet name"
+            placeholder={t("wallet.walletName")}
             value={newWalletName}
             onChange={(e) => setNewWalletName(e.target.value)}
             onKeyDown={(e) => {
@@ -357,7 +362,7 @@ export function WalletManagerPanel({
             disabled={isCreating || !newWalletName.trim()}
             style={{ padding: "0.5rem 1rem", background: "#667eea", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
           >
-            {isCreating ? "Creating..." : "Create"}
+            {isCreating ? t("common.loading") : t("wallet.create")}
           </button>
         </div>
       </div>
@@ -365,9 +370,15 @@ export function WalletManagerPanel({
       {/* Import Wallet */}
       <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          📥 Import Wallet
+          📥 {t("wallet.importWallet")}
         </h4>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            // Import is handled by file selection
+          }}
+          style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
+        >
           <input
             type="file"
             accept=".idcbackup,application/json"
@@ -383,13 +394,13 @@ export function WalletManagerPanel({
           />
           <input
             type="password"
-            placeholder="Backup password"
+            placeholder={t("wallet.enterBackupPassword")}
             value={importPassword}
             onChange={(e) => setImportPassword(e.target.value)}
             style={{ padding: "0.5rem" }}
             disabled={importing}
           />
-        </div>
+        </form>
       </div>
     </div>
   );

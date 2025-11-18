@@ -19,10 +19,15 @@ export interface Translations {
     delete: string;
     edit: string;
     copy: string;
+    name: string;
+    size: string;
+    created: string;
+    none: string;
   };
 
   // Status
   status: {
+    status: string;
     ready: string;
     notReady: string;
     connected: string;
@@ -182,6 +187,56 @@ export interface Translations {
     nodeId: string;
     manager: string;
     backup: string;
+    exportWallet: string;
+    importWallet: string;
+    currentWalletAddress: string;
+    exportSuccess: string;
+    importSuccess: string;
+    addressCopied: string;
+    exportTitle: string;
+    importTitle: string;
+    enterPassword: string;
+    confirmPassword: string;
+    passwordsNotMatch: string;
+    selectBackupFile: string;
+    enterBackupPassword: string;
+    step1EnterPassword: string;
+    step2SelectFile: string;
+    passwordHint: string;
+    fileHint: string;
+    enterPasswordFirst: string;
+    activeWallets: string;
+    currentWallet: string;
+    miningWallet: string;
+    walletList: string;
+    noWallets: string;
+    createFirstWallet: string;
+    setAsCurrent: string;
+    setAsMining: string;
+    rename: string;
+    delete: string;
+    export: string;
+    createNewWallet: string;
+    walletName: string;
+    create: string;
+    deleteConfirm: string;
+    cannotUndone: string;
+    walletExported: string;
+    walletImported: string;
+    pleaseEnterPassword: string;
+    pleaseEnterBackupPassword: string;
+    failedToExport: string;
+    failedToImport: string;
+    failedToDelete: string;
+    pleaseEnterWalletName: string;
+    backupFileDownloaded: string;
+    failedToReadBackup: string;
+    encryptionNotice: string;
+    securityNotice: string;
+    securityNotice1: string;
+    securityNotice2: string;
+    securityNotice3: string;
+    securityNotice4: string;
   };
 
   // Transactions
@@ -341,8 +396,13 @@ export const translations: Record<Locale, Translations> = {
       delete: "删除",
       edit: "编辑",
       copy: "复制",
+      name: "名称",
+      size: "大小",
+      created: "创建时间",
+      none: "无",
     },
     status: {
+      status: "状态",
       ready: "就绪",
       notReady: "未就绪",
       connected: "已连接",
@@ -494,6 +554,56 @@ export const translations: Record<Locale, Translations> = {
       nodeId: "节点 ID",
       manager: "钱包管理",
       backup: "备份与恢复",
+      exportWallet: "导出钱包",
+      importWallet: "导入钱包",
+      currentWalletAddress: "当前钱包地址",
+      exportSuccess: "✅ 钱包备份导出成功！请安全保存文件。",
+      importSuccess: "✅ 钱包导入成功！您的身份已恢复。",
+      addressCopied: "地址已复制到剪贴板！",
+      exportTitle: "🔐 导出钱包",
+      importTitle: "♻️ 导入钱包",
+      enterPassword: "输入密码（至少 8 个字符）",
+      confirmPassword: "确认密码",
+      passwordsNotMatch: "密码不匹配",
+      selectBackupFile: "选择备份文件",
+      enterBackupPassword: "输入备份密码",
+      step1EnterPassword: "步骤 1: 输入备份密码",
+      step2SelectFile: "步骤 2: 选择备份文件",
+      passwordHint: "💡 输入创建备份时使用的密码。",
+      fileHint: "💡 输入您的备份密码，然后选择您的 .idcbackup 文件。您的钱包身份将恢复到此浏览器。",
+      enterPasswordFirst: "⚠️ 请先输入密码，然后再选择备份文件。",
+      activeWallets: "📋 活动钱包",
+      currentWallet: "当前钱包",
+      miningWallet: "挖矿钱包",
+      walletList: "💼 钱包列表",
+      noWallets: "还没有钱包。请在下方创建您的第一个钱包。",
+      createFirstWallet: "还没有钱包。请在下方创建您的第一个钱包。",
+      setAsCurrent: "设为当前",
+      setAsMining: "设为挖矿",
+      rename: "重命名",
+      delete: "删除",
+      export: "导出",
+      createNewWallet: "创建新钱包",
+      walletName: "钱包名称",
+      create: "创建",
+      deleteConfirm: "删除钱包",
+      cannotUndone: "此操作不可逆！",
+      walletExported: "✅ 钱包导出成功！",
+      walletImported: "✅ 钱包导入成功！",
+      pleaseEnterPassword: "请输入密码",
+      pleaseEnterBackupPassword: "请输入备份密码",
+      failedToExport: "导出钱包失败",
+      failedToImport: "导入钱包失败",
+      failedToDelete: "删除钱包失败",
+      pleaseEnterWalletName: "请输入钱包名称",
+      backupFileDownloaded: "✅ 备份文件 \"{filename}\" 下载成功！地址: {address}...",
+      failedToReadBackup: "读取备份文件失败。请确保这是一个有效的 .idcbackup 文件。",
+      encryptionNotice: "💡 您的私钥将使用 PBKDF2（20万次迭代）+ AES-GCM 加密。请安全保存备份文件 - 您需要它来恢复钱包。",
+      securityNotice: "⚠️ 安全提示：",
+      securityNotice1: "备份文件已加密 - 永远不要分享您的密码",
+      securityNotice2: "将备份存储在安全位置（密码管理器、加密驱动器）",
+      securityNotice3: "没有备份文件和密码，您无法恢复钱包",
+      securityNotice4: "这是一个零信任系统 - 没有服务器存储您的密钥",
     },
     transactions: {
       title: "💸 交易",
@@ -633,8 +743,13 @@ export const translations: Record<Locale, Translations> = {
       delete: "Delete",
       edit: "Edit",
       copy: "Copy",
+      name: "Name",
+      size: "Size",
+      created: "Created",
+      none: "None",
     },
     status: {
+      status: "Status",
       ready: "Ready",
       notReady: "Not Ready",
       connected: "Connected",
@@ -786,6 +901,56 @@ export const translations: Record<Locale, Translations> = {
       nodeId: "Node ID",
       manager: "Wallet Manager",
       backup: "Backup & Recovery",
+      exportWallet: "Export Wallet",
+      importWallet: "Import Wallet",
+      currentWalletAddress: "Current Wallet Address",
+      exportSuccess: "✅ Wallet backup exported successfully! Save the file securely.",
+      importSuccess: "✅ Wallet imported successfully! Your identity has been restored.",
+      addressCopied: "Address copied to clipboard!",
+      exportTitle: "🔐 Export Wallet",
+      importTitle: "♻️ Import Wallet",
+      enterPassword: "Enter password (min 8 characters)",
+      confirmPassword: "Confirm password",
+      passwordsNotMatch: "Passwords do not match",
+      selectBackupFile: "Select Backup File",
+      enterBackupPassword: "Enter backup password",
+      step1EnterPassword: "Step 1: Enter Backup Password",
+      step2SelectFile: "Step 2: Select Backup File",
+      passwordHint: "💡 Enter the password you used when creating the backup file.",
+      fileHint: "💡 Enter your backup password, then select your .idcbackup file. Your wallet identity will be restored to this browser.",
+      enterPasswordFirst: "⚠️ Please enter your password first before selecting the backup file.",
+      activeWallets: "📋 Active Wallets",
+      currentWallet: "Current Wallet",
+      miningWallet: "Mining Wallet",
+      walletList: "💼 Wallet List",
+      noWallets: "No wallets yet. Create your first wallet below.",
+      createFirstWallet: "No wallets yet. Create your first wallet below.",
+      setAsCurrent: "Set as Current",
+      setAsMining: "Set as Mining",
+      rename: "Rename",
+      delete: "Delete",
+      export: "Export",
+      createNewWallet: "Create New Wallet",
+      walletName: "Wallet Name",
+      create: "Create",
+      deleteConfirm: "Delete wallet",
+      cannotUndone: "This cannot be undone!",
+      walletExported: "✅ Wallet exported successfully!",
+      walletImported: "✅ Wallet imported successfully!",
+      pleaseEnterPassword: "Please enter a password",
+      pleaseEnterBackupPassword: "Please enter the backup password",
+      failedToExport: "Failed to export wallet",
+      failedToImport: "Failed to import wallet",
+      failedToDelete: "Failed to delete wallet",
+      pleaseEnterWalletName: "Please enter a wallet name",
+      backupFileDownloaded: "✅ Backup file \"{filename}\" downloaded successfully! Address: {address}...",
+      failedToReadBackup: "Failed to read backup file. Please ensure it's a valid .idcbackup file.",
+      encryptionNotice: "💡 Your private key will be encrypted with PBKDF2 (200k iterations) + AES-GCM. Save the backup file securely - you'll need it to recover your wallet.",
+      securityNotice: "⚠️ Security Notice:",
+      securityNotice1: "Backup files are encrypted - never share your password",
+      securityNotice2: "Store backups in a secure location (password manager, encrypted drive)",
+      securityNotice3: "Without the backup file and password, you cannot recover your wallet",
+      securityNotice4: "This is a zero-trust system - no server stores your keys",
     },
     transactions: {
       title: "💸 Transactions",

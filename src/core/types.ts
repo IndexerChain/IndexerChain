@@ -35,8 +35,9 @@ export interface SerializedPublicKey {
  * Operation types
  * 
  * Phase 7: Added TRANSFER for native token transfers
+ * Phase 27: Added SHIELDED_TRANSFER for privacy-preserving transfers
  */
-export type OpType = "PUT" | "APPEND" | "DELETE" | "TRANSFER";
+export type OpType = "PUT" | "APPEND" | "DELETE" | "TRANSFER" | "SHIELDED_TRANSFER";
 
 /**
  * Operation - the smallest unit on the chain
@@ -53,6 +54,13 @@ export interface Operation {
   // Phase 7: Transfer operation fields
   to?: Address; // Recipient address (for TRANSFER)
   amount?: number; // Transfer amount in IDC (for TRANSFER)
+  
+  // Phase 27: Shielded transfer operation fields
+  commitment?: string; // Commitment value (for SHIELDED_TRANSFER)
+  nullifier?: string; // Nullifier to prevent double-spend (for SHIELDED_TRANSFER)
+  oneTimePublic?: string; // One-time stealth address (for SHIELDED_TRANSFER)
+  ephemeralPub?: string; // Ephemeral public key (for SHIELDED_TRANSFER)
+  proof?: string; // ZK proof (Phase Z2, optional for now)
 }
 
 /**
