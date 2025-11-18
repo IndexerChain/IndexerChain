@@ -2177,6 +2177,10 @@ function App() {
           const { peerId, peerCount: newPeerCount } = event.detail;
           console.log(`[Phase 32] Peer connected: ${peerId.substring(0, 16)}... (total: ${newPeerCount})`);
           
+          // Get current local height
+          const localTip = chainContext.storage.getTip();
+          const localHeight = localTip?.header.height ?? -1;
+          
           // Execute pending block request if we have one
           if (typeof window !== "undefined" && (window as any).pendingBlockRequest) {
             const pending = (window as any).pendingBlockRequest;
@@ -2185,10 +2189,27 @@ function App() {
             delete (window as any).pendingBlockRequest;
           }
           
-          // Also query network height from the new peer
+          // Immediately query network height from the new peer
           if (newPeerCount > 0) {
             console.log(`[Phase 32] Querying network height from ${newPeerCount} peer(s)...`);
             p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
+            
+            // If local height is 0 or very low, immediately request blocks
+            // This ensures new nodes sync quickly
+            if (localHeight <= 0) {
+              console.log(`[Phase 32] Local height is ${localHeight}, immediately requesting blocks from height 1`);
+              p2pNode.broadcast("REQUEST_BLOCKS", {
+                fromHeight: 1,
+                toHeight: 500, // Request first 500 blocks
+              });
+            } else if (localHeight < 100) {
+              // If height is low, also request aggressively
+              console.log(`[Phase 32] Local height is low (${localHeight}), requesting blocks aggressively`);
+              p2pNode.broadcast("REQUEST_BLOCKS", {
+                fromHeight: localHeight + 1,
+                toHeight: localHeight + 500,
+              });
+            }
           }
         };
         
@@ -2204,6 +2225,37 @@ function App() {
             window.removeEventListener('peer-connected', handlePeerConnected as EventListener);
           });
         }
+        
+        // Phase 32: Add periodic sync check for nodes with height 0
+        // This ensures that if initial sync fails, we retry periodically
+        const syncCheckInterval = setInterval(() => {
+          if (!p2pNodeRef.current) {
+            clearInterval(syncCheckInterval);
+            return;
+          }
+          
+          const localTip = chainContext.storage.getTip();
+          const localHeight = localTip?.header.height ?? -1;
+          const peerCount = p2pNode.getPeerCount();
+          
+          // If we have peers but height is still 0, retry sync
+          if (peerCount > 0 && localHeight <= 0) {
+            console.log(`[Phase 32] Periodic sync check: height=${localHeight}, peers=${peerCount}, retrying sync...`);
+            p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
+            p2pNode.broadcast("REQUEST_BLOCKS", {
+              fromHeight: 1,
+              toHeight: 500,
+            });
+          }
+        }, 5000); // Check every 5 seconds
+        
+        // Store interval for cleanup
+        if (!(p2pNode as any).cleanupFunctions) {
+          (p2pNode as any).cleanupFunctions = [];
+        }
+        (p2pNode as any).cleanupFunctions.push(() => {
+          clearInterval(syncCheckInterval);
+        });
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to connect to P2P network";
@@ -4662,9 +4714,13 @@ function App() {
                   deviceCapability={runtimeManager.getDeviceCapability()}
                   onComplete={async (profile, dontShowAgain) => {
                     setShowOnboarding(false);
+                    
+                    // Always mark onboarding as completed for this session
+                    // dontShowAgain only controls whether to persist to localStorage
+                    setOnboardingCompleted(true);
+                    
                     if (dontShowAgain) {
                       localStorage.setItem("mining_onboarding_completed", "true");
-                      setOnboardingCompleted(true);
                     }
                     
                     // Apply profile
