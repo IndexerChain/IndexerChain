@@ -104,8 +104,8 @@ let nonceStart: number = 0; // Phase 18: Starting nonce
 let nonceEnd: number | null = null; // Phase 18: Ending nonce (null = unlimited)
 
 // Progress reporting interval (report every N hashes or every M ms)
-const PROGRESS_INTERVAL_HASHES = 20000; // Report every 20k hashes
-const PROGRESS_INTERVAL_MS = 200; // Or every 200ms
+const PROGRESS_INTERVAL_HASHES = 1000; // Report every 1k hashes (more frequent updates)
+const PROGRESS_INTERVAL_MS = 100; // Or every 100ms (more frequent updates)
 let lastProgressTime = 0;
 
 /**
@@ -113,8 +113,11 @@ let lastProgressTime = 0;
  */
 async function miningLoop(): Promise<void> {
   if (!isRunning || !currentBlock) {
+    console.log("[Worker] Mining loop not started: isRunning=", isRunning, "currentBlock=", !!currentBlock);
     return;
   }
+
+  console.log("[Worker] Starting mining loop, difficulty:", currentDifficulty, "nonceStart:", nonceStart);
 
   try {
     while (isRunning && currentBlock) {
@@ -160,12 +163,18 @@ async function miningLoop(): Promise<void> {
       // Increment nonce
       nonce++;
 
-      // Report progress periodically
+      // Report progress periodically (more frequent updates)
       const now = Date.now();
-      if (
+      const shouldReport = 
         hashesTried % PROGRESS_INTERVAL_HASHES === 0 ||
-        now - lastProgressTime >= PROGRESS_INTERVAL_MS
-      ) {
+        now - lastProgressTime >= PROGRESS_INTERVAL_MS ||
+        hashesTried === 1; // Report first hash immediately
+      
+      if (shouldReport) {
+        // Always report first hash to show activity
+        if (hashesTried === 1) {
+          console.log("[Worker] First hash computed, sending PROGRESS event");
+        }
         self.postMessage({
           type: "PROGRESS",
           nonce,
@@ -183,6 +192,7 @@ async function miningLoop(): Promise<void> {
     }
   } catch (error) {
     // Send error event
+    console.error("[Worker] Mining loop error:", error);
     self.postMessage({
       type: "STOPPED",
       reason: "error",
@@ -217,8 +227,18 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
     nonce = nonceStart;
     lastProgressTime = startedAt;
 
-    // Start mining loop
-    miningLoop();
+    console.log("[Worker] START command received, difficulty:", currentDifficulty, "nonceStart:", nonceStart);
+
+    // Start mining loop (will send PROGRESS after first hash)
+    // Use setImmediate or setTimeout to ensure async loop starts
+    miningLoop().catch((error) => {
+      console.error("[Worker] Mining loop promise rejected:", error);
+      self.postMessage({
+        type: "STOPPED",
+        reason: "error",
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+      } as MinerWorkerEvent);
+    });
   } else if (command.type === "STOP") {
     // Stop mining
     isRunning = false;

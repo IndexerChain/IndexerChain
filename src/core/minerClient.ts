@@ -123,14 +123,17 @@ export class MinerClient {
         type: "module",
       });
 
-      // Handle messages from worker
-      this.worker.onmessage = (event: MessageEvent<MinerWorkerEvent>) => {
-        this.handleWorkerMessage(event.data);
-      };
+      // Handle messages from worker (will be set again below with logging)
 
       // Handle worker errors
       this.worker.onerror = (error) => {
         console.error("Miner worker error:", error);
+        console.error("Worker error details:", {
+          message: error.message,
+          filename: error.filename,
+          lineno: error.lineno,
+          colno: error.colno,
+        });
         this.isMining = false;
         this.stopStatsUpdate();
         const stoppedEvent = {
@@ -139,9 +142,38 @@ export class MinerClient {
         };
         this.stoppedHandlers.forEach((handler) => handler(stoppedEvent));
       };
+      
+      // Log successful worker initialization
+      console.log("Miner worker initialized successfully");
+      
+      // Add message handler to log all messages for debugging
+      this.worker.onmessage = (event: MessageEvent<MinerWorkerEvent>) => {
+        if (event.data.type === "PROGRESS" && event.data.hashesTried <= 5) {
+          console.log("[MinerClient] Received PROGRESS:", {
+            hashesTried: event.data.hashesTried,
+            nonce: event.data.nonce,
+            hash: event.data.hash.substring(0, 16) + "...",
+          });
+        }
+        this.handleWorkerMessage(event.data);
+      };
     } catch (error) {
       console.error("Failed to create miner worker:", error);
-      throw error;
+      // Don't throw - allow retry later
+      this.worker = null;
+    }
+  }
+
+  /**
+   * Ensure worker is initialized, retry if needed
+   */
+  private ensureWorker(): void {
+    if (!this.worker) {
+      console.log("Worker not initialized, attempting to create...");
+      this.initWorker();
+      if (!this.worker) {
+        throw new Error("Failed to initialize miner worker. Please refresh the page.");
+      }
     }
   }
 
@@ -153,8 +185,24 @@ export class MinerClient {
       case "PROGRESS":
         this.stats.hashesTried = event.hashesTried;
         this.updateHashRate(event.startedAt, event.hashesTried);
+        // Log progress for debugging (only occasionally to avoid spam)
+        // Removed frequent logging to prevent console spam
+        if (event.hashesTried > 0 && event.hashesTried % 50000 === 0) {
+          console.log("Mining progress:", {
+            hashesTried: event.hashesTried,
+            nonce: event.nonce,
+            hash: event.hash.substring(0, 16) + "...",
+          });
+        }
         // Notify all progress handlers
-        this.progressHandlers.forEach((handler) => handler(event));
+        console.log("[MinerClient] Notifying progress handlers, count:", this.progressHandlers.size);
+        this.progressHandlers.forEach((handler) => {
+          try {
+            handler(event);
+          } catch (error) {
+            console.error("[MinerClient] Error in progress handler:", error);
+          }
+        });
         break;
 
       case "FOUND":
@@ -225,9 +273,8 @@ export class MinerClient {
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
   }): void {
-    if (!this.worker) {
-      throw new Error("Miner worker not initialized");
-    }
+    // Ensure worker is initialized
+    this.ensureWorker();
 
     // Stop existing mining if any
     if (this.isMining) {
@@ -255,8 +302,14 @@ export class MinerClient {
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
   }): void {
+    // Clear existing handlers to avoid duplicates
+    this.progressHandlers.clear();
+    this.foundHandlers.clear();
+    this.stoppedHandlers.clear();
+    
     // Register handlers
     if (args.onProgress) {
+      console.log("[MinerClient] Registering onProgress handler");
       this.progressHandlers.add(args.onProgress);
     }
     if (args.onFound) {
@@ -265,15 +318,24 @@ export class MinerClient {
     if (args.onStopped) {
       this.stoppedHandlers.add(args.onStopped);
     }
+    
+    console.log("[MinerClient] Handlers registered:", {
+      progress: this.progressHandlers.size,
+      found: this.foundHandlers.size,
+      stopped: this.stoppedHandlers.size,
+    });
 
     // Reset stats
     this.stats.hashesTried = 0;
     this.stats.startedAt = Date.now();
     this.stats.hashRate = null;
 
-    // Send START command to worker
+    // Ensure worker is initialized
+    this.ensureWorker();
+
+    // TypeScript null check (ensureWorker throws if worker is null)
     if (!this.worker) {
-      throw new Error("Miner worker not initialized");
+      throw new Error("Worker initialization failed");
     }
 
     const command: MinerWorkerCommand = {
@@ -299,7 +361,10 @@ export class MinerClient {
     }
 
     const command: MinerWorkerCommand = { type: "STOP" };
-    this.worker.postMessage(command);
+    // Worker is checked above, but TypeScript needs explicit check
+    if (this.worker) {
+      this.worker.postMessage(command);
+    }
     this.isMining = false;
     this.stopStatsUpdate();
   }

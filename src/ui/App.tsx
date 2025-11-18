@@ -77,7 +77,15 @@ function App() {
   const [transferAmount, setTransferAmount] = useState<string>("");
 
   // Phase 8: Miner client and stats
-  const [minerClient] = useState(() => new MinerClient());
+  const [minerClient] = useState(() => {
+    try {
+      return new MinerClient();
+    } catch (error) {
+      console.error("Failed to create miner client:", error);
+      // Return a client instance anyway - it will retry on first use
+      return new MinerClient();
+    }
+  });
   const [miningStats, setMiningStats] = useState<{
     hashesTried: number;
     hashRate: number | null;
@@ -1002,14 +1010,30 @@ function App() {
         candidateBlock,
         difficulty: candidateBlock.header.difficulty,
         onProgress: (event) => {
-          setMiningHash(event.hash);
-          setMiningNonce(event.nonce);
+          console.log("[App] onProgress callback called:", {
+            hashesTried: event.hashesTried,
+            nonce: event.nonce,
+            hash: event.hash.substring(0, 16) + "...",
+          });
+          // Use functional updates to ensure we're using the latest state
+          setMiningHash((prev) => {
+            console.log("[App] setMiningHash called, prev:", prev.substring(0, 16) + "...", "new:", event.hash.substring(0, 16) + "...");
+            return event.hash;
+          });
+          setMiningNonce((prev) => {
+            console.log("[App] setMiningNonce called, prev:", prev, "new:", event.nonce);
+            return event.nonce;
+          });
           const elapsed = (Date.now() - event.startedAt) / 1000;
           const hashRate = elapsed > 0 ? event.hashesTried / elapsed : null;
-          setMiningStats({
-            hashesTried: event.hashesTried,
-            hashRate,
-            elapsedTime: elapsed,
+          setMiningStats((prev) => {
+            const newStats = {
+              hashesTried: event.hashesTried,
+              hashRate,
+              elapsedTime: elapsed,
+            };
+            console.log("[App] setMiningStats called, prev:", prev, "new:", newStats);
+            return newStats;
           });
         },
         onFound: async (event) => {
@@ -1063,20 +1087,15 @@ function App() {
               setAutoMining(false);
             }
           }
-          // "replaced" reason means we're restarting, don't show error
-          // Auto-restart if auto-mining is enabled
-          if (event.reason === "replaced" && autoMining && chainContext) {
-            setTimeout(() => {
-              if (!isMining) {
-                handleStartMining();
-              }
-            }, 500);
-          }
+          // "replaced" reason means we're restarting with a new block
+          // Don't auto-restart here - the new block will trigger a new mining session
+          // if auto-mining is enabled
         },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start mining");
       setIsMining(false);
+      setError(err instanceof Error ? err.message : "Failed to start mining");
+      console.error("Failed to start mining:", err);
     }
   };
 
@@ -1517,6 +1536,10 @@ function App() {
               {(isMining || miningStats.hashesTried > 0) && (
                 <div className="status-card">
                   <h2>📊 Mining Status</h2>
+                  {/* Debug info - remove after fixing */}
+                  <div style={{ fontSize: "0.7rem", color: "#999", marginBottom: "0.5rem" }}>
+                    Debug: isMining={String(isMining)}, hashesTried={miningStats.hashesTried}, hash={miningHash.substring(0, 8)}..., nonce={miningNonce}
+                  </div>
                   <div className="status-item">
                     <span className="label">Status:</span>
                     <span className="value">

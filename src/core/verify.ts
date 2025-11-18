@@ -222,6 +222,19 @@ export async function verifyBlock(
       for (const tx of block.txs) {
         dryRunState.applyTx(tx);
       }
+      
+      // Phase 16: Update total_minted after applying coinbase (matching blockBuilder.ts logic)
+      if (block.txs.length > 0) {
+        const coinbaseTx = block.txs[0];
+        if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+          const rewardOp = coinbaseTx.ops[0];
+          if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
+            const { IDCToUIDC } = await import("./idcEmission.js");
+            const rewardUIDC = IDCToUIDC(rewardOp.amount);
+            dryRunState.incrementTotalMinted(rewardUIDC);
+          }
+        }
+      }
     } catch (error) {
       return {
         valid: false,
