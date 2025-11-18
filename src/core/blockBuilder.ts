@@ -16,6 +16,7 @@ import {
   uIDCToIDC,
   estimateTxFee,
   IDCToUIDC,
+  IDC_MAX_SUPPLY,
 } from "./idcEmission.js";
 
 /**
@@ -40,8 +41,15 @@ export async function createCoinbaseTx(
   // Phase 16: Calculate block reward using emission schedule
   const blockRewardUIDC = getCappedBlockReward(blockHeight, totalMinted);
   
-  // Total reward = block reward + fees
-  const totalRewardUIDC = blockRewardUIDC + fees;
+  // Calculate remaining supply to ensure we don't exceed max supply
+  const remaining = IDC_MAX_SUPPLY - totalMinted;
+  
+  // Total reward = block reward + fees, but capped to remaining supply
+  // This ensures that even with high fees, we never exceed IDC_MAX_SUPPLY
+  const totalRewardUIDC = blockRewardUIDC + fees > remaining 
+    ? remaining 
+    : blockRewardUIDC + fees;
+  
   const totalRewardIDC = uIDCToIDC(totalRewardUIDC);
   
   // Only create coinbase if there's a reward

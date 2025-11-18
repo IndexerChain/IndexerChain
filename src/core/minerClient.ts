@@ -21,8 +21,10 @@ type MinerWorkerCommand =
       maxIterations?: number;
       nonceStart?: number; // Phase 18: Starting nonce
       nonceEnd?: number; // Phase 18: Ending nonce
+      dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
     }
-  | { type: "STOP" };
+  | { type: "STOP" }
+  | { type: "SET_DUTY_CYCLE"; dutyCycle: number }; // Phase 26: Update duty cycle dynamically
 
 /**
  * Worker event types (defined inline to avoid import issues)
@@ -108,6 +110,8 @@ export class MinerClient {
   private foundHandlers: Set<MinerFoundHandler> = new Set();
   private stoppedHandlers: Set<MinerStoppedHandler> = new Set();
   private statsUpdateInterval: number | null = null;
+  // Phase 26: Duty cycle control
+  private dutyCycle: number = 1.0; // 0.0 to 1.0
 
   constructor() {
     this.initWorker();
@@ -146,15 +150,8 @@ export class MinerClient {
       // Log successful worker initialization
       console.log("Miner worker initialized successfully");
       
-      // Add message handler to log all messages for debugging
+      // Add message handler
       this.worker.onmessage = (event: MessageEvent<MinerWorkerEvent>) => {
-        if (event.data.type === "PROGRESS" && event.data.hashesTried <= 5) {
-          console.log("[MinerClient] Received PROGRESS:", {
-            hashesTried: event.data.hashesTried,
-            nonce: event.data.nonce,
-            hash: event.data.hash.substring(0, 16) + "...",
-          });
-        }
         this.handleWorkerMessage(event.data);
       };
     } catch (error) {
@@ -185,17 +182,7 @@ export class MinerClient {
       case "PROGRESS":
         this.stats.hashesTried = event.hashesTried;
         this.updateHashRate(event.startedAt, event.hashesTried);
-        // Log progress for debugging (only occasionally to avoid spam)
-        // Removed frequent logging to prevent console spam
-        if (event.hashesTried > 0 && event.hashesTried % 50000 === 0) {
-          console.log("Mining progress:", {
-            hashesTried: event.hashesTried,
-            nonce: event.nonce,
-            hash: event.hash.substring(0, 16) + "...",
-          });
-        }
         // Notify all progress handlers
-        console.log("[MinerClient] Notifying progress handlers, count:", this.progressHandlers.size);
         this.progressHandlers.forEach((handler) => {
           try {
             handler(event);
@@ -263,12 +250,14 @@ export class MinerClient {
    * Start mining
    * 
    * Phase 18: Added nonceStart and nonceEnd parameters for cluster mining
+   * Phase 26: Added dutyCycle parameter for CPU control
    */
   startMining(args: {
     candidateBlock: Block;
     difficulty: number;
     nonceStart?: bigint | number; // Phase 18: Starting nonce
     nonceEnd?: bigint | number; // Phase 18: Ending nonce
+    dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
     onProgress?: MinerProgressHandler;
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
@@ -298,6 +287,7 @@ export class MinerClient {
     difficulty: number;
     nonceStart?: bigint | number; // Phase 18: Starting nonce
     nonceEnd?: bigint | number; // Phase 18: Ending nonce
+    dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
     onProgress?: MinerProgressHandler;
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
@@ -309,7 +299,7 @@ export class MinerClient {
     
     // Register handlers
     if (args.onProgress) {
-      console.log("[MinerClient] Registering onProgress handler");
+      // Registering onProgress handler
       this.progressHandlers.add(args.onProgress);
     }
     if (args.onFound) {
@@ -319,16 +309,17 @@ export class MinerClient {
       this.stoppedHandlers.add(args.onStopped);
     }
     
-    console.log("[MinerClient] Handlers registered:", {
-      progress: this.progressHandlers.size,
-      found: this.foundHandlers.size,
-      stopped: this.stoppedHandlers.size,
-    });
+    // Handlers registered
 
     // Reset stats
     this.stats.hashesTried = 0;
     this.stats.startedAt = Date.now();
     this.stats.hashRate = null;
+
+    // Phase 26: Update duty cycle
+    if (args.dutyCycle !== undefined) {
+      this.dutyCycle = Math.max(0.0, Math.min(1.0, args.dutyCycle));
+    }
 
     // Ensure worker is initialized
     this.ensureWorker();
@@ -345,6 +336,8 @@ export class MinerClient {
       // Phase 18: Convert bigint to number (nonce is stored as number in worker)
       nonceStart: args.nonceStart !== undefined ? Number(args.nonceStart) : undefined,
       nonceEnd: args.nonceEnd !== undefined ? Number(args.nonceEnd) : undefined,
+      // Phase 26: Pass duty cycle to worker
+      dutyCycle: this.dutyCycle,
     };
 
     this.worker.postMessage(command);
@@ -429,6 +422,27 @@ export class MinerClient {
    */
   removeStoppedHandler(handler: MinerStoppedHandler): void {
     this.stoppedHandlers.delete(handler);
+  }
+
+  /**
+   * Phase 26: Set duty cycle dynamically (without restarting mining)
+   */
+  setDutyCycle(cycle: number): void {
+    this.dutyCycle = Math.max(0.0, Math.min(1.0, cycle));
+    if (this.worker && this.isMining) {
+      const command: MinerWorkerCommand = {
+        type: "SET_DUTY_CYCLE",
+        dutyCycle: this.dutyCycle,
+      };
+      this.worker.postMessage(command);
+    }
+  }
+
+  /**
+   * Phase 26: Get current duty cycle
+   */
+  getDutyCycle(): number {
+    return this.dutyCycle;
   }
 
   /**

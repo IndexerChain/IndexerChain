@@ -216,6 +216,22 @@ export async function verifyBlock(
     const prevBlockIndex = allBlocks.findIndex((b) => b.hash === prevBlock.hash);
     const previousBlocks = prevBlockIndex >= 0 ? allBlocks.slice(0, prevBlockIndex + 1) : allBlocks;
     dryRunState.rebuildFromBlocks(previousBlocks);
+    
+    // Phase 16: Update total_minted for all previous blocks (matching chain.ts initChain logic)
+    // rebuildFromBlocks doesn't update total_minted, so we need to do it manually
+    for (const prevBlockItem of previousBlocks) {
+      if (prevBlockItem.txs.length > 0) {
+        const coinbaseTx = prevBlockItem.txs[0];
+        if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+          const rewardOp = coinbaseTx.ops[0];
+          if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
+            const { IDCToUIDC } = await import("./idcEmission.js");
+            const rewardUIDC = IDCToUIDC(rewardOp.amount);
+            dryRunState.incrementTotalMinted(rewardUIDC);
+          }
+        }
+      }
+    }
 
     // Apply all transactions in the block to dry-run state
     try {

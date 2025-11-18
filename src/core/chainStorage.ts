@@ -213,9 +213,42 @@ export class BrowserChainStorage implements ChainStorage {
     }
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.blocks));
+      const serialized = JSON.stringify(this.blocks);
+      localStorage.setItem(STORAGE_KEY, serialized);
     } catch (error) {
-      console.error("Failed to save chain to persistence:", error);
+      // Handle QuotaExceededError - localStorage is full
+      if (error instanceof DOMException && error.name === "QuotaExceededError") {
+        console.error("localStorage quota exceeded! Attempting to prune old blocks...");
+        // Try to prune old blocks and retry
+        const tip = this.getTip();
+        if (tip && tip.header.height > 50) {
+          // Prune blocks before height - 50
+          const pruneHeight = tip.header.height - 50;
+          this.pruneBlocksBefore(pruneHeight);
+          // Retry saving
+          try {
+            const serialized = JSON.stringify(this.blocks);
+            localStorage.setItem(STORAGE_KEY, serialized);
+            console.log("Successfully saved after pruning old blocks");
+          } catch (retryError) {
+            console.error("Failed to save even after pruning:", retryError);
+            // Last resort: clear all blocks except tip
+            if (tip) {
+              this.blocks = [tip];
+              try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(this.blocks));
+                console.warn("Cleared all blocks except tip due to storage limit");
+              } catch (finalError) {
+                console.error("Failed to save even with only tip block:", finalError);
+              }
+            }
+          }
+        } else {
+          console.error("Cannot prune: not enough blocks or no tip");
+        }
+      } else {
+        console.error("Failed to save chain to persistence:", error);
+      }
     }
   }
 }

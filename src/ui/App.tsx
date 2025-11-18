@@ -42,11 +42,19 @@ import {
   uIDCToIDC,
   IDC_MAX_SUPPLY,
   IDC_ERA_COUNT,
+  IDC_DECIMALS,
+  IDC_BASE_REWARD,
+  IDC_BLOCKS_PER_ERA,
+  IDC_BASE_FEE,
+  IDC_FEE_PER_100_BYTES,
 } from "../core/idcEmission.js";
 import type { Operation, Block, Tx, SnapshotMeta } from "../core/types.js";
 import { WalletBackupPanel } from "./WalletBackupPanel.js";
 import { WalletManagerPanel } from "./WalletManagerPanel.js";
 import { ConfigChecker } from "./ConfigChecker.js";
+import { RuntimePanel } from "./RuntimePanel.js";
+import { RuntimeManager } from "../core/runtimeManager.js";
+import { useI18n } from "../i18n/useI18n.js";
 import "./index.css";
 
 /**
@@ -55,6 +63,7 @@ import "./index.css";
  * Phase 4: P2P Networking
  */
 function App() {
+  const { locale, setLocale, t } = useI18n();
   const [chainContext, setChainContext] = useState<ChainContext | null>(null);
   const [mempool] = useState(() => new Mempool());
   const [isMining, setIsMining] = useState<boolean>(false);
@@ -62,6 +71,7 @@ function App() {
   const [miningHash, setMiningHash] = useState<string>("");
   const [miningNonce, setMiningNonce] = useState<number>(0);
   const [error, setError] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>(""); // Success message for transfers
   // Phase 17: Support mainnet mode (default) and dev mode
   // Default to mainnet signaling server (can be configured)
   const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.com"; // Custom domain configured
@@ -99,14 +109,33 @@ function App() {
   // Phase 18: Cluster mining
   const [minerCluster] = useState(() => new MinerCluster());
   const [clusterMining, setClusterMining] = useState<boolean>(false);
+  
+  // Phase 26: Runtime Manager
+  const [runtimeManager] = useState(() => {
+    try {
+      return new RuntimeManager();
+    } catch (error) {
+      console.error("Failed to create runtime manager:", error);
+      return null;
+    }
+  });
+  
   const [clusterWorkerCount, setClusterWorkerCount] = useState<number>(() => {
-    // Default to optimal worker count based on CPU cores
+    // Phase 26: Use RuntimeManager to get recommended worker count
+    if (runtimeManager) {
+      const deviceCap = runtimeManager.getDeviceCapability();
+      return deviceCap.recommendedWorkers;
+    }
+    // Fallback to CPU cores
     if (typeof navigator !== "undefined" && "hardwareConcurrency" in navigator) {
       const cores = navigator.hardwareConcurrency || 4;
       return Math.max(1, cores - 1);
     }
     return 4;
   });
+  
+  // Phase 26: Duty cycle state
+  const [dutyCycle, setDutyCycle] = useState<number>(1.0);
   const [clusterStats, setClusterStats] = useState<{
     totalWorkers: number;
     activeWorkers: number;
@@ -294,12 +323,15 @@ function App() {
   // Phase 9: Load snapshot metadata when chain context changes
   // Phase 11: Also load snapshot size info
   // Phase 20: Update seeder cache when new snapshot is created
+  // Use ref to track previous latest snapshot to avoid infinite loop
+  const prevLatestSnapshotRef = useRef<SnapshotMeta | null>(null);
+  
   useEffect(() => {
     if (chainContext) {
       const metas = loadAllSnapshotMeta();
       setSnapshotMetas(metas);
       const latest = getLatestSnapshotMeta();
-      const prevLatest = latestSnapshot;
+      const prevLatest = prevLatestSnapshotRef.current;
       
       // Phase 20: If new snapshot was created, update seeder cache
       if (latest && (!prevLatest || latest.height > prevLatest.height)) {
@@ -308,7 +340,11 @@ function App() {
         }
       }
       
-      setLatestSnapshot(latest);
+      // Only update if latest snapshot actually changed
+      if (latest?.height !== prevLatest?.height) {
+        setLatestSnapshot(latest);
+        prevLatestSnapshotRef.current = latest;
+      }
       
       // Load size info for latest snapshot
       if (latest) {
@@ -319,7 +355,7 @@ function App() {
         setSnapshotSizeInfo(null);
       }
     }
-  }, [chainContext, isP2PConnected, gsnEnabled, snapshotSeeder, latestSnapshot]);
+  }, [chainContext, isP2PConnected, gsnEnabled, snapshotSeeder]);
 
   // Auto-mining: Start mining automatically when chain is ready
   useEffect(() => {
@@ -618,6 +654,20 @@ function App() {
           // Store interval for cleanup
           (p2pNode as any).peerReputationTickInterval = tickInterval;
           
+          // Cleanup function for peer reputation tick
+          const cleanupPeerReputation = () => {
+            if ((p2pNode as any).peerReputationTickInterval) {
+              clearInterval((p2pNode as any).peerReputationTickInterval);
+              (p2pNode as any).peerReputationTickInterval = null;
+            }
+          };
+          
+          // Store cleanup function
+          if (!(p2pNode as any).cleanupFunctions) {
+            (p2pNode as any).cleanupFunctions = [];
+          }
+          (p2pNode as any).cleanupFunctions.push(cleanupPeerReputation);
+          
           // Initial update
           const scores = reputationManager.getAllScores();
           setPeerScores(scores.map(ps => ({
@@ -664,22 +714,57 @@ function App() {
         
         // Store interval for cleanup
         (p2pNode as any).finalityStatsInterval = finalityStatsInterval;
+        
+        // Cleanup function for finality stats
+        const cleanupFinality = () => {
+          if ((p2pNode as any).finalityStatsInterval) {
+            clearInterval((p2pNode as any).finalityStatsInterval);
+            (p2pNode as any).finalityStatsInterval = null;
+          }
+        };
+        
+        // Store cleanup function
+        if (!(p2pNode as any).cleanupFunctions) {
+          (p2pNode as any).cleanupFunctions = [];
+        }
+        (p2pNode as any).cleanupFunctions.push(cleanupFinality);
       }
       
       // Setup delegator change handler
       if (delegatorManager) {
+        let delegatorStatsInterval: ReturnType<typeof setInterval> | null = null;
         delegatorManager.onDelegatorChange((isDelegator) => {
           setIsDelegator(isDelegator);
+          // Clear previous interval if exists
+          if (delegatorStatsInterval) {
+            clearInterval(delegatorStatsInterval);
+            delegatorStatsInterval = null;
+          }
           if (isDelegator && delegatorManager) {
             // Update stats periodically
             const updateStats = () => {
               setDelegatorStats(delegatorManager.getStats());
             };
-            const interval = setInterval(updateStats, 2000);
+            delegatorStatsInterval = setInterval(updateStats, 2000);
             updateStats();
-            return () => clearInterval(interval);
           }
         });
+        // Store interval for cleanup
+        (p2pNode as any).delegatorStatsInterval = delegatorStatsInterval;
+        
+        // Cleanup function for delegator stats
+        const cleanupDelegator = () => {
+          if ((p2pNode as any).delegatorStatsInterval) {
+            clearInterval((p2pNode as any).delegatorStatsInterval);
+            (p2pNode as any).delegatorStatsInterval = null;
+          }
+        };
+        
+        // Store cleanup function
+        if (!(p2pNode as any).cleanupFunctions) {
+          (p2pNode as any).cleanupFunctions = [];
+        }
+        (p2pNode as any).cleanupFunctions.push(cleanupDelegator);
       }
       
       // Update chain context with P2P node
@@ -715,12 +800,25 @@ function App() {
       const gsnStatsInterval = setInterval(updateGsnStats, 3000);
       updateGsnStats();
       
+      // Store interval for cleanup
+      (p2pNode as any).gsnStatsInterval = gsnStatsInterval;
+      
+      // Cleanup function for GSN stats
+      const cleanupGsn = () => {
+        if ((p2pNode as any).gsnStatsInterval) {
+          clearInterval((p2pNode as any).gsnStatsInterval);
+          (p2pNode as any).gsnStatsInterval = null;
+        }
+      };
+      
+      // Store cleanup function
+      if (!(p2pNode as any).cleanupFunctions) {
+        (p2pNode as any).cleanupFunctions = [];
+      }
+      (p2pNode as any).cleanupFunctions.push(cleanupGsn);
+      
       setIsP2PConnected(true);
       setError(""); // Clear any previous errors
-      
-      return () => {
-        clearInterval(gsnStatsInterval);
-      };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to connect to P2P network";
       setError(errorMessage);
@@ -728,6 +826,25 @@ function App() {
       
       // Clean up on error
       if (p2pNodeRef.current) {
+        const p2pNode = p2pNodeRef.current as any;
+        // Run all cleanup functions
+        if (p2pNode.cleanupFunctions) {
+          p2pNode.cleanupFunctions.forEach((cleanup: () => void) => cleanup());
+          p2pNode.cleanupFunctions = [];
+        }
+        // Also clear intervals directly (backup)
+        if (p2pNode.finalityStatsInterval) {
+          clearInterval(p2pNode.finalityStatsInterval);
+        }
+        if (p2pNode.peerReputationTickInterval) {
+          clearInterval(p2pNode.peerReputationTickInterval);
+        }
+        if (p2pNode.gsnStatsInterval) {
+          clearInterval(p2pNode.gsnStatsInterval);
+        }
+        if (p2pNode.delegatorStatsInterval) {
+          clearInterval(p2pNode.delegatorStatsInterval);
+        }
         p2pNodeRef.current.disconnect();
         p2pNodeRef.current = null;
       }
@@ -736,6 +853,33 @@ function App() {
 
   // Disconnect from P2P network
   const handleDisconnectP2P = () => {
+    // Clean up all intervals stored on P2P node
+    if (p2pNodeRef.current) {
+      const p2pNode = p2pNodeRef.current as any;
+      // Run all cleanup functions
+      if (p2pNode.cleanupFunctions) {
+        p2pNode.cleanupFunctions.forEach((cleanup: () => void) => cleanup());
+        p2pNode.cleanupFunctions = [];
+      }
+      // Also clear intervals directly (backup)
+      if (p2pNode.finalityStatsInterval) {
+        clearInterval(p2pNode.finalityStatsInterval);
+        p2pNode.finalityStatsInterval = null;
+      }
+      if (p2pNode.peerReputationTickInterval) {
+        clearInterval(p2pNode.peerReputationTickInterval);
+        p2pNode.peerReputationTickInterval = null;
+      }
+      if (p2pNode.gsnStatsInterval) {
+        clearInterval(p2pNode.gsnStatsInterval);
+        p2pNode.gsnStatsInterval = null;
+      }
+      if (p2pNode.delegatorStatsInterval) {
+        clearInterval(p2pNode.delegatorStatsInterval);
+        p2pNode.delegatorStatsInterval = null;
+      }
+    }
+    
     if (p2pNodeRef.current) {
       p2pNodeRef.current.disconnect();
       p2pNodeRef.current = null;
@@ -848,8 +992,8 @@ function App() {
         });
       });
 
-      minerCluster.onFound(async (block, workerId) => {
-        console.log(`[Phase 18] Block found by worker ${workerId}`);
+      minerCluster.onFound(async (block) => {
+        // Block found by worker
         
         // Verify and append block
         const allBlocksForVerify = chainContext.storage.getAllBlocks();
@@ -916,10 +1060,9 @@ function App() {
       // Phase 19: If global pool enabled, use allocated ranges
       if (globalPoolEnabled && isP2PConnected) {
         // Setup range received handler
-        workerNodeManager.onRangeReceived((range) => {
+        workerNodeManager.onRangeReceived(() => {
           // Update worker with new range
           // This will be handled by modifying the cluster to use global ranges
-          console.log(`[Phase 19] Worker received range [${range.start}, ${range.end})`);
         });
         
         // Setup range exhausted handler
@@ -947,11 +1090,12 @@ function App() {
         });
       }
 
-      // Start cluster mining
+      // Phase 26: Start cluster mining with duty cycle
       await minerCluster.startMining({
         candidateBlock,
         difficulty: candidateBlock.header.difficulty,
         workerCount: clusterWorkerCount,
+        dutyCycle: dutyCycle, // Phase 26: Use runtime manager duty cycle
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start cluster mining");
@@ -1006,35 +1150,22 @@ function App() {
       setMiningStats({ hashesTried: 0, hashRate: null, elapsedTime: 0 });
 
       // Phase 8: Start mining with Worker
+      // Phase 26: Pass duty cycle to miner client
       minerClient.startMining({
         candidateBlock,
         difficulty: candidateBlock.header.difficulty,
+        dutyCycle: dutyCycle, // Phase 26: Use runtime manager duty cycle
         onProgress: (event) => {
-          console.log("[App] onProgress callback called:", {
-            hashesTried: event.hashesTried,
-            nonce: event.nonce,
-            hash: event.hash.substring(0, 16) + "...",
-          });
           // Use functional updates to ensure we're using the latest state
-          setMiningHash((prev) => {
-            console.log("[App] setMiningHash called, prev:", prev.substring(0, 16) + "...", "new:", event.hash.substring(0, 16) + "...");
-            return event.hash;
-          });
-          setMiningNonce((prev) => {
-            console.log("[App] setMiningNonce called, prev:", prev, "new:", event.nonce);
-            return event.nonce;
-          });
+          setMiningHash(() => event.hash);
+          setMiningNonce(() => event.nonce);
           const elapsed = (Date.now() - event.startedAt) / 1000;
           const hashRate = elapsed > 0 ? event.hashesTried / elapsed : null;
-          setMiningStats((prev) => {
-            const newStats = {
-              hashesTried: event.hashesTried,
-              hashRate,
-              elapsedTime: elapsed,
-            };
-            console.log("[App] setMiningStats called, prev:", prev, "new:", newStats);
-            return newStats;
-          });
+          setMiningStats(() => ({
+            hashesTried: event.hashesTried,
+            hashRate,
+            elapsedTime: elapsed,
+          }));
         },
         onFound: async (event) => {
           // Verify and append block
@@ -1053,8 +1184,9 @@ function App() {
               const txIds = event.block.txs.map((tx) => tx.txId);
               mempool.removeTxs(txIds);
 
-              // Update context
-              setChainContext({ ...chainContext });
+              // Update context (but don't create new object if nothing changed)
+              // Only update if we need to trigger a re-render
+              // setChainContext({ ...chainContext });
               setError("");
             } else {
               setError(result.error || "Failed to append block");
@@ -1106,19 +1238,27 @@ function App() {
   };
 
   // Phase 8: Auto-restart mining when tip changes
+  // Use useRef to persist lastHeight across re-renders
+  const lastHeightRef = useRef<number>(0);
+  
   useEffect(() => {
     if (!chainContext) return;
 
     const tip = chainContext.storage.getTip();
-    let lastHeight = tip?.header.height ?? 0;
+    // Initialize lastHeight only if it's 0 (first run)
+    if (lastHeightRef.current === 0) {
+      lastHeightRef.current = tip?.header.height ?? 0;
+    }
 
     // Check if tip changed (new block received)
     const checkTip = () => {
+      if (!chainContext) return;
       const newTip = chainContext.storage.getTip();
       const newHeight = newTip?.header.height ?? 0;
-      if (newHeight > lastHeight) {
+      if (newHeight > lastHeightRef.current) {
         // Tip changed, restart mining if currently mining or auto-mining is enabled
-        lastHeight = newHeight;
+        console.log("[App] Tip height changed:", lastHeightRef.current, "->", newHeight);
+        lastHeightRef.current = newHeight;
         if (isMining) {
           minerClient.stopMining("replaced");
         }
@@ -1170,18 +1310,114 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>⛓️ IndexerChain</h1>
-        <p className="subtitle">Browser-Native Blockchain • Phase 24 Complete</p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", maxWidth: "1400px", margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            <img 
+              src="/logo/logo.png" 
+              alt="IndexerChain Logo" 
+              style={{ 
+                height: "48px", 
+                width: "auto",
+                objectFit: "contain"
+              }}
+            />
+            <div>
+              <h1 style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                IndexerChain
+              </h1>
+              <p className="subtitle" style={{ margin: 0 }}>Browser-Native Blockchain • Phase 24 Complete</p>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <button
+              onClick={() => setLocale("zh")}
+              style={{
+                padding: "0.5rem 1rem",
+                background: locale === "zh" ? "#667eea" : "rgba(255, 255, 255, 0.2)",
+                color: locale === "zh" ? "white" : "white",
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontWeight: locale === "zh" ? "bold" : "normal",
+              }}
+            >
+              中文
+            </button>
+            <button
+              onClick={() => setLocale("en")}
+              style={{
+                padding: "0.5rem 1rem",
+                background: locale === "en" ? "#667eea" : "rgba(255, 255, 255, 0.2)",
+                color: locale === "en" ? "white" : "white",
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontWeight: locale === "en" ? "bold" : "normal",
+              }}
+            >
+              English
+            </button>
+          </div>
+        </div>
       </header>
 
       <main className="app-main">
+        {/* Status Banner */}
+        {chainContext && (
+          <div style={{
+            padding: "1rem",
+            marginBottom: "1.5rem",
+            borderRadius: "8px",
+            background: isP2PConnected && nodeAddress ? "#d4edda" : "#fff3cd",
+            border: `2px solid ${isP2PConnected && nodeAddress ? "#28a745" : "#ffc107"}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "1rem"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "1.5rem" }}>
+                {isP2PConnected && nodeAddress ? "✅" : "⚠️"}
+              </span>
+              <div>
+                <strong style={{ fontSize: "1rem", display: "block", marginBottom: "0.25rem" }}>
+                  {isP2PConnected && nodeAddress 
+                    ? t("banner.systemReady")
+                    : t("banner.configRequired")}
+                </strong>
+                <div style={{ fontSize: "0.9rem", color: "#666" }}>
+                  {isP2PConnected && nodeAddress 
+                    ? t("banner.networkConnected", { count: peerCount, height })
+                    : !isP2PConnected && !nodeAddress
+                    ? t("banner.networkDisconnected")
+                    : !isP2PConnected
+                    ? t("quickStart.step1Desc")
+                    : t("banner.walletInitializing")}
+                </div>
+              </div>
+            </div>
+            {!isP2PConnected && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setActiveTab("network");
+                }}
+                style={{ padding: "0.5rem 1rem" }}
+              >
+                {t("banner.configNetwork")}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Configuration Checker */}
         {chainContext && (
           <ConfigChecker
             chainContext={chainContext}
             isP2PConnected={isP2PConnected}
             nodeAddress={nodeAddress}
-            isMining={isMining}
+            isMining={isMining || clusterMining}
           />
         )}
 
@@ -1206,7 +1442,7 @@ function App() {
               onClick={handleResetChain}
               style={{ marginTop: "0.5rem" }}
             >
-              Reset Chain
+              {t("advanced.resetChain")}
             </button>
           </div>
         )}
@@ -1226,75 +1462,244 @@ function App() {
               className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
               onClick={() => setActiveTab("overview")}
             >
-              📊 Overview
+              {t("tabs.overview")}
             </button>
             <button
               className={`tab-button ${activeTab === "wallet" ? "active" : ""}`}
               onClick={() => setActiveTab("wallet")}
             >
-              💼 Wallet
+              {t("tabs.wallet")}
             </button>
             <button
               className={`tab-button ${activeTab === "mining" ? "active" : ""}`}
               onClick={() => setActiveTab("mining")}
             >
-              ⛏️ Mining
+              {t("tabs.mining")}
             </button>
             <button
               className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
               onClick={() => setActiveTab("transactions")}
             >
-              💸 Transactions
+              {t("tabs.transactions")}
             </button>
             <button
               className={`tab-button ${activeTab === "network" ? "active" : ""}`}
               onClick={() => setActiveTab("network")}
             >
-              🌐 Network
+              {t("tabs.network")}
             </button>
             <button
               className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
               onClick={() => setActiveTab("storage")}
             >
-              💾 Storage
+              {t("tabs.storage")}
             </button>
             <button
               className={`tab-button ${activeTab === "advanced" ? "active" : ""}`}
               onClick={() => setActiveTab("advanced")}
             >
-              ⚙️ Advanced
+              {t("tabs.advanced")}
+            </button>
+            <button
+              className={`tab-button ${activeTab === "token" ? "active" : ""}`}
+              onClick={() => setActiveTab("token")}
+            >
+              {t("tabs.token")}
             </button>
           </div>
 
           {/* Overview Tab */}
           {activeTab === "overview" && (
             <div className="tab-content active">
+              {/* Quick Start Guide */}
+              {(!isP2PConnected || (!isMining && !clusterMining)) && (
+                <div className="status-card" style={{ 
+                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  color: "white",
+                  border: "none",
+                  marginBottom: "1.5rem"
+                }}>
+                  <h2 style={{ color: "white", marginBottom: "1rem" }}>{t("quickStart.title")}</h2>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                    {/* Step 1: Connect Network */}
+                    <div style={{ 
+                      background: "rgba(255, 255, 255, 0.15)", 
+                      padding: "1rem", 
+                      borderRadius: "8px",
+                      border: isP2PConnected ? "2px solid #28a745" : "2px solid rgba(255, 255, 255, 0.3)"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <span style={{ 
+                            fontSize: "1.5rem", 
+                            background: isP2PConnected ? "#28a745" : "rgba(255, 255, 255, 0.3)",
+                            width: "32px",
+                            height: "32px",
+                            borderRadius: "50%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}>
+                            {isP2PConnected ? "✓" : "1"}
+                          </span>
+                          <strong style={{ fontSize: "1.1rem" }}>{t("quickStart.step1Title")}</strong>
+                        </div>
+                        {isP2PConnected ? (
+                          <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("quickStart.step1Completed")}</span>
+                        ) : (
+                          <button
+                            className="btn"
+                            onClick={() => {
+                              setActiveTab("network");
+                              setTimeout(() => {
+                                if (!isP2PConnected && isMainnetMode) {
+                                  handleConnectP2P();
+                                }
+                              }, 100);
+                            }}
+                            style={{ 
+                              background: "white", 
+                              color: "#667eea",
+                              padding: "0.5rem 1rem",
+                              fontSize: "0.9rem"
+                            }}
+                          >
+                            {t("quickStart.step1Action")}
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
+                        {isP2PConnected 
+                          ? t("quickStart.networkConnected", { 
+                              mode: isMainnetMode ? t("network.mainnet") : t("network.dev"),
+                              count: peerCount 
+                            })
+                          : t("quickStart.step1Desc")}
+                      </p>
+                    </div>
+
+                    {/* Step 2: Check Wallet */}
+                    <div style={{ 
+                      background: "rgba(255, 255, 255, 0.15)", 
+                      padding: "1rem", 
+                      borderRadius: "8px",
+                      border: nodeAddress ? "2px solid #28a745" : "2px solid rgba(255, 255, 255, 0.3)"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <span style={{ 
+                            fontSize: "1.5rem", 
+                            background: nodeAddress ? "#28a745" : "rgba(255, 255, 255, 0.3)",
+                            width: "32px",
+                            height: "32px",
+                            borderRadius: "50%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}>
+                            {nodeAddress ? "✓" : "2"}
+                          </span>
+                          <strong style={{ fontSize: "1.1rem" }}>{t("quickStart.step2Title")}</strong>
+                        </div>
+                        {nodeAddress ? (
+                          <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("quickStart.step2Completed")}</span>
+                        ) : (
+                          <span style={{ color: "#ffc107", fontWeight: "bold" }}>{t("common.loading")}</span>
+                        )}
+                      </div>
+                      <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
+                        {nodeAddress 
+                          ? `${t("wallet.address")}: ${nodeAddress.substring(0, 20)}... (${t("wallet.balance")}: ${chainContext ? chainContext.indexState.getBalance(nodeAddress as any).toFixed(2) : "0"} IDC)`
+                          : t("quickStart.walletInitializing")}
+                      </p>
+                    </div>
+
+                    {/* Step 3: Start Mining */}
+                    <div style={{ 
+                      background: "rgba(255, 255, 255, 0.15)", 
+                      padding: "1rem", 
+                      borderRadius: "8px",
+                      border: (isMining || clusterMining) ? "2px solid #28a745" : "2px solid rgba(255, 255, 255, 0.3)"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <span style={{ 
+                            fontSize: "1.5rem", 
+                            background: (isMining || clusterMining) ? "#28a745" : "rgba(255, 255, 255, 0.3)",
+                            width: "32px",
+                            height: "32px",
+                            borderRadius: "50%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}>
+                            {(isMining || clusterMining) ? "✓" : "3"}
+                          </span>
+                          <strong style={{ fontSize: "1.1rem" }}>{t("quickStart.step3Title")}</strong>
+                        </div>
+                        {(isMining || clusterMining) ? (
+                          <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("quickStart.step3Mining")}</span>
+                        ) : (
+                          <button
+                            className="btn"
+                            onClick={() => {
+                              setActiveTab("mining");
+                            }}
+                            disabled={!nodeAddress}
+                            style={{ 
+                              background: nodeAddress ? "white" : "rgba(255, 255, 255, 0.5)", 
+                              color: nodeAddress ? "#667eea" : "rgba(255, 255, 255, 0.7)",
+                              padding: "0.5rem 1rem",
+                              fontSize: "0.9rem",
+                              cursor: nodeAddress ? "pointer" : "not-allowed"
+                            }}
+                          >
+                            {t("quickStart.step3Action")}
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
+                        {(isMining || clusterMining) 
+                          ? t("quickStart.miningStarted", { 
+                              hashRate: clusterMining && clusterStats.totalHashRate 
+                                ? (clusterStats.totalHashRate / 1000).toFixed(2) + " K hash/s"
+                                : miningStats.hashRate 
+                                ? (miningStats.hashRate / 1000).toFixed(2) + " K hash/s"
+                                : t("mining.calculating")
+                            })
+                          : t("quickStart.miningNotStarted")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Quick Stats Grid */}
               <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
                 {/* Chain Status Card */}
                 <div className="status-card">
-                  <h2>📊 Chain Status</h2>
+                  <h2>📊 {t("overview.chainStatus")}</h2>
                   <div className="status-item">
-                    <span className="label">Current Height:</span>
+                    <span className="label">{t("chain.currentHeight")}:</span>
                     <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
                       {height}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Block Count:</span>
+                    <span className="label">{t("chain.blockCount")}:</span>
                     <span className="value">{blockCount}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Pending Txs:</span>
+                    <span className="label">{t("chain.pendingTxs")}:</span>
                     <span className="value">{pendingTxs.length}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Mining:</span>
+                    <span className="label">{t("chain.mining")}:</span>
                     <span className="value">
                       {isMining || clusterMining ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("status.active")}</span>
                       ) : (
-                        <span style={{ color: "#666" }}>Inactive</span>
+                        <span style={{ color: "#666" }}>{t("status.inactive")}</span>
                       )}
                     </span>
                   </div>
@@ -1302,28 +1707,28 @@ function App() {
 
                 {/* Network Status Card */}
                 <div className="status-card">
-                  <h2>🌐 Network Status</h2>
+                  <h2>🌐 {t("overview.networkStatus")}</h2>
                   <div className="status-item">
-                    <span className="label">Connection:</span>
+                    <span className="label">{t("network.status")}:</span>
                     <span className="value">
                       {isP2PConnected ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Connected</span>
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("status.connected")}</span>
                       ) : (
-                        <span style={{ color: "#dc3545" }}>Disconnected</span>
+                        <span style={{ color: "#dc3545" }}>{t("status.disconnected")}</span>
                       )}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Peers:</span>
+                    <span className="label">{t("network.peers")}:</span>
                     <span className="value">{peerCount}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Mode:</span>
+                    <span className="label">{t("network.mode")}:</span>
                     <span className="value">
                       {isMainnetMode ? (
-                        <span style={{ color: "#28a745" }}>🌐 Mainnet</span>
+                        <span style={{ color: "#28a745" }}>{t("network.mainnet")}</span>
                       ) : (
-                        <span style={{ color: "#ffc107" }}>🔧 Dev</span>
+                        <span style={{ color: "#ffc107" }}>{t("network.dev")}</span>
                       )}
                     </span>
                   </div>
@@ -1331,23 +1736,23 @@ function App() {
 
                 {/* Wallet Status Card */}
                 <div className="status-card">
-                  <h2>💼 Wallet Status</h2>
+                  <h2>💼 {t("overview.walletStatus")}</h2>
                   <div className="status-item">
-                    <span className="label">Address:</span>
+                    <span className="label">{t("wallet.address")}:</span>
                     <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all" }}>
-                      {nodeAddress ? `${nodeAddress.substring(0, 20)}...` : "Loading..."}
+                      {nodeAddress ? `${nodeAddress.substring(0, 20)}...` : t("common.loading")}
                     </span>
                   </div>
                   {nodeAddress && chainContext && (
                     <div className="status-item">
-                      <span className="label">IDC Balance:</span>
+                      <span className="label">{t("wallet.balance")}:</span>
                       <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
                         {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
                       </span>
                     </div>
                   )}
                   <div className="status-item">
-                    <span className="label">Node ID:</span>
+                    <span className="label">{t("wallet.nodeId")}:</span>
                     <span className="value" style={{ fontSize: "0.8rem" }}>
                       {getOrCreateBrowserNodeId().substring(0, 16)}...
                     </span>
@@ -1358,32 +1763,32 @@ function App() {
               {/* Latest Block */}
               {tip && (
                 <div className="status-card">
-                  <h2>📦 Latest Block</h2>
+                  <h2>📦 {t("chain.latestBlock")}</h2>
                   <div className="status-item">
-                    <span className="label">Hash:</span>
+                    <span className="label">{t("chain.hash")}:</span>
                     <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
                       {tip.hash.substring(0, 32)}...
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Height:</span>
+                    <span className="label">{t("chain.height")}:</span>
                     <span className="value">{tip.header.height}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Transactions:</span>
+                    <span className="label">{t("chain.transactions")}:</span>
                     <span className="value">{tip.txs.length}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Difficulty:</span>
+                    <span className="label">{t("chain.difficulty")}:</span>
                     <span className="value">{tip.header.difficulty}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Nonce:</span>
+                    <span className="label">{t("chain.nonce")}:</span>
                     <span className="value">{tip.header.nonce.toLocaleString()}</span>
                   </div>
                   {tip.header.stateCommitment && (
                     <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                      <span className="label">State Commitment:</span>
+                      <span className="label">{t("chain.stateCommitment")}:</span>
                       <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
                         {tip.header.stateCommitment.substring(0, 24)}...
                       </span>
@@ -1399,17 +1804,17 @@ function App() {
             <div className="tab-content active">
               {/* Node Identity Section */}
               <div className="status-card">
-                <h2>💼 Node Identity</h2>
+                <h2>💼 {t("overview.nodeIdentity")}</h2>
                 <div className="status-item">
-                  <span className="label">Address:</span>
+                  <span className="label">{t("wallet.address")}:</span>
                   <span className="value" style={{ fontSize: "0.9rem", wordBreak: "break-all" }}>
-                    {nodeAddress || "Loading..."}
+                    {nodeAddress || t("common.loading")}
                   </span>
                   {nodeAddress && (
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(nodeAddress);
-                        setError("Address copied to clipboard!");
+                        setError(locale === "zh" ? "地址已复制到剪贴板！" : "Address copied to clipboard!");
                         setTimeout(() => setError(""), 2000);
                       }}
                       style={{
@@ -1423,12 +1828,12 @@ function App() {
                         cursor: "pointer",
                       }}
                     >
-                      Copy
+                      {t("common.copy")}
                     </button>
                   )}
                 </div>
                 <div className="status-item">
-                  <span className="label">Node ID:</span>
+                  <span className="label">{t("wallet.nodeId")}:</span>
                   <span className="value" style={{ fontSize: "0.8rem" }}>
                     {getOrCreateBrowserNodeId().substring(0, 16)}...
                   </span>
@@ -1436,7 +1841,7 @@ function App() {
                 {/* Phase 7: Balance Display */}
                 {nodeAddress && chainContext && (
                   <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                    <span className="label">IDC Balance:</span>
+                    <span className="label">{t("wallet.balance")}:</span>
                     <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
                       {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
                     </span>
@@ -1446,7 +1851,7 @@ function App() {
               
               {/* Phase 24: Multi-Wallet Manager */}
               <div className="status-card">
-                <h2>💼 Wallet Manager (Phase 24)</h2>
+                <h2>💼 {t("wallet.manager")}</h2>
                 <WalletManagerPanel
                   onWalletChanged={async () => {
                     // Reload address after wallet change
@@ -1461,17 +1866,17 @@ function App() {
               
               {/* Phase 23: Backup & Recovery */}
               <div className="status-card">
-                <h2>🔐 Backup & Recovery (Phase 23)</h2>
+                <h2>🔐 {t("wallet.backup")}</h2>
                 <WalletBackupPanel
                   onExportSuccess={() => {
-                    setError("✅ Wallet backup exported successfully! Save the file securely.");
+                    setError(locale === "zh" ? "✅ 钱包备份导出成功！请安全保存文件。" : "✅ Wallet backup exported successfully! Save the file securely.");
                     setTimeout(() => setError(""), 5000);
                   }}
                   onImportSuccess={async () => {
                     // Reload address after import
                     const address = await getOrCreateNodeAddress();
                     setNodeAddress(address);
-                    setError("✅ Wallet imported successfully! Your identity has been restored.");
+                    setError(locale === "zh" ? "✅ 钱包导入成功！您的身份已恢复。" : "✅ Wallet imported successfully! Your identity has been restored.");
                     setTimeout(() => setError(""), 5000);
                   }}
                   onError={(err) => {
@@ -1485,49 +1890,241 @@ function App() {
           {/* Mining Tab */}
           {activeTab === "mining" && (
             <div className="tab-content active">
+              {/* Mining Guide */}
+              {!isMining && !clusterMining && (
+                <div className="status-card" style={{ 
+                  background: "#e7f3ff",
+                  border: "2px solid #667eea",
+                  marginBottom: "1.5rem"
+                }}>
+                  <h2 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("mining.guide")}</h2>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                    <div>
+                      <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#333" }}>{t("mining.whatIsMining")}</h3>
+                      <p style={{ fontSize: "0.9rem", color: "#666", lineHeight: "1.6", margin: 0 }}>
+                        {t("mining.whatIsMiningDesc")}
+                      </p>
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#333" }}>{t("mining.steps")}</h3>
+                      <ol style={{ fontSize: "0.9rem", color: "#666", lineHeight: "1.8", margin: 0, paddingLeft: "1.5rem" }}>
+                        <li>{t("mining.step1")}</li>
+                        <li>{t("mining.step2")}</li>
+                        <li>{t("mining.step3")}
+                          <ul style={{ marginTop: "0.5rem", paddingLeft: "1.5rem" }}>
+                            <li>{t("mining.step3Single")}</li>
+                            <li>{t("mining.step3Cluster")}</li>
+                          </ul>
+                        </li>
+                        <li>{t("mining.step4")}</li>
+                      </ol>
+                    </div>
+                    <div style={{ 
+                      background: "#fff3cd", 
+                      padding: "0.75rem", 
+                      borderRadius: "6px",
+                      border: "1px solid #ffc107"
+                    }}>
+                      <strong style={{ color: "#856404" }}>{t("mining.tips")}</strong>
+                      <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem", fontSize: "0.9rem", color: "#856404" }}>
+                        <li>{t("mining.tip1")}</li>
+                        <li>{t("mining.tip2")}</li>
+                        <li>{t("mining.tip3")}</li>
+                        <li>{t("mining.tip4")}</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mining Status Banner */}
+              {(isMining || clusterMining) && (
+                <div className="status-card" style={{ 
+                  background: "linear-gradient(135deg, #28a745 0%, #20c997 100%)",
+                  color: "white",
+                  border: "none",
+                  marginBottom: "1.5rem"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <h2 style={{ color: "white", margin: 0, marginBottom: "0.5rem" }}>{t("mining.active")}</h2>
+                      <div style={{ fontSize: "0.9rem", opacity: 0.9 }}>
+                        {clusterMining ? (
+                          <>
+                            {locale === "zh" ? "集群模式" : "Cluster Mode"} • {clusterStats.activeWorkers} {locale === "zh" ? "个工作线程" : "workers"} • 
+                            {t("mining.hashRate")} {clusterStats.totalHashRate ? (clusterStats.totalHashRate / 1000).toFixed(2) + " K hash/s" : t("mining.calculating")} • 
+                            {locale === "zh" ? "已尝试" : "Tried"}: {clusterStats.totalHashesTried.toString()} {locale === "zh" ? "次哈希" : "hashes"}
+                          </>
+                        ) : (
+                          <>
+                            {locale === "zh" ? "单线程模式" : "Single Thread Mode"} • 
+                            {t("mining.hashRate")} {miningStats.hashRate ? (miningStats.hashRate / 1000).toFixed(2) + " K hash/s" : t("mining.calculating")} • 
+                            {locale === "zh" ? "已尝试" : "Tried"}: {miningStats.hashesTried.toLocaleString()} {locale === "zh" ? "次哈希" : "hashes"}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      className="btn"
+                      onClick={clusterMining ? handleStopClusterMining : handleStopMining}
+                      style={{ 
+                        background: "white", 
+                        color: "#28a745",
+                        padding: "0.75rem 1.5rem",
+                        fontSize: "1rem",
+                        fontWeight: "bold"
+                      }}
+                    >
+                      停止挖矿
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Mining Controls */}
               <div className="status-card">
-                <h2>⛏️ Mining Controls</h2>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
-                  {!clusterMining && !isMining ? (
-                    <>
-                      <button
-                        className="btn btn-primary"
-                        onClick={handleStartMining}
-                      >
-                        Start Mining (Single Worker) {pendingTxs.length > 0 ? `(${pendingTxs.length} pending)` : "(coinbase only)"}
-                      </button>
-                      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
-                        <input
-                          type="checkbox"
-                          checked={autoMining}
-                          onChange={(e) => {
-                            setAutoMining(e.target.checked);
-                            if (e.target.checked && chainContext && !isMining && !clusterMining) {
-                              setTimeout(() => handleStartMining(), 500);
-                            }
-                          }}
-                        />
-                        <span style={{ fontSize: "0.9rem" }}>Auto Mining</span>
-                      </label>
-                    </>
-                  ) : clusterMining ? (
-                    <>
-                      <span style={{ fontSize: "0.9rem", color: "#666" }}>
-                        Cluster mining active ({clusterStats.activeWorkers} workers)
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <button className="btn btn-secondary" onClick={handleStopMining}>
-                        Stop Mining
-                      </button>
-                      {autoMining && (
-                        <span style={{ fontSize: "0.9rem", color: "#666" }}>
-                          (Auto-mining enabled - will restart after block)
+                <h2>{t("mining.controls")}</h2>
+                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                  {/* Single Worker Mode */}
+                  <div style={{ 
+                    padding: "1rem", 
+                    background: "#f8f9fa", 
+                    borderRadius: "8px",
+                    border: isMining ? "2px solid #28a745" : "1px solid #dee2e6"
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                      <div>
+                        <h3 style={{ fontSize: "1rem", margin: 0, marginBottom: "0.25rem" }}>{t("mining.singleWorker")}</h3>
+                        <p style={{ fontSize: "0.85rem", color: "#666", margin: 0 }}>
+                          {t("mining.singleWorkerDesc")}
+                        </p>
+                      </div>
+                      {isMining && (
+                        <span style={{ 
+                          background: "#28a745", 
+                          color: "white", 
+                          padding: "0.25rem 0.75rem", 
+                          borderRadius: "4px",
+                          fontSize: "0.85rem",
+                          fontWeight: "bold"
+                        }}>
+                          运行中
                         </span>
                       )}
-                    </>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                      {!isMining && !clusterMining ? (
+                        <>
+                          <button
+                            className="btn btn-primary"
+                            onClick={handleStartMining}
+                            disabled={!nodeAddress}
+                            style={{ fontSize: "1rem", padding: "0.75rem 1.5rem" }}
+                          >
+                            {t("mining.startMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
+                          </button>
+                          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={autoMining}
+                              onChange={(e) => {
+                                setAutoMining(e.target.checked);
+                                if (e.target.checked && chainContext && !isMining && !clusterMining) {
+                                  setTimeout(() => handleStartMining(), 500);
+                                }
+                              }}
+                            />
+                            <span style={{ fontSize: "0.9rem" }}>{t("mining.autoMining")}</span>
+                          </label>
+                        </>
+                      ) : isMining ? (
+                        <>
+                          <button className="btn btn-secondary" onClick={handleStopMining}>
+                            {t("mining.stopMining")}
+                          </button>
+                          {autoMining && (
+                            <span style={{ fontSize: "0.9rem", color: "#666" }}>
+                              ({t("mining.autoMiningDesc")})
+                            </span>
+                          )}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* Cluster Mining Mode */}
+                  {chainContext && (
+                    <div style={{ 
+                      padding: "1rem", 
+                      background: "#f8f9fa", 
+                      borderRadius: "8px",
+                      border: clusterMining ? "2px solid #28a745" : "1px solid #dee2e6"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                        <div>
+                          <h3 style={{ fontSize: "1rem", margin: 0, marginBottom: "0.25rem" }}>{t("mining.clusterMining")}</h3>
+                          <p style={{ fontSize: "0.85rem", color: "#666", margin: 0 }}>
+                            {t("mining.clusterMiningDesc")}
+                          </p>
+                        </div>
+                        {clusterMining && (
+                          <span style={{ 
+                            background: "#28a745", 
+                            color: "white", 
+                            padding: "0.25rem 0.75rem", 
+                            borderRadius: "4px",
+                            fontSize: "0.85rem",
+                            fontWeight: "bold"
+                          }}>
+                            运行中
+                          </span>
+                        )}
+                      </div>
+                      {!clusterMining && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <label style={{ fontSize: "0.9rem", minWidth: "100px" }}>
+                              {t("mining.workerCount")}
+                            </label>
+                            <input
+                              type="range"
+                              min="1"
+                              max={typeof navigator !== "undefined" && "hardwareConcurrency" in navigator 
+                                ? Math.max(1, (navigator.hardwareConcurrency || 4) * 2)
+                                : 32}
+                              value={clusterWorkerCount}
+                              onChange={(e) => setClusterWorkerCount(parseInt(e.target.value))}
+                              style={{ flex: 1 }}
+                            />
+                            <span style={{ fontWeight: "bold", minWidth: "40px", textAlign: "right" }}>
+                              {clusterWorkerCount}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "0.85rem", color: "#666" }}>
+                            {t("mining.optimalWorkers", { count: MinerCluster.getOptimalWorkerCount() })}
+                          </div>
+                          <button
+                            className="btn btn-primary"
+                            onClick={handleStartClusterMining}
+                            disabled={!chainContext || clusterMining || !nodeAddress}
+                            style={{ fontSize: "1rem", padding: "0.75rem 1.5rem" }}
+                          >
+                            {t("mining.startClusterMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
+                          </button>
+                        </div>
+                      )}
+                      {clusterMining && (
+                        <div style={{ marginTop: "0.75rem" }}>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={handleStopClusterMining}
+                            style={{ fontSize: "1rem", padding: "0.75rem 1.5rem" }}
+                          >
+                            {t("mining.stopClusterMining")}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1535,129 +2132,89 @@ function App() {
               {/* Mining Status */}
               {(isMining || miningStats.hashesTried > 0) && (
                 <div className="status-card">
-                  <h2>📊 Mining Status</h2>
-                  {/* Debug info - remove after fixing */}
-                  <div style={{ fontSize: "0.7rem", color: "#999", marginBottom: "0.5rem" }}>
-                    Debug: isMining={String(isMining)}, hashesTried={miningStats.hashesTried}, hash={miningHash.substring(0, 8)}..., nonce={miningNonce}
-                  </div>
+                  <h2>{t("mining.status")}</h2>
                   <div className="status-item">
-                    <span className="label">Status:</span>
+                    <span className="label">{t("status.status")}:</span>
                     <span className="value">
-                      {isMining ? "Mining..." : minerClient.getIsMining() ? "Mining..." : "Stopped"}
+                      {isMining ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>⛏️ {t("status.mining")}...</span>
+                      ) : minerClient.getIsMining() ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>⛏️ {t("status.mining")}...</span>
+                      ) : (
+                        <span style={{ color: "#666" }}>{t("status.stopped")}</span>
+                      )}
                     </span>
                   </div>
                   {tip && (
                     <div className="status-item">
-                      <span className="label">Current Difficulty:</span>
+                      <span className="label">{t("mining.difficulty")}</span>
                       <span className="value">
-                        {tip.header.difficulty} (need {tip.header.difficulty} leading zeros)
+                        {t("mining.difficultyDesc", { difficulty: tip.header.difficulty })}
                       </span>
                     </div>
                   )}
                   <div className="status-item">
-                    <span className="label">Estimated Hashrate:</span>
-                    <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
+                    <span className="label">{t("mining.hashRate")}</span>
+                    <span className="value" style={{ fontWeight: "bold", color: "#667eea", fontSize: "1.1rem" }}>
                       {miningStats.hashRate
                         ? `${(miningStats.hashRate / 1000).toFixed(2)} K hash/s`
-                        : "Calculating..."}
+                        : t("mining.calculating")}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Total Hashes Tried:</span>
+                    <span className="label">{t("mining.hashesTried")}</span>
                     <span className="value">{miningStats.hashesTried.toLocaleString()}</span>
                   </div>
                   {miningStats.elapsedTime > 0 && (
                     <div className="status-item">
-                      <span className="label">Elapsed Time:</span>
-                      <span className="value">{miningStats.elapsedTime.toFixed(1)}s</span>
+                      <span className="label">{t("mining.elapsedTime")}</span>
+                      <span className="value">{miningStats.elapsedTime.toFixed(1)} {locale === "zh" ? "秒" : "s"}</span>
                     </div>
                   )}
                   {isMining && (
                     <>
                       <div className="status-item">
-                        <span className="label">Current Hash:</span>
-                        <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>
-                          {miningHash || "Computing..."}
+                        <span className="label">{t("mining.currentHash")}</span>
+                        <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                          {miningHash || t("mining.calculating")}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Current Nonce:</span>
-                        <span className="value">{miningNonce.toLocaleString()}</span>
+                        <span className="label">{t("mining.currentNonce")}</span>
+                        <span className="value" style={{ fontFamily: "monospace" }}>{miningNonce.toLocaleString()}</span>
                       </div>
                     </>
                   )}
                 </div>
               )}
 
-              {/* Phase 18: Cluster Mining Control */}
-              {chainContext && (
+              {/* Phase 18: Cluster Mining Stats */}
+              {chainContext && clusterMining && (
                 <div className="status-card">
-                  <h2>🔥 Cluster Mining (Phase 18)</h2>
-                  <div className="status-item">
-                    <span className="label">Mode:</span>
-                    <span className="value">
-                      {clusterMining ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
-                      ) : (
-                        <span style={{ color: "#666" }}>Inactive</span>
-                      )}
-                    </span>
-                  </div>
-                  {!clusterMining && (
-                    <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                        <label>
-                          Worker Count:
-                          <input
-                            type="range"
-                            min="1"
-                            max={typeof navigator !== "undefined" && "hardwareConcurrency" in navigator 
-                              ? Math.max(1, (navigator.hardwareConcurrency || 4) * 2)
-                              : 32}
-                            value={clusterWorkerCount}
-                            onChange={(e) => setClusterWorkerCount(parseInt(e.target.value))}
-                            style={{ marginLeft: "0.5rem", width: "200px" }}
-                          />
-                          <span style={{ marginLeft: "0.5rem", fontWeight: "bold" }}>
-                            {clusterWorkerCount}
-                          </span>
-                        </label>
-                      </div>
-                      <div style={{ fontSize: "0.85rem", color: "#666" }}>
-                        Optimal: {MinerCluster.getOptimalWorkerCount()} workers (CPU cores - 1)
-                      </div>
-                      <button
-                        className="btn btn-primary"
-                        onClick={handleStartClusterMining}
-                        disabled={!chainContext || clusterMining}
-                      >
-                        Start Cluster Mining {pendingTxs.length > 0 ? `(${pendingTxs.length} pending)` : "(coinbase only)"}
-                      </button>
-                    </div>
-                  )}
+                  <h2>{t("mining.clusterStats")}</h2>
                   {clusterMining && (
                     <>
                       <div className="status-item">
-                        <span className="label">Total Hashrate:</span>
-                        <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
+                        <span className="label">{t("mining.totalHashRate")}</span>
+                        <span className="value" style={{ fontWeight: "bold", color: "#667eea", fontSize: "1.1rem" }}>
                           {clusterStats.totalHashRate
                             ? `${(clusterStats.totalHashRate / 1000).toFixed(2)} K hash/s`
-                            : "Calculating..."}
+                            : t("mining.calculating")}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Active Workers:</span>
+                        <span className="label">{t("mining.activeWorkers")}</span>
                         <span className="value">
                           {clusterStats.activeWorkers} / {clusterStats.totalWorkers}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Total Hashes Tried:</span>
+                        <span className="label">{t("mining.totalHashes")}</span>
                         <span className="value">{clusterStats.totalHashesTried.toString()}</span>
                       </div>
                       {clusterStats.workers.length > 0 && (
                         <div style={{ marginTop: "1rem" }}>
-                          <strong>Worker Details:</strong>
+                          <strong>{t("mining.workerDetails")}</strong>
                           <div style={{ maxHeight: "200px", overflowY: "auto", marginTop: "0.5rem" }}>
                             {clusterStats.workers.map((worker) => (
                               <div
@@ -1671,16 +2228,16 @@ function App() {
                                 }}
                               >
                                 <div>
-                                  <strong>Worker #{worker.workerId}:</strong>{" "}
+                                  <strong>{t("mining.workerStatus", { id: worker.workerId })}</strong>{" "}
                                   <span style={{ color: worker.status === "running" ? "#28a745" : "#666" }}>
-                                    {worker.status}
+                                    {worker.status === "running" ? t("mining.running") : worker.status === "stopped" ? t("mining.stopped") : t("mining.exhausted")}
                                   </span>
                                 </div>
                                 <div>
-                                  Hashrate: {worker.hashRate ? `${(worker.hashRate / 1000).toFixed(2)} K hash/s` : "—"}
+                                  {t("mining.hashRate")} {worker.hashRate ? `${(worker.hashRate / 1000).toFixed(2)} K hash/s` : "—"}
                                 </div>
-                                <div>
-                                  Nonce Range: {worker.currentNonceStart.toString()} -{" "}
+                                <div style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                                  {t("mining.nonceRange")} {worker.currentNonceStart.toString()} -{" "}
                                   {worker.currentNonceEnd ? worker.currentNonceEnd.toString() : "∞"}
                                 </div>
                               </div>
@@ -1688,14 +2245,6 @@ function App() {
                           </div>
                         </div>
                       )}
-                      <div style={{ marginTop: "1rem" }}>
-                        <button
-                          className="btn btn-secondary"
-                          onClick={handleStopClusterMining}
-                        >
-                          Stop Cluster Mining
-                        </button>
-                      </div>
                     </>
                   )}
                 </div>
@@ -1704,39 +2253,39 @@ function App() {
               {/* Phase 19: Global Miner Pool */}
               {chainContext && isP2PConnected && (
                 <div className="status-card">
-                  <h2>🌐 Global Miner Pool (Phase 19)</h2>
+                  <h2>🌐 {t("network.globalPool")}</h2>
                   <div className="status-item">
-                    <span className="label">Mode:</span>
+                    <span className="label">{locale === "zh" ? "模式" : "Mode"}:</span>
                     <span className="value">
                       {globalPoolEnabled ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Enabled</span>
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{locale === "zh" ? "已启用" : "Enabled"}</span>
                       ) : (
-                        <span style={{ color: "#666" }}>Disabled</span>
+                        <span style={{ color: "#666" }}>{locale === "zh" ? "已禁用" : "Disabled"}</span>
                       )}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Role:</span>
+                    <span className="label">{locale === "zh" ? "角色" : "Role"}:</span>
                     <span className="value">
                       {isDelegator ? (
-                        <span style={{ color: "#667eea", fontWeight: "bold" }}>Delegator</span>
+                        <span style={{ color: "#667eea", fontWeight: "bold" }}>{locale === "zh" ? "委托者" : "Delegator"}</span>
                       ) : (
-                        <span style={{ color: "#666" }}>Worker Node</span>
+                        <span style={{ color: "#666" }}>{locale === "zh" ? "工作节点" : "Worker Node"}</span>
                       )}
                     </span>
                   </div>
                   {isDelegator && delegatorStats && (
                     <>
                       <div className="status-item">
-                        <span className="label">Active Ranges:</span>
+                        <span className="label">{locale === "zh" ? "活跃范围" : "Active Ranges"}:</span>
                         <span className="value">{delegatorStats.activeRanges}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Total Nodes:</span>
+                        <span className="label">{locale === "zh" ? "总节点数" : "Total Nodes"}:</span>
                         <span className="value">{delegatorStats.totalNodes}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Global Pointer:</span>
+                        <span className="label">{t("network.globalPointer")}:</span>
                         <span className="value" style={{ fontSize: "0.85rem", fontFamily: "monospace" }}>
                           {delegatorStats.globalPointer.toString()}
                         </span>
@@ -1768,7 +2317,7 @@ function App() {
                           }
                         }}
                       >
-                        Enable Global Pool
+                        {t("network.enableGlobalPool")}
                       </button>
                     </div>
                   )}
@@ -1781,13 +2330,13 @@ function App() {
                           workerNodeManager.reset();
                         }}
                       >
-                        Disable Global Pool
+                        {t("network.disableGlobalPool")}
                       </button>
                     </div>
                   )}
                   <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-                    💡 <strong>Global Pool:</strong> All nodes coordinate nonce ranges to avoid duplicate work.
-                    {isDelegator && " You are the delegator for this block."}
+                    💡 <strong>{t("network.globalPool")}:</strong> {t("network.globalPoolDesc")}
+                    {isDelegator && ` ${t("network.isDelegator")}`}
                   </div>
                 </div>
               )}
@@ -1799,47 +2348,141 @@ function App() {
             <div className="tab-content active">
               {/* Phase 7: Transfer Form */}
               <div className="status-card">
-                <h2>💸 Transfer IDC</h2>
+                <h2>{t("transactions.transferIdc")}</h2>
+                
+                {/* Current Balance Display */}
+                {nodeAddress && chainContext && (
+                  <div style={{ 
+                    marginBottom: "1rem", 
+                    padding: "0.75rem", 
+                    background: "#f0f7ff", 
+                    borderRadius: "4px",
+                    border: "1px solid #667eea"
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: "bold", color: "#333" }}>
+                        {locale === "zh" ? "当前余额" : "Current Balance"}:
+                      </span>
+                      <span style={{ fontSize: "1.3rem", fontWeight: "bold", color: "#667eea" }}>
+                        {chainContext.indexState.getBalance(nodeAddress as any).toFixed(6)} IDC
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.25rem" }}>
+                      {locale === "zh" ? "地址" : "Address"}: {nodeAddress.substring(0, 20)}...
+                    </div>
+                  </div>
+                )}
+
+                {/* Success Message */}
+                {successMessage && (
+                  <div className="success" style={{ 
+                    marginBottom: "1rem", 
+                    padding: "0.75rem", 
+                    borderRadius: "4px",
+                    background: "#d4edda",
+                    border: "1px solid #c3e6cb",
+                    color: "#155724"
+                  }}>
+                    ✅ {successMessage}
+                  </div>
+                )}
+
+                {/* Error Message */}
+                {error && (
+                  <div className="error" style={{ 
+                    marginBottom: "1rem", 
+                    padding: "0.75rem", 
+                    borderRadius: "4px"
+                  }}>
+                    ❌ {error}
+                  </div>
+                )}
+
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                   <div>
+                    <label style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.9rem", fontWeight: "500" }}>
+                      {locale === "zh" ? "收款地址" : "Recipient Address"}
+                    </label>
                     <input
                       type="text"
-                      placeholder="Recipient Address (e.g., idc_...)"
+                      placeholder={t("transactions.recipient") + " (e.g., idc_...)"}
                       value={transferTo}
-                      onChange={(e) => setTransferTo(e.target.value)}
+                      onChange={(e) => {
+                        setTransferTo(e.target.value);
+                        setError(""); // Clear error when typing
+                        setSuccessMessage(""); // Clear success message when typing
+                      }}
                       style={{ width: "100%", padding: "0.5rem" }}
                     />
                   </div>
                   <div>
+                    <label style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.9rem", fontWeight: "500" }}>
+                      {locale === "zh" ? "转账金额" : "Transfer Amount"} (IDC)
+                    </label>
                     <input
                       type="number"
-                      placeholder="Amount (IDC)"
+                      placeholder={t("transactions.amount")}
                       value={transferAmount}
-                      onChange={(e) => setTransferAmount(e.target.value)}
+                      onChange={(e) => {
+                        setTransferAmount(e.target.value);
+                        setError(""); // Clear error when typing
+                        setSuccessMessage(""); // Clear success message when typing
+                      }}
                       style={{ width: "100%", padding: "0.5rem" }}
                       min="0"
-                      step="0.01"
+                      step="0.000001"
                     />
+                    {transferAmount && chainContext && nodeAddress && (
+                      <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.25rem" }}>
+                        {locale === "zh" ? "转账后余额" : "Balance after transfer"}:{" "}
+                        <span style={{ 
+                          fontWeight: "bold",
+                          color: parseFloat(transferAmount) > chainContext.indexState.getBalance(nodeAddress as any) ? "#dc3545" : "#28a745"
+                        }}>
+                          {(chainContext.indexState.getBalance(nodeAddress as any) - parseFloat(transferAmount) || 0).toFixed(6)} IDC
+                        </span>
+                        {parseFloat(transferAmount) > chainContext.indexState.getBalance(nodeAddress as any) && (
+                          <span style={{ color: "#dc3545", marginLeft: "0.5rem" }}>
+                            ⚠️ {locale === "zh" ? "余额不足" : "Insufficient balance"}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <button
                     className="btn btn-primary"
                     onClick={async () => {
                       if (!chainContext || !transferTo || !transferAmount) {
-                        setError("Please enter recipient address and amount");
+                        setError(locale === "zh" ? "请输入收款地址和金额" : "Please enter recipient address and amount");
+                        setSuccessMessage("");
                         return;
                       }
                       const amount = parseFloat(transferAmount);
                       if (isNaN(amount) || amount <= 0) {
-                        setError("Amount must be a positive number");
+                        setError(locale === "zh" ? "金额必须是正数" : "Amount must be a positive number");
+                        setSuccessMessage("");
                         return;
+                      }
+                      // Check balance before transfer
+                      if (nodeAddress && chainContext) {
+                        const currentBalance = chainContext.indexState.getBalance(nodeAddress as any);
+                        if (amount > currentBalance) {
+                          setError(locale === "zh" 
+                            ? `余额不足。当前余额: ${currentBalance.toFixed(6)} IDC，转账金额: ${amount.toFixed(6)} IDC`
+                            : `Insufficient balance. Current: ${currentBalance.toFixed(6)} IDC, Transfer: ${amount.toFixed(6)} IDC`);
+                          setSuccessMessage("");
+                          return;
+                        }
                       }
                       try {
                         setError("");
+                        setSuccessMessage("");
                         setIsSigning(true);
                         const tx = await createTransferTx(transferTo as any, amount);
                         const added = await mempool.addTx(tx);
                         if (!added) {
-                          setError("Failed to add transfer transaction");
+                          setError(locale === "zh" ? "添加转账交易失败（可能是重复交易或无效交易）" : "Failed to add transfer transaction (may be duplicate or invalid)");
+                          setSuccessMessage("");
                           setIsSigning(false);
                           return;
                         }
@@ -1848,25 +2491,39 @@ function App() {
                         setTransferAmount("");
                         setChainContext({ ...chainContext });
                         setIsSigning(false);
+                        // Show success message
+                        setSuccessMessage(locale === "zh" 
+                          ? `转账交易已创建并广播！金额: ${amount.toFixed(6)} IDC，接收者: ${transferTo.substring(0, 20)}...`
+                          : `Transfer transaction created and broadcast! Amount: ${amount.toFixed(6)} IDC, Recipient: ${transferTo.substring(0, 20)}...`);
+                        // Clear success message after 5 seconds
+                        setTimeout(() => {
+                          setSuccessMessage("");
+                        }, 5000);
                       } catch (err) {
-                        setError(err instanceof Error ? err.message : "Failed to create transfer");
+                        setError(err instanceof Error ? err.message : (locale === "zh" ? "创建转账失败" : "Failed to create transfer"));
+                        setSuccessMessage("");
                         setIsSigning(false);
                       }
                     }}
-                    disabled={isMining || isSigning || !transferTo || !transferAmount}
+                    disabled={!!(isMining || isSigning || !transferTo || !transferAmount || (chainContext && nodeAddress && !isNaN(parseFloat(transferAmount || "0")) && parseFloat(transferAmount || "0") > chainContext.indexState.getBalance(nodeAddress as any)))}
                   >
-                    {isSigning ? "Signing..." : "Transfer IDC"}
+                    {isSigning ? t("transactions.signing") : t("transactions.transferIdc")}
                   </button>
+                  {isSigning && (
+                    <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "0.5rem" }}>
+                      {locale === "zh" ? "正在使用私钥签名交易..." : "Signing transaction with your private key..."}
+                    </p>
+                  )}
                 </div>
               </div>
 
               {/* Create Transaction Form */}
               <div className="status-card">
-                <h2>📝 Create Transaction (Index Operations)</h2>
+                <h2>{t("transactions.createIndexOp")}</h2>
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                   <div>
                     <label>
-                      Operation Type:
+                      {t("transactions.operationType")}:
                       <select
                         value={txOpType}
                         onChange={(e) =>
@@ -1883,7 +2540,7 @@ function App() {
                   <div>
                     <input
                       type="text"
-                      placeholder="Namespace (e.g., test)"
+                      placeholder={t("transactions.namespace") + " (e.g., test)"}
                       value={txNamespace}
                       onChange={(e) => setTxNamespace(e.target.value)}
                       style={{ width: "100%", padding: "0.5rem" }}
@@ -1892,7 +2549,7 @@ function App() {
                   <div>
                     <input
                       type="text"
-                      placeholder="Key"
+                      placeholder={t("transactions.key")}
                       value={txKey}
                       onChange={(e) => setTxKey(e.target.value)}
                       style={{ width: "100%", padding: "0.5rem" }}
@@ -1902,7 +2559,7 @@ function App() {
                     <div>
                       <input
                         type="text"
-                        placeholder="Value"
+                        placeholder={t("transactions.value")}
                         value={txValue}
                         onChange={(e) => setTxValue(e.target.value)}
                         style={{ width: "100%", padding: "0.5rem" }}
@@ -1914,11 +2571,11 @@ function App() {
                     onClick={handleCreateTx}
                     disabled={isMining || isSigning}
                   >
-                    {isSigning ? "Signing..." : "Create Transaction"}
+                    {isSigning ? t("transactions.signing") : t("transactions.createTx")}
                   </button>
                   {isSigning && (
                     <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "0.5rem" }}>
-                      Signing transaction with your private key...
+                      {locale === "zh" ? "正在使用私钥签名交易..." : "Signing transaction with your private key..."}
                     </p>
                   )}
                 </div>
@@ -1927,7 +2584,7 @@ function App() {
               {/* Pending Transactions */}
               {pendingTxs.length > 0 && (
                 <div className="status-card">
-                  <h2>⏳ Pending Transactions ({pendingTxs.length})</h2>
+                  <h2>⏳ {t("transactions.pending")} ({pendingTxs.length})</h2>
                   <div style={{ maxHeight: "200px", overflowY: "auto" }}>
                     {pendingTxs.map((tx) => (
                       <div
@@ -1998,51 +2655,49 @@ function App() {
                             }
                           }}
                         />
-                        <span>Mainnet Mode (自动连接主网)</span>
+                        <span>{t("network.mainnetMode")}</span>
                       </label>
                     </div>
                     {/* Signaling Server URL Input */}
                     <div style={{ display: "flex", gap: "0.5rem" }}>
                       <input
                         type="text"
-                        placeholder={isMainnetMode ? "Mainnet Signaling Server (wss://...)" : "Local Signaling Server (ws://localhost:8080)"}
+                        placeholder={isMainnetMode 
+                          ? (locale === "zh" ? "主网信令服务器 (wss://...)" : "Mainnet Signaling Server (wss://...)")
+                          : (locale === "zh" ? "本地信令服务器 (ws://localhost:8080)" : "Local Signaling Server (ws://localhost:8080)")}
                         value={bootstrapUrl}
                         onChange={(e) => setBootstrapUrl(e.target.value)}
                         style={{ flex: 1, padding: "0.5rem" }}
                         disabled={isMainnetMode}
                       />
                       <button className="btn btn-primary" onClick={handleConnectP2P}>
-                        Connect
+                        {t("network.connect")}
                       </button>
                     </div>
                     {isMainnetMode && (
                       <div style={{ fontSize: "0.85rem", color: "#666", padding: "0.5rem", background: "#f0f0f0", borderRadius: "4px" }}>
-                        💡 <strong>主网模式</strong>：将自动连接到公共 IndexerChain 主网，和全球用户一起挖矿。
-                        <br />
-                        如需本地测试，请取消勾选 "Mainnet Mode"。
+                        💡 <strong>{t("network.mainnet")}</strong>：{t("network.mainnetDesc")}
                       </div>
                     )}
                     {!isMainnetMode && (
                       <div style={{ fontSize: "0.85rem", color: "#666", padding: "0.5rem", background: "#fff3cd", borderRadius: "4px" }}>
-                        ⚠️ <strong>开发模式</strong>：连接到本地信令服务器，用于开发、测试或私有链。
-                        <br />
-                        需要先运行 <code>node signaling-server-example.js</code>
+                        ⚠️ <strong>{t("network.devMode")}</strong>：{t("network.devModeDesc")}
                       </div>
                     )}
                   </div>
                 ) : (
                   <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                     <div style={{ fontSize: "0.9rem", color: "#666" }}>
-                      Connected to: <code style={{ fontSize: "0.85rem" }}>{bootstrapUrl}</code>
+                      {t("overview.connectedTo")}: <code style={{ fontSize: "0.85rem" }}>{bootstrapUrl}</code>
                     </div>
                     <button className="btn btn-secondary" onClick={handleDisconnectP2P}>
-                      Disconnect
+                      {t("network.disconnect")}
                     </button>
                   </div>
                 )}
                 {peers.length > 0 && (
                   <div style={{ marginTop: "1rem" }}>
-                    <strong>Connected Peers:</strong>
+                    <strong>{t("overview.connectedPeers")}:</strong>
                     <div style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
                       {peers.map((peer) => (
                         <div key={peer.id} style={{ padding: "0.25rem 0" }}>
@@ -2057,28 +2712,28 @@ function App() {
               {/* Phase 17: Fast Relay Status */}
               {chainContext && (
                 <div className="status-card">
-                  <h2>📡 Fast Relay Status</h2>
+                  <h2>📡 {t("network.fastRelay")}</h2>
                   <div className="status-item">
-                    <span className="label">Headers Cached:</span>
+                    <span className="label">{t("network.headersCached")}:</span>
                     <span className="value">{relayStats.headersCached}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Missing Bodies:</span>
+                    <span className="label">{t("network.missingBodies")}:</span>
                     <span className="value" style={{ color: relayStats.missingBodies > 0 ? "#ffc107" : "#28a745" }}>
                       {relayStats.missingBodies}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Pending Body Requests:</span>
+                    <span className="label">{t("network.pendingBodyRequests")}:</span>
                     <span className="value">{relayStats.pendingBodyRequests}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Received Bodies:</span>
+                    <span className="label">{t("network.receivedBodies")}:</span>
                     <span className="value">{relayStats.receivedBodyCount}</span>
                   </div>
                   {relayStats.lastHeaderDelay !== null && (
                     <div className="status-item">
-                      <span className="label">Last Header Delay:</span>
+                      <span className="label">{t("network.lastHeaderDelay")}:</span>
                       <span className="value" style={{ color: relayStats.lastHeaderDelay < 200 ? "#28a745" : "#ffc107" }}>
                         {relayStats.lastHeaderDelay} ms
                       </span>
@@ -2086,7 +2741,7 @@ function App() {
                   )}
                   {relayStats.lastBodyDownloadTime !== null && (
                     <div className="status-item">
-                      <span className="label">Last Body Download:</span>
+                      <span className="label">{t("network.lastBodyDownload")}:</span>
                       <span className="value">{relayStats.lastBodyDownloadTime} ms</span>
                     </div>
                   )}
@@ -2096,37 +2751,37 @@ function App() {
               {/* Phase 20: Global Snapshot Network */}
               {chainContext && isP2PConnected && (
                 <div className="status-card">
-                  <h2>🌍 Global Snapshot Network (Phase 20)</h2>
+                  <h2>🌍 {t("network.globalSnapshotNetwork")}</h2>
                   <div className="status-item">
-                    <span className="label">Status:</span>
+                    <span className="label">{t("network.status")}:</span>
                     <span className="value">
                       {gsnEnabled ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("status.active")}</span>
                       ) : (
-                        <span style={{ color: "#666" }}>Disabled</span>
+                        <span style={{ color: "#666" }}>{t("status.inactive")}</span>
                       )}
                     </span>
                   </div>
                   {gsnStats && (
                     <>
                       <div className="status-item">
-                        <span className="label">Snapshot Sources:</span>
+                        <span className="label">{t("network.snapshotSources")}:</span>
                         <span className="value">{gsnStats.downloader.totalSources}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Avg Latency:</span>
+                        <span className="label">{t("network.avgLatency")}:</span>
                         <span className="value">{gsnStats.downloader.averageLatency.toFixed(0)} ms</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Avg Integrity:</span>
+                        <span className="label">{t("network.avgIntegrity")}:</span>
                         <span className="value">{(gsnStats.downloader.averageIntegrity * 100).toFixed(1)}%</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Cached Snapshots:</span>
+                        <span className="label">{t("network.cachedSnapshots")}:</span>
                         <span className="value">{gsnStats.seeder.cachedCount}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Cache Size:</span>
+                        <span className="label">{locale === "zh" ? "缓存大小" : "Cache Size"}:</span>
                         <span className="value">{(gsnStats.seeder.totalSize / 1024).toFixed(2)} KB</span>
                       </div>
                     </>
@@ -2134,30 +2789,30 @@ function App() {
                   {snapshotDownloadProgress && (
                     <>
                       <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                        <span className="label">Download Progress:</span>
+                        <span className="label">{locale === "zh" ? "下载进度" : "Download Progress"}:</span>
                         <span className="value">{snapshotDownloadProgress.percent.toFixed(1)}%</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Chunks:</span>
+                        <span className="label">{locale === "zh" ? "块数" : "Chunks"}:</span>
                         <span className="value">
                           {snapshotDownloadProgress.receivedChunks} / {snapshotDownloadProgress.totalChunks}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Speed:</span>
+                        <span className="label">{locale === "zh" ? "速度" : "Speed"}:</span>
                         <span className="value">
                           {(snapshotDownloadProgress.speed / 1024).toFixed(2)} KB/s
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Peers:</span>
+                        <span className="label">{t("network.peers")}:</span>
                         <span className="value">{snapshotDownloadProgress.peers}</span>
                       </div>
                     </>
                   )}
                   <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-                    💡 <strong>GSN:</strong> All nodes automatically share snapshots via P2P.
-                    {gsnEnabled && " You are seeding snapshots to other nodes."}
+                    💡 <strong>GSN:</strong> {locale === "zh" ? "所有节点通过 P2P 自动共享快照。" : "All nodes automatically share snapshots via P2P."}
+                    {gsnEnabled && (locale === "zh" ? " 您正在向其他节点提供快照。" : " You are seeding snapshots to other nodes.")}
                   </div>
                 </div>
               )}
@@ -2172,23 +2827,23 @@ function App() {
                 <>
                   {/* Phase 9: State & Storage (Snapshots) */}
                   <div className="status-card">
-                    <h2>💾 State & Storage</h2>
+                    <h2>💾 {t("storage.stateStorage")}</h2>
                     <div className="status-item">
-                      <span className="label">Last Snapshot Height:</span>
+                      <span className="label">{t("storage.lastSnapshotHeight")}:</span>
                       <span className="value">
-                        {latestSnapshot ? latestSnapshot.height : "None"}
+                        {latestSnapshot ? latestSnapshot.height : (locale === "zh" ? "无" : "None")}
                       </span>
                     </div>
                     {latestSnapshot && (
                       <>
                         <div className="status-item">
-                          <span className="label">Last Snapshot Time:</span>
+                          <span className="label">{t("storage.lastSnapshotTime")}:</span>
                           <span className="value">
                             {new Date(latestSnapshot.createdAt).toLocaleString()}
                           </span>
                         </div>
                         <div className="status-item">
-                          <span className="label">Blocks Since Snapshot:</span>
+                          <span className="label">{t("storage.blocksSinceSnapshot")}:</span>
                           <span className="value">
                             {Math.max(0, height - latestSnapshot.height)}
                           </span>
@@ -2196,25 +2851,25 @@ function App() {
                       </>
                     )}
                     <div className="status-item">
-                      <span className="label">Snapshot Count:</span>
+                      <span className="label">{t("storage.snapshotCount")}:</span>
                       <span className="value">{snapshotMetas.length}</span>
                     </div>
                     {/* Phase 12: Show snapshot type info */}
                     {latestSnapshot && (
                       <div className="status-item">
-                        <span className="label">Latest Snapshot Type:</span>
+                        <span className="label">{t("storage.latestSnapshotType")}:</span>
                         <span className="value">
                           {(() => {
                             // Check if latest snapshot is full or delta
                             const latestSnapData = loadSnapshotByHeightSync(latestSnapshot.height);
                             if (latestSnapData) {
                               if (latestSnapData.full === false) {
-                                return "Delta (Incremental)";
+                                return t("storage.delta") + ` (${t("storage.incremental")})`;
                               } else {
-                                return "Full";
+                                return t("storage.full");
                               }
                             }
-                            return "Unknown";
+                            return t("storage.unknown");
                           })()}
                         </span>
                       </div>
@@ -2223,22 +2878,22 @@ function App() {
                     {snapshotSizeInfo && (
                       <>
                         <div className="status-item">
-                          <span className="label">Latest Snapshot Size:</span>
+                          <span className="label">{t("storage.latestSnapshotSize")}:</span>
                           <span className="value">
                             {(snapshotSizeInfo.compressedSize / 1024).toFixed(2)} KB
                           </span>
                         </div>
                         {snapshotSizeInfo.compressionRatio > 0 && (
                           <div className="status-item">
-                            <span className="label">Compression Ratio:</span>
+                            <span className="label">{t("storage.compressionRatio")}:</span>
                             <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
-                              {snapshotSizeInfo.compressionRatio.toFixed(1)}% reduction
+                              {snapshotSizeInfo.compressionRatio.toFixed(1)}% {t("storage.reduction")}
                             </span>
                           </div>
                         )}
                         {snapshotSizeInfo.estimatedUncompressedSize > 0 && (
                           <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                            <span className="label">Estimated Uncompressed:</span>
+                            <span className="label">{t("storage.estimatedUncompressed")}:</span>
                             <span className="value">
                               {(snapshotSizeInfo.estimatedUncompressedSize / 1024).toFixed(2)} KB
                             </span>
@@ -2251,27 +2906,27 @@ function App() {
                       <>
                         {latestSnapshot.stateHash && (
                           <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                            <span className="label">State Hash:</span>
+                            <span className="label">{t("storage.stateHash")}:</span>
                             <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all", fontFamily: "monospace" }}>
                               {latestSnapshot.stateHash.substring(0, 16)}...
                             </span>
                           </div>
                         )}
                         <div className="status-item">
-                          <span className="label">Verification Status:</span>
+                          <span className="label">{t("storage.verificationStatus")}:</span>
                           <span className="value">
                             {latestSnapshot.verifiedAt ? (
-                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Verified</span>
+                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ {t("storage.verified")}</span>
                             ) : latestSnapshot.stateHash ? (
-                              <span style={{ color: "#ffc107", fontWeight: "bold" }}>⚠️ Not Verified Yet</span>
+                              <span style={{ color: "#ffc107", fontWeight: "bold" }}>⚠️ {t("storage.notVerified")}</span>
                             ) : (
-                              <span style={{ color: "#666" }}>— No Hash</span>
+                              <span style={{ color: "#666" }}>— {t("storage.noHash")}</span>
                             )}
                           </span>
                         </div>
                         {latestSnapshot.verifiedAt && (
                           <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                            <span className="label">Last Verified:</span>
+                            <span className="label">{t("storage.lastVerified")}:</span>
                             <span className="value">
                               {new Date(latestSnapshot.verifiedAt).toLocaleString()}
                             </span>
@@ -2292,12 +2947,12 @@ function App() {
                       <>
                         {latestSnapshot.stateCommitment && tip.header.stateCommitment && (
                           <div className="status-item">
-                            <span className="label">Commitment Match:</span>
+                            <span className="label">{t("storage.commitmentMatch")}:</span>
                             <span className="value">
                               {latestSnapshot.stateCommitment === tip.header.stateCommitment ? (
-                                <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Matches</span>
+                                <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ {t("storage.matches")}</span>
                               ) : (
-                                <span style={{ color: "#dc3545", fontWeight: "bold" }}>❌ Mismatch</span>
+                                <span style={{ color: "#dc3545", fontWeight: "bold" }}>❌ {t("storage.mismatch")}</span>
                               )}
                             </span>
                           </div>
@@ -2308,14 +2963,14 @@ function App() {
                     {chainContext && (
                       <>
                         <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                          <span className="label">Remote Snapshot:</span>
+                          <span className="label">{t("storage.remoteSnapshot")}:</span>
                           <span className="value">
                             {chainContext.remoteSnapshotUsed ? (
-                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Used</span>
+                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ {t("storage.used")}</span>
                             ) : chainContext.params.remoteSnapshotEnabled ? (
-                              <span style={{ color: "#666" }}>Not Used</span>
+                              <span style={{ color: "#666" }}>{t("storage.notUsed")}</span>
                             ) : (
-                              <span style={{ color: "#999" }}>Disabled</span>
+                              <span style={{ color: "#999" }}>{t("storage.disabled")}</span>
                             )}
                           </span>
                         </div>
@@ -2622,6 +3277,30 @@ function App() {
           {/* Advanced Tab */}
           {activeTab === "advanced" && (
             <div className="tab-content active">
+              {/* Phase 26: Runtime & Help Panel */}
+              <RuntimePanel
+                runtimeManager={runtimeManager}
+                currentWorkers={clusterWorkerCount}
+                maxWorkers={runtimeManager ? runtimeManager.getDeviceCapability().maxWorkers : 16}
+                onUpdateConfig={(config) => {
+                  if (runtimeManager) {
+                    runtimeManager.updateConfig(config);
+                    if (config.dutyCycle !== undefined) {
+                      setDutyCycle(config.dutyCycle);
+                    }
+                  }
+                }}
+                onSetDutyCycle={(cycle) => {
+                  setDutyCycle(cycle);
+                  // Update all active miners
+                  minerClient.setDutyCycle(cycle);
+                  // Update cluster workers (they will pick it up on next restart)
+                }}
+                onSetWorkerCount={(count) => {
+                  setClusterWorkerCount(count);
+                }}
+              />
+
               {/* Phase 6: Difficulty Information */}
               {tip && (
                 <div className="status-card">
@@ -2720,49 +3399,49 @@ function App() {
               {/* Phase 21: Peer Reputation */}
               {chainContext && chainContext.params.peerScoreEnabled && (
                 <div className="status-card">
-                  <h2>🔒 Peer Reputation & Security (Phase 21)</h2>
+                  <h2>🔒 {t("network.peerReputation")}</h2>
                   <div className="status-item">
-                    <span className="label">Total Peers Tracked:</span>
+                    <span className="label">{locale === "zh" ? "跟踪的节点总数" : "Total Peers Tracked"}:</span>
                     <span className="value">{peerScores.length}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Trusted:</span>
+                    <span className="label">{locale === "zh" ? "信任" : "Trusted"}:</span>
                     <span className="value" style={{ color: "#28a745" }}>
                       {peerScores.filter(p => p.trustLevel === "trusted").length}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Normal:</span>
+                    <span className="label">{locale === "zh" ? "正常" : "Normal"}:</span>
                     <span className="value" style={{ color: "#666" }}>
                       {peerScores.filter(p => p.trustLevel === "normal").length}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Low Trust:</span>
+                    <span className="label">{locale === "zh" ? "低信任" : "Low Trust"}:</span>
                     <span className="value" style={{ color: "#ffc107" }}>
                       {peerScores.filter(p => p.trustLevel === "low").length}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Banned:</span>
+                    <span className="label">{locale === "zh" ? "已禁止" : "Banned"}:</span>
                     <span className="value" style={{ color: "#dc3545" }}>
                       {peerScores.filter(p => p.trustLevel === "banned").length}
                     </span>
                   </div>
                   {peerScores.length > 0 && (
                     <div style={{ marginTop: "1rem" }}>
-                      <strong>Peer Details:</strong>
+                      <strong>{locale === "zh" ? "节点详情" : "Peer Details"}:</strong>
                       <div style={{ maxHeight: "300px", overflowY: "auto", marginTop: "0.5rem" }}>
                         <table style={{ width: "100%", fontSize: "0.85rem", borderCollapse: "collapse" }}>
                           <thead>
                             <tr style={{ background: "#f0f0f0", position: "sticky", top: 0 }}>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Peer ID</th>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Score</th>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Trust</th>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Blocks</th>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Snapshots</th>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Latency</th>
-                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Work</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.peerId")}</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.score")}</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.trustLevel")}</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.blocksServed")}</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.snapshotsServed")}</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.avgLatencyMs")}</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>{t("network.workCompleted")}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2805,7 +3484,7 @@ function App() {
                     </div>
                   )}
                   <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-                    💡 <strong>Peer Reputation:</strong> Tracks peer behavior to prioritize reliable nodes and penalize misbehaving ones.
+                    💡 <strong>{t("network.peerReputation")}:</strong> {t("network.peerReputationDesc")}
                   </div>
                 </div>
               )}
@@ -2813,60 +3492,60 @@ function App() {
               {/* Phase 22: Fast Finality Status */}
               {chainContext && chainContext.params.finalityEnabled && (
                 <div className="status-card">
-                  <h2>⚡ Fast Finality Status (Phase 22)</h2>
+                  <h2>⚡ {t("network.fastFinality")}</h2>
                   {finalityStats ? (
                     <>
                       <div className="status-item">
-                        <span className="label">Status:</span>
+                        <span className="label">{t("network.status")}:</span>
                         <span className="value">
                           {finalityStats.committeeSize > 0 ? (
-                            <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
+                            <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("status.active")}</span>
                           ) : (
-                            <span style={{ color: "#666" }}>Waiting for Committee</span>
+                            <span style={{ color: "#666" }}>{locale === "zh" ? "等待委员会" : "Waiting for Committee"}</span>
                           )}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Finalized Blocks:</span>
+                        <span className="label">{t("network.finalizedBlocks")}:</span>
                         <span className="value" style={{ fontWeight: "bold" }}>
                           {finalityStats.finalizedCount}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Pending Votes:</span>
+                        <span className="label">{t("network.pendingVotes")}:</span>
                         <span className="value">
                           {finalityStats.pendingVotes}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Committee Round:</span>
+                        <span className="label">{t("network.committeeRound")}:</span>
                         <span className="value">
                           {finalityStats.currentRound >= 0 ? finalityStats.currentRound : "—"}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">Committee Size:</span>
+                        <span className="label">{t("network.committeeSize")}:</span>
                         <span className="value">
-                          {finalityStats.committeeSize} members
+                          {finalityStats.committeeSize} {t("network.members")}
                         </span>
                       </div>
                       {tip && (
                         <div className="status-item" style={{ marginTop: "0.5rem" }}>
-                          <span className="label">Current Block Finality:</span>
+                          <span className="label">{t("network.currentBlockFinality")}:</span>
                           <span className="value">
                             {finalizedBlocks.has(tip.hash) ? (
-                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Finalized</span>
+                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ {t("network.finalized")}</span>
                             ) : finalityStats.pendingVotes > 0 ? (
-                              <span style={{ color: "#ffc107" }}>⏳ Pending ({finalityStats.pendingVotes} votes)</span>
+                              <span style={{ color: "#ffc107" }}>⏳ {t("network.pending")} ({finalityStats.pendingVotes} {locale === "zh" ? "票" : "votes"})</span>
                             ) : (
-                              <span style={{ color: "#dc3545" }}>❌ Unconfirmed</span>
+                              <span style={{ color: "#dc3545" }}>❌ {t("network.unconfirmed")}</span>
                             )}
                           </span>
                         </div>
                       )}
                       {finalityManager && (
                         <div style={{ marginTop: "1rem" }}>
-                          <strong>Current Committee:</strong>
+                          <strong>{t("network.currentCommittee")}:</strong>
                           <div style={{ maxHeight: "150px", overflowY: "auto", marginTop: "0.5rem" }}>
                             {finalityManager.getCurrentCommittee().length > 0 ? (
                               finalityManager.getCurrentCommittee().map((member: { address: string; score: number }, idx: number) => (
@@ -2881,16 +3560,16 @@ function App() {
                                   }}
                                 >
                                   <div>
-                                    <strong>Member #{idx + 1}:</strong> {member.address.substring(0, 20)}...
+                                    <strong>{locale === "zh" ? "成员" : "Member"} #{idx + 1}:</strong> {member.address.substring(0, 20)}...
                                   </div>
                                   <div>
-                                    Score: {member.score.toFixed(1)} / 100
+                                    {t("network.score")}: {member.score.toFixed(1)} / 100
                                   </div>
                                 </div>
                               ))
                             ) : (
                               <div style={{ padding: "0.5rem", color: "#666", fontSize: "0.85rem" }}>
-                                No committee elected yet
+                                {t("network.noCommittee")}
                               </div>
                             )}
                           </div>
@@ -2899,20 +3578,237 @@ function App() {
                     </>
                   ) : (
                     <div style={{ color: "#666", fontSize: "0.9rem" }}>
-                      Finality manager not initialized. Connect to P2P network to enable finality.
+                      {t("network.notInitialized")}. {t("network.notInitializedDesc")}
                     </div>
                   )}
                   <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-                    💡 <strong>Fast Finality:</strong> Blocks reach finality (irreversibility) within 300-800ms through committee voting. 
-                    Committee members are elected based on peer reputation scores.
+                    💡 <strong>{t("network.fastFinality")}:</strong> {t("network.fastFinalityDesc")}
                   </div>
                 </div>
               )}
             </div>
           )}
 
+          {/* Token Model Tab */}
+          {activeTab === "token" && (
+            <div className="tab-content active">
+              <div className="status-card">
+                <h2>{t("token.title")}</h2>
+                
+                {/* Token Overview */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("token.overview")}</h3>
+                  <div className="grid-2" style={{ marginBottom: "1rem" }}>
+                    <div className="status-item">
+                      <span className="label">{t("token.maxSupply")}:</span>
+                      <span className="value" style={{ fontWeight: "bold", color: "#667eea", fontSize: "1.1rem" }}>
+                        {uIDCToIDC(IDC_MAX_SUPPLY).toLocaleString()} IDC
+                      </span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">{t("token.decimals")}:</span>
+                      <span className="value">{IDC_DECIMALS}</span>
+                    </div>
+                    {chainContext && (
+                      <>
+                        <div className="status-item">
+                          <span className="label">{t("token.totalSupply")}:</span>
+                          <span className="value" style={{ fontWeight: "bold" }}>
+                            {uIDCToIDC(chainContext.indexState.getTotalMinted()).toLocaleString()} IDC
+                          </span>
+                        </div>
+                        <div className="status-item">
+                          <span className="label">{locale === "zh" ? "已发行比例" : "Issued Ratio"}:</span>
+                          <span className="value">
+                            {((Number(chainContext.indexState.getTotalMinted()) / Number(IDC_MAX_SUPPLY)) * 100).toFixed(4)}%
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Current Era Information */}
+                {chainContext && (
+                  <div style={{ marginBottom: "2rem" }}>
+                    <h3 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("token.currentEra")}</h3>
+                    {(() => {
+                      const stats = getEmissionStats(height);
+                      return (
+                        <div className="status-card" style={{ background: "#f8f9fa" }}>
+                          <div className="status-item">
+                            <span className="label">{t("token.eraNumber")}:</span>
+                            <span className="value" style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#667eea" }}>
+                              {stats.era} / {IDC_ERA_COUNT - 1}
+                            </span>
+                          </div>
+                          <div className="status-item">
+                            <span className="label">{t("token.rewardPerBlock")}:</span>
+                            <span className="value" style={{ fontWeight: "bold" }}>
+                              {stats.rawRewardIDC.toFixed(6)} IDC
+                            </span>
+                          </div>
+                          <div className="status-item">
+                            <span className="label">{t("token.eraStartHeight")}:</span>
+                            <span className="value">{stats.eraStartHeight.toString()}</span>
+                          </div>
+                          <div className="status-item">
+                            <span className="label">{t("token.eraEndHeight")}:</span>
+                            <span className="value">{stats.eraEndHeight.toString()}</span>
+                          </div>
+                          <div className="status-item">
+                            <span className="label">{t("token.blocksRemaining")}:</span>
+                            <span className="value">{stats.blocksRemainingInEra.toString()}</span>
+                          </div>
+                          <div className="status-item">
+                            <span className="label">{t("token.totalEraReward")}:</span>
+                            <span className="value" style={{ fontWeight: "bold" }}>
+                              {uIDCToIDC(stats.rawReward * stats.blocksInEra).toLocaleString()} IDC
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Emission Model */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("token.emissionModel")}</h3>
+                  <div className="status-card" style={{ background: "#f8f9fa" }}>
+                    <p style={{ marginBottom: "1rem", lineHeight: "1.8" }}>
+                      {locale === "zh" 
+                        ? "IDC 采用类似比特币的减半发行模型，总供应量固定为 10 亿 IDC，通过 10 个时代（每个时代 10 年）逐步发行。每个时代结束后，区块奖励减半。"
+                        : "IDC uses a Bitcoin-like halving emission model with a fixed total supply of 1 billion IDC, distributed over 10 eras (10 years each). Block rewards halve at the end of each era."}
+                    </p>
+                    <ul style={{ marginLeft: "1.5rem", lineHeight: "1.8" }}>
+                      <li>{locale === "zh" ? "总供应量：10 亿 IDC（固定上限）" : `Total Supply: 1 billion IDC (fixed cap)`}</li>
+                      <li>{locale === "zh" ? "发行周期：100 年（10 个时代）" : `Emission Period: 100 years (10 eras)`}</li>
+                      <li>{locale === "zh" ? "区块时间：约 10 秒" : `Block Time: ~10 seconds`}</li>
+                      <li>{locale === "zh" ? "减半机制：每 10 年减半一次" : `Halving: Every 10 years`}</li>
+                      <li>{locale === "zh" ? "时代区块数：31,536,000 个区块" : `Blocks per Era: 31,536,000 blocks`}</li>
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Emission Curve Table */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("token.emissionCurve")}</h3>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", overflow: "hidden" }}>
+                      <thead>
+                        <tr style={{ background: "#667eea", color: "white" }}>
+                          <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{t("token.eraNumber")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{t("token.years")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.rewardPerBlock")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.totalEraReward")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.cumulativeReward")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.from({ length: IDC_ERA_COUNT }, (_, era) => {
+                          const eraReward = IDC_BASE_REWARD >> BigInt(era);
+                          const eraRewardIDC = uIDCToIDC(eraReward);
+                          const totalEraReward = eraReward * IDC_BLOCKS_PER_ERA;
+                          const totalEraRewardIDC = uIDCToIDC(totalEraReward);
+                          
+                          // Calculate cumulative reward
+                          let cumulative = 0n;
+                          for (let i = 0; i <= era; i++) {
+                            const eReward = IDC_BASE_REWARD >> BigInt(i);
+                            cumulative += eReward * IDC_BLOCKS_PER_ERA;
+                          }
+                          const cumulativeIDC = uIDCToIDC(cumulative);
+                          
+                          return (
+                            <tr 
+                              key={era}
+                              style={{ 
+                                background: era === (chainContext ? getEmissionStats(height).era : 0) ? "#fff3cd" : era % 2 === 0 ? "#f8f9fa" : "white"
+                              }}
+                            >
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", fontWeight: era === (chainContext ? getEmissionStats(height).era : 0) ? "bold" : "normal" }}>
+                                {era}
+                              </td>
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd" }}>
+                                {era * 10} - {(era + 1) * 10}
+                              </td>
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace" }}>
+                                {eraRewardIDC.toFixed(6)} IDC
+                              </td>
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace" }}>
+                                {totalEraRewardIDC.toLocaleString()} IDC
+                              </td>
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace", fontWeight: "bold" }}>
+                                {cumulativeIDC.toLocaleString()} IDC
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Transaction Fees */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("token.transactionFees")}</h3>
+                  <div className="status-card" style={{ background: "#f8f9fa" }}>
+                    <div className="status-item">
+                      <span className="label">{t("token.baseFee")}:</span>
+                      <span className="value">{uIDCToIDC(IDC_BASE_FEE).toFixed(6)} IDC</span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">{t("token.feePer100Bytes")}:</span>
+                      <span className="value">{uIDCToIDC(IDC_FEE_PER_100_BYTES).toFixed(6)} IDC</span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">{t("token.feeFormula")}:</span>
+                      <span className="value" style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>
+                        Fee = {uIDCToIDC(IDC_BASE_FEE).toFixed(6)} IDC + (Size / 100) × {uIDCToIDC(IDC_FEE_PER_100_BYTES).toFixed(6)} IDC
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Token Economics */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ color: "#667eea", marginBottom: "1rem" }}>{t("token.economics")}</h3>
+                  <div className="status-card" style={{ background: "#d4edda", border: "2px solid #28a745" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                      <div>
+                        <strong style={{ color: "#155724" }}>✓ {t("token.supplyCap")}</strong>
+                        <p style={{ margin: "0.5rem 0 0 0", color: "#155724", fontSize: "0.9rem" }}>
+                          {locale === "zh" 
+                            ? "总供应量严格限制在 10 亿 IDC，永远不会超过此上限。"
+                            : "Total supply is strictly capped at 1 billion IDC and will never exceed this limit."}
+                        </p>
+                      </div>
+                      <div>
+                        <strong style={{ color: "#155724" }}>✓ {t("token.deflationary")}</strong>
+                        <p style={{ margin: "0.5rem 0 0 0", color: "#155724", fontSize: "0.9rem" }}>
+                          {locale === "zh" 
+                            ? "通过减半机制，区块奖励每 10 年减半，使代币发行速度逐渐降低，具有通缩特性。"
+                            : "Through halving mechanism, block rewards halve every 10 years, gradually reducing emission rate with deflationary characteristics."}
+                        </p>
+                      </div>
+                      <div>
+                        <strong style={{ color: "#155724" }}>✓ {t("token.noInflation")}</strong>
+                        <p style={{ margin: "0.5rem 0 0 0", color: "#155724", fontSize: "0.9rem" }}>
+                          {locale === "zh" 
+                            ? "100 年发行期结束后，将不再产生新的代币，实现零通胀。"
+                            : "After the 100-year emission period ends, no new tokens will be created, achieving zero inflation."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Other tabs placeholder - to be implemented */}
-          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && (
+          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && activeTab !== "token" && (
             <div className="tab-content active">
               <div className="status-card">
                 <h2>🚧 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Tab</h2>

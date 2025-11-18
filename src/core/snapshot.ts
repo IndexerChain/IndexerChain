@@ -368,8 +368,47 @@ export async function saveSnapshot(
       const key = `${SNAPSHOT_DATA_PREFIX}${height}`;
       localStorage.setItem(key, JSON.stringify(snapshotData));
     } catch (error) {
-      console.error(`Failed to save snapshot at height ${height}:`, error);
-      throw error;
+      // Handle QuotaExceededError - localStorage is full
+      if (error instanceof DOMException && error.name === "QuotaExceededError") {
+        console.error(`localStorage quota exceeded when saving snapshot at height ${height}! Attempting to prune old snapshots...`);
+        // Try to prune old snapshots and retry
+        const allMetas = loadAllSnapshotMeta();
+        if (allMetas.length > 1) {
+          // Remove oldest snapshots (keep only the latest 2)
+          const sorted = allMetas.sort((a, b) => b.height - a.height);
+          const toKeep = sorted.slice(0, 2);
+          const toRemove = sorted.slice(2);
+          
+          for (const oldMeta of toRemove) {
+            try {
+              const oldKey = `${SNAPSHOT_DATA_PREFIX}${oldMeta.height}`;
+              localStorage.removeItem(oldKey);
+              console.log(`Removed old snapshot at height ${oldMeta.height} to free space`);
+            } catch (removeError) {
+              console.error(`Failed to remove old snapshot at height ${oldMeta.height}:`, removeError);
+            }
+          }
+          
+          // Update metadata
+          saveAllSnapshotMeta(toKeep);
+          
+          // Retry saving
+          try {
+            const key = `${SNAPSHOT_DATA_PREFIX}${height}`;
+            localStorage.setItem(key, JSON.stringify(snapshotData));
+            console.log(`Successfully saved snapshot after pruning old snapshots`);
+          } catch (retryError) {
+            console.error(`Failed to save snapshot even after pruning:`, retryError);
+            throw new Error(`Failed to save snapshot: localStorage quota exceeded even after pruning`);
+          }
+        } else {
+          console.error(`Cannot prune snapshots: not enough snapshots to remove`);
+          throw new Error(`Failed to save snapshot: localStorage quota exceeded`);
+        }
+      } else {
+        console.error(`Failed to save snapshot at height ${height}:`, error);
+        throw error;
+      }
     }
   }
 
@@ -406,9 +445,36 @@ export function findNearestFullSnapshot(height: number): SnapshotMeta | null {
   
   // Check each candidate to see if it's a full snapshot
   for (const meta of candidates) {
+    // Try to load snapshot (sync version for quick check)
     const snapshot = loadSnapshotByHeightSync(meta.height);
     if (snapshot && snapshot.full) {
       return meta;
+    }
+    
+    // If sync version returns null (compressed snapshot), check metadata
+    // For compressed snapshots, we need to check if it's marked as full
+    // Since we can't easily check compressed snapshots synchronously,
+    // we'll check if there's a way to determine from metadata
+    // For now, if sync returns null, we'll assume it might be compressed
+    // and we'll need to check it asynchronously in saveSnapshot
+    // But for this function, we'll check the localStorage key directly
+    if (!snapshot) {
+      // Check if snapshot data exists (might be compressed)
+      const key = `${SNAPSHOT_DATA_PREFIX}${meta.height}`;
+      if (typeof localStorage !== "undefined" && localStorage.getItem(key)) {
+        // Try to parse just the metadata part to check if it's full
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.full === true) {
+              return meta;
+            }
+          }
+        } catch (e) {
+          // If parsing fails, skip this snapshot
+        }
+      }
     }
   }
   

@@ -42,6 +42,7 @@ export interface ClusterMiningParams {
   difficulty: number;
   workerCount: number;
   nonceRangeSize?: bigint; // Default: 1,000,000,000 per worker
+  dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
 }
 
 /**
@@ -158,12 +159,13 @@ export class MinerCluster {
         difficulty: params.difficulty,
         nonceStart,
         nonceEnd,
+        dutyCycle: params.dutyCycle, // Phase 26: Pass duty cycle to worker
       });
 
       this.workers.push(worker);
     }
 
-    console.log(`[Phase 18] Started cluster mining with ${params.workerCount} workers`);
+    // Started cluster mining
   }
 
   /**
@@ -189,7 +191,7 @@ export class MinerCluster {
       handler(reason);
     }
 
-    console.log(`[Phase 18] Stopped cluster mining (reason: ${reason})`);
+    // Stopped cluster mining
   }
 
   /**
@@ -214,14 +216,17 @@ export class MinerCluster {
     }
 
     // Restart worker with new range
+    // Note: dutyCycle is stored per worker, so we need to get it from the worker
+    const currentDutyCycle = worker.getDutyCycle?.() ?? 1.0;
     worker.startMining({
       candidateBlock: this.currentCandidateBlock,
       difficulty: this.currentDifficulty,
       nonceStart,
       nonceEnd,
+      dutyCycle: currentDutyCycle, // Phase 26: Preserve duty cycle
     });
 
-    console.log(`[Phase 18] Worker ${workerId} assigned new nonce range: ${nonceStart} - ${nonceEnd}`);
+    // Worker assigned new nonce range
   }
 
   /**

@@ -104,7 +104,7 @@ export class WorkerNodeManager {
     this.hashesTried = 0;
     this.hashRate = 0;
     
-    console.log(`[Phase 19] Worker ${this.workerId} received range [${range.start}, ${range.end})`);
+    // Worker received range
     
     // Notify handlers
     for (const handler of this.onRangeReceivedHandlers) {
@@ -137,7 +137,7 @@ export class WorkerNodeManager {
       });
     }
     
-    console.log(`[Phase 19] Worker ${workerId} requesting nonce range`);
+    // Worker requesting nonce range
   }
 
   /**
@@ -160,7 +160,7 @@ export class WorkerNodeManager {
   private handleRangeExhausted(): void {
     if (!this.state.currentRange) return;
     
-    console.log(`[Phase 19] Worker ${this.workerId} exhausted range`);
+    // Worker exhausted range
     
     // Notify delegator
     if (this.p2pNode) {

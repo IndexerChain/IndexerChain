@@ -437,10 +437,18 @@ export async function appendMinedBlock(
     if (height > 0 && height % snapshotInterval === 0) {
       try {
         // Phase 12: Determine if this should be a full or delta snapshot
-        const { loadAllSnapshotMeta } = await import("./snapshot.js");
+        const { loadAllSnapshotMeta, findNearestFullSnapshot } = await import("./snapshot.js");
         const allMetas = loadAllSnapshotMeta();
         const snapshotCount = allMetas.length;
-        const isFull = snapshotCount % fullSnapshotInterval === 0;
+        
+        // Check if there's a full snapshot available before deciding on delta
+        const hasFullSnapshot = findNearestFullSnapshot(height - 1) !== null;
+        
+        // Force full snapshot if:
+        // 1. This is the first snapshot (snapshotCount === 0)
+        // 2. No full snapshot exists (hasFullSnapshot === false)
+        // 3. It's time for a full snapshot (snapshotCount % fullSnapshotInterval === 0)
+        const isFull = snapshotCount === 0 || !hasFullSnapshot || snapshotCount % fullSnapshotInterval === 0;
 
         if (isFull) {
           // Full snapshot

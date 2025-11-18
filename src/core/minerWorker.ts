@@ -24,8 +24,10 @@ type MinerWorkerCommand =
       maxIterations?: number; // Optional: max iterations per batch
       nonceStart?: number; // Phase 18: Starting nonce (default: 0)
       nonceEnd?: number; // Phase 18: Ending nonce (default: unlimited)
+      dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
     }
-  | { type: "STOP" };
+  | { type: "STOP" }
+  | { type: "SET_DUTY_CYCLE"; dutyCycle: number }; // Phase 26: Update duty cycle dynamically
 
 /**
  * Worker event to main thread
@@ -103,24 +105,57 @@ let nonce: number = 0;
 let nonceStart: number = 0; // Phase 18: Starting nonce
 let nonceEnd: number | null = null; // Phase 18: Ending nonce (null = unlimited)
 
+// Phase 26: Duty Cycle CPU control
+let dutyCycle: number = 1.0; // 0.0 to 1.0, default 100%
+const DUTY_CYCLE_PERIOD_MS = 10; // 10ms period
+let dutyCycleStartTime: number = 0;
+
 // Progress reporting interval (report every N hashes or every M ms)
 const PROGRESS_INTERVAL_HASHES = 1000; // Report every 1k hashes (more frequent updates)
 const PROGRESS_INTERVAL_MS = 100; // Or every 100ms (more frequent updates)
 let lastProgressTime = 0;
 
 /**
+ * Phase 26: Check if we should pause for duty cycle
+ */
+async function checkDutyCycle(): Promise<void> {
+  if (dutyCycle >= 1.0) {
+    return; // Full speed, no pause needed
+  }
+
+  const now = performance.now();
+  const elapsed = now - dutyCycleStartTime;
+
+  if (elapsed >= DUTY_CYCLE_PERIOD_MS) {
+    // Reset cycle
+    dutyCycleStartTime = now;
+  } else {
+    const activeTime = DUTY_CYCLE_PERIOD_MS * dutyCycle;
+    if (elapsed >= activeTime) {
+      // Pause for the rest of the cycle
+      const sleepTime = DUTY_CYCLE_PERIOD_MS - elapsed;
+      if (sleepTime > 0) {
+        await new Promise((resolve) => setTimeout(resolve, sleepTime));
+      }
+      dutyCycleStartTime = performance.now();
+    }
+  }
+}
+
+/**
  * Mining loop
  */
 async function miningLoop(): Promise<void> {
   if (!isRunning || !currentBlock) {
-    console.log("[Worker] Mining loop not started: isRunning=", isRunning, "currentBlock=", !!currentBlock);
     return;
   }
 
-  console.log("[Worker] Starting mining loop, difficulty:", currentDifficulty, "nonceStart:", nonceStart);
+  dutyCycleStartTime = performance.now();
 
   try {
     while (isRunning && currentBlock) {
+      // Phase 26: Check duty cycle (CPU throttling)
+      await checkDutyCycle();
       // Phase 18: Check if nonce range is exhausted
       if (nonceEnd !== null && nonce >= nonceEnd) {
         // Nonce range exhausted, request new range
@@ -171,10 +206,6 @@ async function miningLoop(): Promise<void> {
         hashesTried === 1; // Report first hash immediately
       
       if (shouldReport) {
-        // Always report first hash to show activity
-        if (hashesTried === 1) {
-          console.log("[Worker] First hash computed, sending PROGRESS event");
-        }
         self.postMessage({
           type: "PROGRESS",
           nonce,
@@ -226,8 +257,9 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
     nonceEnd = command.nonceEnd ?? null; // null means unlimited
     nonce = nonceStart;
     lastProgressTime = startedAt;
-
-    console.log("[Worker] START command received, difficulty:", currentDifficulty, "nonceStart:", nonceStart);
+    
+    // Phase 26: Set duty cycle
+    dutyCycle = Math.max(0.0, Math.min(1.0, command.dutyCycle ?? 1.0));
 
     // Start mining loop (will send PROGRESS after first hash)
     // Use setImmediate or setTimeout to ensure async loop starts
@@ -246,6 +278,11 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
       type: "STOPPED",
       reason: "user",
     } as MinerWorkerEvent);
+  } else if (command.type === "SET_DUTY_CYCLE") {
+    // Phase 26: Update duty cycle dynamically
+    dutyCycle = Math.max(0.0, Math.min(1.0, command.dutyCycle));
+    // Reset cycle timer
+    dutyCycleStartTime = performance.now();
   }
 });
 
