@@ -116,6 +116,26 @@ export class BrowserChainStorage implements ChainStorage {
   }
 
   /**
+   * Remove blocks from a given height onwards (inclusive)
+   * Used for recovery when a corrupted block is detected
+   * 
+   * @param fromHeight Remove blocks from this height onwards
+   */
+  removeBlocksFromHeight(fromHeight: number): void {
+    const beforeCount = this.blocks.length;
+    this.blocks = this.blocks.filter((block) => block.header.height < fromHeight);
+    const afterCount = this.blocks.length;
+    
+    if (beforeCount !== afterCount) {
+      this.saveToPersistence();
+      console.log(
+        `[ChainStorage] Removed blocks from height ${fromHeight} onwards. ` +
+        `Blocks before: ${beforeCount}, after: ${afterCount}`
+      );
+    }
+  }
+
+  /**
    * Phase 10: Prune blocks before a given height
    * Removes all blocks with height < pruneHeight
    * 

@@ -1,0 +1,18 @@
+# Static assets - don't redirect
+/logo/*    200
+/assets/*  200
+/*.js      200
+/*.css     200
+/*.png     200
+/*.jpg     200
+/*.jpeg    200
+/*.svg     200
+/*.ico     200
+/*.woff    200
+/*.woff2   200
+/*.ttf     200
+/*.eot     200
+
+# SPA fallback - redirect everything else to index.html
+/*    /index.html   200
+

@@ -46,7 +46,17 @@ export type P2PMessageType =
   // Phase 22: Fast Finality Layer messages
   | "REQUEST_FINALITY" // Request finality certificate for a block
   | "FINALITY_VOTE" // Finality vote from committee member
-  | "FINALITY_CERT"; // Finality certificate (>= 2/3 votes)
+  | "FINALITY_CERT" // Finality certificate (>= 2/3 votes)
+  // Phase 30: Global Consistency Sentinel messages
+  | "GLOBAL_VIEW_REQUEST" // Request peer's global view (height, tipHash, finalizedHeight)
+  | "GLOBAL_VIEW_RESPONSE" // Response with peer's global view
+  // Phase 30: Mainnet Guardrails - Network handshake
+  | "NETWORK_HANDSHAKE" // Network parameters handshake (networkId, genesisHash, chainParamsHash)
+  | "NETWORK_HANDSHAKE_RESPONSE" // Response to network handshake
+  // Phase 31: Mainnet Stability - Long-range detection and height consensus
+  | "CHECKPOINT_REQUEST" // Request checkpoint state commitment at specific height
+  | "CHECKPOINT_RESPONSE" // Response with checkpoint state commitment
+  | "HEIGHT_VOTE"; // Broadcast height vote for consensus
 
 /**
  * P2P message structure
@@ -68,6 +78,11 @@ export interface PeerInfo {
   dataChannel: RTCDataChannel | null;
   connected: boolean;
   lastSeen: number;
+  // Phase 30: Network validation
+  networkValidated?: boolean;
+  networkId?: string;
+  genesisHash?: string;
+  chainParamsHash?: string;
 }
 
 /**
@@ -80,6 +95,7 @@ export interface P2PNode {
   connect(bootstrapUrl: string): Promise<void>;
   disconnect(): void;
   broadcast(type: P2PMessageType, payload: any): void;
+  sendToPeer?(peerId: string, type: P2PMessageType, payload: any): void; // Phase 30: Optional method for direct peer messaging
   onMessage(type: P2PMessageType, handler: (payload: any, sender: string) => void): void;
   getPeerCount(): number;
 }
@@ -260,6 +276,31 @@ export class BrowserP2PNode implements P2PNode {
           console.error(`Failed to send message to peer ${peer.id}:`, error);
         }
       }
+    }
+  }
+
+  /**
+   * Phase 30: Send message to a specific peer
+   */
+  sendToPeer(peerId: string, type: P2PMessageType, payload: any): void {
+    const peer = this.peers.get(peerId);
+    if (!peer || !peer.connected || !peer.dataChannel || peer.dataChannel.readyState !== "open") {
+      console.warn(`[P2P] Cannot send message to peer ${peerId}: peer not connected`);
+      return;
+    }
+
+    const message: P2PMessage = {
+      type,
+      data: payload,
+      sender: this.nodeId,
+      timestamp: Date.now(),
+      messageId: `${this.nodeId}_${Date.now()}_${Math.random()}`,
+    };
+
+    try {
+      peer.dataChannel.send(JSON.stringify(message));
+    } catch (error) {
+      console.error(`Failed to send message to peer ${peerId}:`, error);
     }
   }
 
@@ -477,6 +518,9 @@ export class BrowserP2PNode implements P2PNode {
       console.log(`Data channel opened with peer ${peerInfo.id}`);
       peerInfo.connected = true;
       peerInfo.lastSeen = Date.now();
+      
+      // Phase 30: Send network handshake when data channel opens
+      // This will be handled by App.tsx after P2P connection is established
     };
 
     dataChannel.onmessage = (event) => {

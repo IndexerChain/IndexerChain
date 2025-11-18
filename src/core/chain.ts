@@ -86,7 +86,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
   // Phase 11: Auto-upgrade legacy snapshots to compressed format
   // Phase 12: Start recording changes for delta snapshots
   // Phase 16: Initialize total_minted to 0 if not exists
-  const indexState = IndexState.createEmpty();
+  let indexState = IndexState.createEmpty();
   indexState.beginRecording(); // Start recording changes for delta snapshots
   
   // Phase 16: Ensure total_minted exists (initialize to 0 if not set)
@@ -254,19 +254,37 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     for (let h = actualStartHeight; h <= maxReplayHeight; h++) {
       const block = storage.getBlockByHeight(h);
       if (block) {
-        indexState.applyBlock(block);
-        
-        // Phase 16: Update total_minted after applying each block
-        if (block.txs.length > 0) {
-          const coinbaseTx = block.txs[0];
-          if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
-            const rewardOp = coinbaseTx.ops[0];
-            if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
-              const { IDCToUIDC } = await import("./idcEmission.js");
-              const rewardUIDC = IDCToUIDC(rewardOp.amount);
-              indexState.incrementTotalMinted(rewardUIDC);
+        try {
+          indexState.applyBlock(block);
+          
+          // Phase 16: Update total_minted after applying each block
+          if (block.txs.length > 0) {
+            const coinbaseTx = block.txs[0];
+            if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+              const rewardOp = coinbaseTx.ops[0];
+              if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
+                const { IDCToUIDC } = await import("./idcEmission.js");
+                const rewardUIDC = IDCToUIDC(rewardOp.amount);
+                indexState.incrementTotalMinted(rewardUIDC);
+              }
             }
           }
+        } catch (error) {
+          // Enhanced error handling with better error messages
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          if (errorMsg.includes("Insufficient balance")) {
+            console.error(
+              `[Chain Init] Balance error at block ${h}: ${errorMsg}\n` +
+              `This may indicate corrupted chain state or snapshot inconsistency.`
+            );
+            // Re-throw with more context
+            throw new Error(
+              `Chain initialization failed at block ${h}: ${errorMsg}\n` +
+              `This usually means the chain state is corrupted. You may need to reset the chain.`
+            );
+          }
+          // Re-throw other errors
+          throw error;
         }
       } else {
         // Block missing - in light node mode this is expected for old blocks
@@ -343,7 +361,20 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
  * Get default chain parameters for development
  */
 export function getDefaultChainParams(): ChainParams {
-  // Phase 21: Default peer reputation parameters
+  // Phase 30: Check if we should use mainnet params
+  // In production, this should default to mainnet
+  // For development, you can set MAINNET_MODE=false in environment
+  const useMainnet = typeof window !== "undefined" && 
+    (window.location.hostname === "indexerchain.com" || 
+     window.location.hostname === "www.indexerchain.com" ||
+     localStorage.getItem("indexerchain_force_mainnet") === "true");
+  
+  if (useMainnet) {
+    const { MAINNET_PARAMS } = require("./networkParams.js");
+    return MAINNET_PARAMS;
+  }
+  
+  // Phase 21: Default peer reputation parameters (dev/testnet)
   return {
     version: 1,
     networkId: "indexerchain-dev",
@@ -372,6 +403,13 @@ export function getDefaultChainParams(): ChainParams {
     finalityThreshold: 0.67, // Threshold ratio (2/3)
     finalityVoteTimeoutMs: 5000, // Vote collection timeout: 5 seconds
     finalityCommitteeRoundInterval: 10, // Re-elect committee every 10 blocks
+    // Phase 30: Global Consistency Sentinel parameters
+    globalSentinelEnabled: true, // Enable global consistency sentinel
+    globalDriftCheckIntervalMs: 5000, // Check drift every 5 seconds
+    globalDriftCriticalBlocks: 10, // Critical drift: 10 blocks
+    globalDriftMinorBlocks: 3, // Minor drift: 3 blocks
+    globalMinPeersForAssessment: 3, // Minimum 3 peers for assessment
+    globalMinReputationForVoting: 0, // All peers can vote (reputation >= 0)
   };
 }
 
@@ -411,6 +449,16 @@ export async function appendMinedBlock(
 
     // Apply block to index state
     context.indexState.applyBlock(block);
+    
+    // Phase 29: Report state update to LocalStateCoordinator
+    if (typeof window !== "undefined" && (window as any).localStateCoordinator) {
+      (window as any).localStateCoordinator.reportLocalState(
+        block.header.height,
+        block.hash,
+        block.header.stateCommitment,
+        undefined // finalizedHeight will be updated separately
+      );
+    }
 
     // Phase 16: Update total minted after applying block
     // Extract coinbase reward and add to total_minted

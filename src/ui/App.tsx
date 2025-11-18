@@ -20,6 +20,8 @@ import { SnapshotDownloader } from "../core/snapshotDownloader.js";
 import { SnapshotSeeder } from "../core/snapshotSeeder.js";
 import { BrowserP2PNode } from "../core/p2p.js";
 import { handleReceivedBlock, handleReceivedBlocks } from "../core/sync.js";
+import { GlobalStateSentinel } from "../core/globalSentinel.js";
+import type { DriftAssessment } from "../core/types.js";
 import { verifyTxSignature } from "../core/signatures.js";
 import { verifyBlock } from "../core/verify.js";
 import {
@@ -54,9 +56,11 @@ import { WalletManagerPanel } from "./WalletManagerPanel.js";
 import { ConfigChecker } from "./ConfigChecker.js";
 import { RuntimePanel } from "./RuntimePanel.js";
 import { PrivacyPanel } from "./privacy/PrivacyPanel.js";
+import { GlobalSentinelPanel } from "./GlobalSentinelPanel.js";
 import { RuntimeManager } from "../core/runtimeManager.js";
 import { useI18n } from "../i18n/useI18n.js";
 import { getLocalInstanceCoordinator, type LocalInstanceRole, type LeaderInfo } from "../core/localInstance.js";
+import { getLocalStateCoordinator } from "../core/localStateCoordinator.js";
 import "./index.css";
 
 /**
@@ -68,7 +72,23 @@ function App() {
   const { locale, setLocale, t } = useI18n();
   const [chainContext, setChainContext] = useState<ChainContext | null>(null);
   const [mempool] = useState(() => new Mempool());
-  const [isMining, setIsMining] = useState<boolean>(false);
+  // Load persisted state from localStorage
+  const loadPersistedState = () => {
+    try {
+      const saved = localStorage.getItem("indexerchain_app_state");
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn("Failed to load persisted state:", e);
+    }
+    return {};
+  };
+
+  const persistedState = loadPersistedState();
+  const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.com";
+  
+  const [isMining, setIsMining] = useState<boolean>(persistedState.isMining ?? false);
   const [loading, setLoading] = useState<boolean>(true);
   const [miningHash, setMiningHash] = useState<string>("");
   const [miningNonce, setMiningNonce] = useState<number>(0);
@@ -76,9 +96,8 @@ function App() {
   const [successMessage, setSuccessMessage] = useState<string>(""); // Success message for transfers
   // Phase 17: Support mainnet mode (default) and dev mode
   // Default to mainnet signaling server (can be configured)
-  const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.com"; // Custom domain configured
-  const [bootstrapUrl, setBootstrapUrl] = useState<string>(DEFAULT_MAINNET_SIGNALING);
-  const [isMainnetMode, setIsMainnetMode] = useState<boolean>(true);
+  const [bootstrapUrl, setBootstrapUrl] = useState<string>(persistedState.bootstrapUrl ?? DEFAULT_MAINNET_SIGNALING);
+  const [isMainnetMode, setIsMainnetMode] = useState<boolean>(persistedState.isMainnetMode ?? true);
   const [peerCount, setPeerCount] = useState<number>(0);
   const [isP2PConnected, setIsP2PConnected] = useState<boolean>(false);
   const [nodeAddress, setNodeAddress] = useState<string>("");
@@ -110,7 +129,7 @@ function App() {
 
   // Phase 18: Cluster mining
   const [minerCluster] = useState(() => new MinerCluster());
-  const [clusterMining, setClusterMining] = useState<boolean>(false);
+  const [clusterMining, setClusterMining] = useState<boolean>(persistedState.clusterMining ?? false);
   
   // Phase 26: Runtime Manager
   const [runtimeManager] = useState(() => {
@@ -141,6 +160,34 @@ function App() {
   const [localRole, setLocalRole] = useState<LocalInstanceRole>("FOLLOWER");
   const [leaderInfo, setLeaderInfo] = useState<LeaderInfo | null>(null);
   const [localConflictDetected, setLocalConflictDetected] = useState<boolean>(false);
+  
+  // Phase 29: Local State Coordinator
+  const [localStateCoordinator] = useState(() => getLocalStateCoordinator());
+  const [localStateSyncInfo, setLocalStateSyncInfo] = useState<{
+    lastSyncEpoch: number;
+    lastSyncTime: number;
+    lastSyncTipHash: string;
+    lastSyncStateCommitment: string;
+    syncStatus: "synced" | "syncing" | "out_of_sync" | "error";
+    error?: string;
+  }>({
+    lastSyncEpoch: 0,
+    lastSyncTime: 0,
+    lastSyncTipHash: "",
+    lastSyncStateCommitment: "",
+    syncStatus: "synced",
+  });
+  const [consistencyCheck, setConsistencyCheck] = useState<{
+    isConsistent: boolean;
+    tipHashMatch: boolean;
+    stateCommitmentMatch: boolean;
+    heightMatch: boolean;
+  }>({
+    isConsistent: true,
+    tipHashMatch: true,
+    stateCommitmentMatch: true,
+    heightMatch: true,
+  });
   
   // Phase 26: Duty cycle state
   const [dutyCycle, setDutyCycle] = useState<number>(1.0);
@@ -211,8 +258,23 @@ function App() {
   } | null>(null);
   const [isRecompressing, setIsRecompressing] = useState<boolean>(false);
   
-  // Auto-mining option
-  const [autoMining, setAutoMining] = useState<boolean>(false);
+  // Auto-mining option (persisted)
+  const [autoMining, setAutoMining] = useState<boolean>(persistedState.autoMining ?? false);
+
+  // Phase 30: Global Consistency Sentinel
+  const [globalSentinel, setGlobalSentinel] = useState<GlobalStateSentinel | null>(null);
+  const [driftAssessment, setDriftAssessment] = useState<DriftAssessment | null>(null);
+  
+  // Phase 30: Mining Guard & Stats
+  const [miningGuardResult, setMiningGuardResult] = useState<any>(null);
+  const [_miningEffectiveness, setMiningEffectiveness] = useState<any>(null);
+  
+  // Phase 31: Mainnet Stability
+  const [_longRangeDetector, setLongRangeDetector] = useState<any>(null);
+  const [_heightConsensus, setHeightConsensus] = useState<any>(null);
+  const [antiInvalidMining, setAntiInvalidMining] = useState<any>(null);
+  const [_checkpointLock, setCheckpointLock] = useState<any>(null);
+  const [_signalReconciliation, setSignalReconciliation] = useState<any>(null);
 
   // Phase 17: Fast relay statistics
   const [relayStats, setRelayStats] = useState<{
@@ -337,9 +399,58 @@ function App() {
       if (tip) {
         const finalizedHeight = finalityStats?.finalizedCount || 0;
         localCoordinator.reportLocalStatus(tip.header.height, tip.hash, finalizedHeight);
+        
+        // Phase 29: Report state to LocalStateCoordinator
+        localStateCoordinator.reportLocalState(
+          tip.header.height,
+          tip.hash,
+          tip.header.stateCommitment,
+          finalizedHeight
+        );
       }
     }
-  }, [chainContext, finalityStats]);
+  }, [chainContext, finalityStats, localCoordinator, localStateCoordinator]);
+  
+  // Phase 29: Initialize LocalStateCoordinator
+  useEffect(() => {
+    if (!chainContext) return;
+    
+    const initStateCoordinator = async () => {
+      await localStateCoordinator.init(chainContext);
+      
+      // Expose to window for chain.ts access
+      if (typeof window !== "undefined") {
+        (window as any).localStateCoordinator = localStateCoordinator;
+      }
+      
+      // Register callbacks
+      const unregisterStateSync = localStateCoordinator.onStateSync((info) => {
+        setLocalStateSyncInfo(info);
+      });
+      
+      const unregisterConsistencyCheck = localStateCoordinator.onConsistencyCheck((isConsistent, details) => {
+        setConsistencyCheck({
+          isConsistent,
+          ...details,
+        });
+      });
+      
+      return () => {
+        unregisterStateSync();
+        unregisterConsistencyCheck();
+        if (typeof window !== "undefined") {
+          delete (window as any).localStateCoordinator;
+        }
+        localStateCoordinator.destroy();
+      };
+    };
+    
+    const cleanupPromise = initStateCoordinator();
+    
+    return () => {
+      cleanupPromise.then((cleanup) => cleanup?.());
+    };
+  }, [chainContext, localStateCoordinator]);
 
   // Form state for creating transactions
   const [txNamespace, setTxNamespace] = useState<string>("test");
@@ -353,6 +464,26 @@ function App() {
 
   // Tab navigation state
   const [activeTab, setActiveTab] = useState<string>("overview");
+
+  // Save state to localStorage whenever relevant state changes
+  useEffect(() => {
+    const saveState = () => {
+      try {
+        const state = {
+          isMining,
+          clusterMining,
+          autoMining,
+          bootstrapUrl,
+          isMainnetMode,
+          autoConnect: isP2PConnected, // Save connection state for auto-reconnect
+        };
+        localStorage.setItem("indexerchain_app_state", JSON.stringify(state));
+      } catch (e) {
+        console.warn("Failed to save app state:", e);
+      }
+    };
+    saveState();
+  }, [isMining, clusterMining, autoMining, bootstrapUrl, isMainnetMode, isP2PConnected]);
 
   // Initialize chain on mount
   useEffect(() => {
@@ -378,9 +509,43 @@ function App() {
         setDelegatorManager(dm);
         
         setLoading(false);
+        
+        // Auto-connect to P2P network if it was connected before
+        // This will be handled by a separate useEffect after handleConnectP2P is defined
+        
+        // Restore mining state if it was active before
+        // This will be handled by the auto-mining useEffect and role-based mining logic
+        // The persisted state is already loaded into state variables, so they will trigger
+        // the appropriate useEffects to restore mining
       } catch (error) {
         console.error("Failed to initialize chain:", error);
-        setError("Failed to initialize chain");
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        
+        // Always show reset button for initialization errors
+        // Check if it's a balance error or chain corruption
+        const isCorruption = errorMsg.includes("Insufficient balance") || 
+                            errorMsg.includes("Chain initialization failed") ||
+                            errorMsg.includes("corrupted") ||
+                            errorMsg.includes("corruption");
+        
+        // Always show reset button for initialization errors
+        setNeedsReset(true);
+        
+        if (isCorruption) {
+          const fullErrorMsg = `⚠️ Chain State Corruption Detected!\n\n` +
+            `Error: ${errorMsg}\n\n` +
+            `This usually happens when chain data is corrupted (e.g., invalid transaction in a block).\n\n` +
+            `Solution: Click the "Reset Chain" button below to clear all chain data and start fresh.`;
+          setError(fullErrorMsg);
+          console.log("[App] Set error (corruption):", fullErrorMsg.substring(0, 200));
+        } else {
+          const fullErrorMsg = `Failed to initialize chain: ${errorMsg}\n\n` +
+            `If this persists, try resetting the chain using the button below.`;
+          setError(fullErrorMsg);
+          console.log("[App] Set error (other):", fullErrorMsg.substring(0, 200));
+        }
+        
+        console.log("[App] Set needsReset=true, error length:", errorMsg.length);
         setLoading(false);
       }
     };
@@ -437,9 +602,76 @@ function App() {
     }
   }, [chainContext, isP2PConnected, gsnEnabled, snapshotSeeder]);
 
+  // Auto-connect to P2P network on mount if it was connected before
+  const autoConnectAttemptedRef = useRef<boolean>(false);
+  useEffect(() => {
+    // Only attempt auto-connect once, when chainContext is ready and not loading
+    if (!chainContext || loading || isP2PConnected || autoConnectAttemptedRef.current) {
+      if (autoConnectAttemptedRef.current) {
+        console.log(`[Auto-Connect] Already attempted, skipping. chainContext: ${!!chainContext}, loading: ${loading}, isP2PConnected: ${isP2PConnected}`);
+      }
+      return;
+    }
+    
+    const savedState = loadPersistedState();
+    console.log(`[Auto-Connect] Checking saved state:`, { autoConnect: savedState.autoConnect, bootstrapUrl: savedState.bootstrapUrl });
+    
+    if (savedState.autoConnect && savedState.bootstrapUrl) {
+      autoConnectAttemptedRef.current = true; // Mark as attempted
+      console.log(`[Auto-Connect] Restoring P2P connection to ${savedState.bootstrapUrl}`);
+      
+      // Set bootstrap URL if different, then connect
+      if (savedState.bootstrapUrl !== bootstrapUrl) {
+        console.log(`[Auto-Connect] Updating bootstrap URL from ${bootstrapUrl} to ${savedState.bootstrapUrl}`);
+        setBootstrapUrl(savedState.bootstrapUrl);
+        // Wait for state update, then connect
+        setTimeout(() => {
+          console.log(`[Auto-Connect] Attempting connection after URL update...`);
+          handleConnectP2P();
+        }, 500);
+      } else {
+        // Connect immediately
+        setTimeout(() => {
+          console.log(`[Auto-Connect] Attempting connection...`);
+          handleConnectP2P();
+        }, 1000); // Small delay to ensure everything is ready
+      }
+    } else {
+      console.log(`[Auto-Connect] No saved connection state or bootstrap URL`);
+    }
+  }, [chainContext, loading]); // Only depend on chainContext and loading, not isP2PConnected or bootstrapUrl
+
+  // Restore mining state after chain is initialized
+  const restoreMiningRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!chainContext || loading || restoreMiningRef.current) return;
+    
+    // Restore mining state if it was active before
+    const savedState = loadPersistedState();
+    if (savedState.clusterMining && !clusterMining) {
+      restoreMiningRef.current = true;
+      // Restore cluster mining after a delay to ensure everything is ready
+      setTimeout(() => {
+        if (chainContext && !clusterMining) {
+          handleStartClusterMining();
+        }
+        restoreMiningRef.current = false;
+      }, 2000);
+    } else if (savedState.isMining && !isMining && !autoMining) {
+      restoreMiningRef.current = true;
+      // Restore single worker mining after a delay
+      setTimeout(() => {
+        if (chainContext && !isMining) {
+          handleStartMining();
+        }
+        restoreMiningRef.current = false;
+      }, 2000);
+    }
+  }, [chainContext, loading]); // Only run when chainContext becomes available
+
   // Auto-mining: Start mining automatically when chain is ready
   useEffect(() => {
-    if (autoMining && chainContext && !isMining) {
+    if (autoMining && chainContext && !isMining && !clusterMining) {
       const tip = chainContext.storage.getTip();
       if (tip) {
         // Small delay to ensure everything is initialized
@@ -449,7 +681,7 @@ function App() {
         return () => clearTimeout(timer);
       }
     }
-  }, [autoMining, chainContext, isMining]);
+  }, [autoMining, chainContext, isMining, clusterMining]);
 
   // Phase 13: Background periodic snapshot verification
   useEffect(() => {
@@ -504,16 +736,31 @@ function App() {
     return () => clearInterval(interval);
   }, [chainContext]);
 
-  // Handle chain reset (for Phase 5 migration)
+  // Handle chain reset (for Phase 5 migration or corruption recovery)
   const handleResetChain = () => {
-    if (!chainContext) return;
-    
-    if (confirm("This will clear all chain data and start fresh. Continue?")) {
-      chainContext.storage.reset();
-      setNeedsReset(false);
-      // Reload page to reinitialize
-      window.location.reload();
+    const confirmMsg = "This will clear all chain data and snapshots, then start fresh. Continue?";
+    if (!confirm(confirmMsg)) {
+      return;
     }
+    
+    // Clear chain storage (even if chainContext is null, we can still clear)
+    if (chainContext) {
+      chainContext.storage.reset();
+    } else {
+      // If chainContext is null, clear directly from localStorage
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem("indexerchain_blocks");
+      }
+    }
+    
+    // Clear all snapshots (they might be corrupted)
+    clearAllSnapshots();
+    
+    setNeedsReset(false);
+    setError("");
+    
+    // Reload page to reinitialize
+    window.location.reload();
   };
 
   // Setup P2P message handlers
@@ -637,26 +884,62 @@ function App() {
 
     // Handle REQUEST_BLOCKS messages
     p2p.onMessage("REQUEST_BLOCKS", async (request: { fromHeight: number; toHeight: number }, sender: string) => {
-      console.log("Received REQUEST_BLOCKS from", sender, request);
+      console.log("[Sync] Received REQUEST_BLOCKS from", sender.substring(0, 16) + "...", `height ${request.fromHeight}-${request.toHeight}`);
       const blocks: Block[] = [];
-      for (let h = request.fromHeight; h <= request.toHeight; h++) {
+      
+      // Phase 10: Check if requested blocks are available (light node mode)
+      const minHeight = chainContext.storage.getMinHeight();
+      const actualFromHeight = Math.max(request.fromHeight, minHeight);
+      const actualToHeight = Math.min(request.toHeight, chainContext.storage.getTip()?.header.height || request.toHeight);
+      
+      if (actualFromHeight > request.fromHeight) {
+        console.log(`[Sync] Requested blocks ${request.fromHeight}-${actualFromHeight - 1} are pruned (min: ${minHeight}), starting from ${actualFromHeight}`);
+      }
+      
+      for (let h = actualFromHeight; h <= actualToHeight; h++) {
         const block = chainContext.storage.getBlockByHeight(h);
         if (block) {
           blocks.push(block);
         }
       }
+      
       if (blocks.length > 0) {
+        console.log(`[Sync] Sending ${blocks.length} blocks to ${sender.substring(0, 16)}...`);
+        // Send blocks via broadcast (will reach all peers including the requester)
         p2p.broadcast("BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
+      } else {
+        console.log(`[Sync] No blocks available for height ${request.fromHeight}-${request.toHeight}`);
       }
     });
 
     // Handle BLOCKS messages (chain sync)
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("BLOCKS", async (data: { blocks: Block[] }, sender: string) => {
-      console.log("Received BLOCKS from", sender, "count:", data.blocks.length);
+      console.log("[Sync] Received BLOCKS from", sender.substring(0, 16) + "...", "count:", data.blocks.length);
+      if (data.blocks.length === 0) {
+        return;
+      }
+      
       const result = await handleReceivedBlocks(data.blocks, chainContext, sender);
       if (result.success && result.appended > 0) {
+        console.log(`[Sync] Successfully appended ${result.appended} blocks. New height: ${chainContext.storage.getTip()?.header.height ?? 0}`);
         setChainContext({ ...chainContext }); // Trigger re-render
+        
+        // If we appended blocks, check if there are more to request
+        const newTip = chainContext.storage.getTip();
+        const newHeight = newTip?.header.height ?? -1;
+        const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
+        
+        // If the highest received block is higher than what we have, request more
+        if (maxReceivedHeight > newHeight) {
+          console.log(`[Sync] Received blocks up to height ${maxReceivedHeight}, but we're at ${newHeight}, requesting more...`);
+          p2p.broadcast("REQUEST_BLOCKS", {
+            fromHeight: newHeight + 1,
+            toHeight: maxReceivedHeight,
+          });
+        }
+      } else if (!result.success) {
+        console.warn("[Sync] Failed to append blocks:", result.error);
       }
     });
 
@@ -671,10 +954,253 @@ function App() {
       }
     }, 1000);
 
+    // Phase 28: Auto-sync check - periodically check if we're behind and request blocks
+    // This helps keep nodes in sync automatically
+    const autoSyncInterval = setInterval(() => {
+      if (!p2p.isConnected || p2p.getPeerCount() === 0) {
+        return; // Not connected, skip
+      }
+
+      const localTip = chainContext.storage.getTip();
+      const localHeight = localTip?.header.height ?? -1;
+      
+      // If we're at height 0 or very low, request more aggressively for initial sync
+      if (localHeight === 0 || localHeight < 10) {
+        // Request a larger range for initial sync
+        const requestRange = 200;
+        console.log(`[Auto-Sync] Local height is ${localHeight}, requesting blocks from ${localHeight + 1} to ${localHeight + requestRange}`);
+        p2p.broadcast("REQUEST_BLOCKS", {
+          fromHeight: localHeight + 1,
+          toHeight: localHeight + requestRange,
+        });
+      } else {
+        // For ongoing sync, request a smaller range periodically
+        const requestRange = 50;
+        p2p.broadcast("REQUEST_BLOCKS", {
+          fromHeight: localHeight + 1,
+          toHeight: localHeight + requestRange,
+        });
+      }
+    }, 5000); // Check every 5 seconds for faster initial sync
+
+    // Phase 30: Handle GLOBAL_VIEW_REQUEST
+    p2p.onMessage("GLOBAL_VIEW_REQUEST", async (_data: any, sender: string) => {
+      const localTip = chainContext.storage.getTip();
+      if (!localTip) return;
+      
+      // Get finalized height from finality manager if available
+      let finalizedHeight = 0;
+      if (chainContext.params.finalityEnabled && (window as any).finalityManager) {
+        const finalityManager = (window as any).finalityManager;
+        const stats = finalityManager.getStats();
+        if (stats && stats.finalizedHeight) {
+          finalizedHeight = stats.finalizedHeight;
+        }
+      }
+      
+      // Get reputation score if available
+      let reputationScore: number | undefined;
+      if (chainContext.params.peerScoreEnabled) {
+        try {
+          const { getGlobalPeerReputationManager } = await import("../core/peerReputation.js");
+          const reputationManager = getGlobalPeerReputationManager(chainContext.params);
+          const nodeId = getOrCreateBrowserNodeId();
+          const peerScore = reputationManager.getScore(nodeId);
+          if (peerScore) {
+            reputationScore = peerScore.score;
+          }
+        } catch (e) {
+          // Reputation manager not available
+        }
+      }
+      
+      const response = {
+        height: localTip.header.height,
+        tipHash: localTip.hash,
+        finalizedHeight,
+        stateCommitment: localTip.header.stateCommitment,
+        reputationScore,
+      };
+      
+      // Send response directly to requesting peer
+      if (p2p.sendToPeer) {
+        p2p.sendToPeer(sender, "GLOBAL_VIEW_RESPONSE", response);
+      } else {
+        // Fallback to broadcast if sendToPeer not available
+        p2p.broadcast("GLOBAL_VIEW_RESPONSE", response);
+      }
+    });
+
+    // Phase 30: Handle GLOBAL_VIEW_RESPONSE
+    p2p.onMessage("GLOBAL_VIEW_RESPONSE", async (payload: any, sender: string) => {
+      if (globalSentinel) {
+        globalSentinel.onGlobalViewResponse(sender, payload);
+      }
+    });
+
+    // Phase 30: Handle NETWORK_HANDSHAKE
+    p2p.onMessage("NETWORK_HANDSHAKE", async (payload: { networkId: string; genesisHash: string; chainParamsHash: string }, sender: string) => {
+      const { getNetworkInfo } = await import("../core/networkParams.js");
+      const localNetworkInfo = await getNetworkInfo(chainContext.params);
+      
+      // Validate peer's network parameters
+      if (payload.networkId !== localNetworkInfo.networkId) {
+        console.warn(`[NetworkHandshake] Disconnecting peer ${sender}: networkId mismatch (${payload.networkId} vs ${localNetworkInfo.networkId})`);
+        const peer = p2p.peers.get(sender);
+        if (peer && peer.connection) {
+          peer.connection.close();
+          p2p.peers.delete(sender);
+        }
+        return;
+      }
+      
+      if (payload.genesisHash !== localNetworkInfo.genesisHash) {
+        console.warn(`[NetworkHandshake] Disconnecting peer ${sender}: genesisHash mismatch`);
+        const peer = p2p.peers.get(sender);
+        if (peer && peer.connection) {
+          peer.connection.close();
+          p2p.peers.delete(sender);
+        }
+        return;
+      }
+      
+      if (payload.chainParamsHash !== localNetworkInfo.chainParamsHash) {
+        console.warn(`[NetworkHandshake] Disconnecting peer ${sender}: chainParamsHash mismatch`);
+        const peer = p2p.peers.get(sender);
+        if (peer && peer.connection) {
+          peer.connection.close();
+          p2p.peers.delete(sender);
+        }
+        return;
+      }
+      
+      // Network parameters match, mark peer as validated
+      const peer = p2p.peers.get(sender);
+      if (peer) {
+        peer.networkValidated = true;
+        peer.networkId = payload.networkId;
+        peer.genesisHash = payload.genesisHash;
+        peer.chainParamsHash = payload.chainParamsHash;
+      }
+      
+      // Send response
+      if (p2p.sendToPeer) {
+        p2p.sendToPeer(sender, "NETWORK_HANDSHAKE_RESPONSE", localNetworkInfo);
+      } else {
+        p2p.broadcast("NETWORK_HANDSHAKE_RESPONSE", localNetworkInfo);
+      }
+    });
+
+    // Phase 30: Handle NETWORK_HANDSHAKE_RESPONSE
+    p2p.onMessage("NETWORK_HANDSHAKE_RESPONSE", async (payload: { networkId: string; genesisHash: string; chainParamsHash: string }, sender: string) => {
+      const { getNetworkInfo } = await import("../core/networkParams.js");
+      const localNetworkInfo = await getNetworkInfo(chainContext.params);
+      
+      // Validate response
+      if (payload.networkId !== localNetworkInfo.networkId ||
+          payload.genesisHash !== localNetworkInfo.genesisHash ||
+          payload.chainParamsHash !== localNetworkInfo.chainParamsHash) {
+        console.warn(`[NetworkHandshake] Peer ${sender} network parameters mismatch, disconnecting`);
+        const peer = p2p.peers.get(sender);
+        if (peer && peer.connection) {
+          peer.connection.close();
+          p2p.peers.delete(sender);
+        }
+        return;
+      }
+      
+      // Mark peer as validated
+      const peer = p2p.peers.get(sender);
+      if (peer) {
+        peer.networkValidated = true;
+        peer.networkId = payload.networkId;
+        peer.genesisHash = payload.genesisHash;
+        peer.chainParamsHash = payload.chainParamsHash;
+      }
+    });
+
+    // Phase 30: Send network handshake to all peers when they connect
+    const sendNetworkHandshake = async () => {
+      if (!chainContext) return;
+      const { getNetworkInfo } = await import("../core/networkParams.js");
+      const networkInfo = await getNetworkInfo(chainContext.params);
+      
+      // Send handshake to all connected peers
+      for (const [peerId, peer] of p2p.peers.entries()) {
+        if (peer.connected && peer.dataChannel && !peer.networkValidated) {
+          if (p2p.sendToPeer) {
+            p2p.sendToPeer(peerId, "NETWORK_HANDSHAKE", networkInfo);
+          } else {
+            // Fallback to broadcast (less efficient but works)
+            p2p.broadcast("NETWORK_HANDSHAKE", networkInfo);
+          }
+        }
+      }
+    };
+    
+    // Send handshake periodically to newly connected peers
+    const handshakeInterval = setInterval(sendNetworkHandshake, 2000);
+    
+    // Also send immediately
+    setTimeout(sendNetworkHandshake, 1000);
+
     return () => {
       clearInterval(interval);
+      clearInterval(autoSyncInterval);
+      if (handshakeInterval) {
+        clearInterval(handshakeInterval);
+      }
     };
-  }, [chainContext, mempool]);
+  }, [chainContext, mempool, globalSentinel]);
+
+  // Phase 30: Check mining readiness periodically
+  useEffect(() => {
+    if (!chainContext || !chainContext.p2p) {
+      setMiningGuardResult(null);
+      return;
+    }
+
+    const checkMiningReady = async () => {
+      try {
+        const { MiningGuard } = await import("../core/miningGuard.js");
+        const walletStore = getMultiWalletStore();
+        const miningWallet = walletStore.getMiningWallet();
+        const minerAddr = miningWallet ? miningWallet.address : nodeAddress;
+        const result = await MiningGuard.canMineNow(
+          chainContext,
+          chainContext.p2p || null,
+          finalityManager,
+          localCoordinator.getRole(),
+          minerAddr
+        );
+        setMiningGuardResult(result);
+      } catch (e) {
+        console.warn("[Phase 30] Failed to check mining readiness:", e);
+      }
+    };
+
+    checkMiningReady();
+    const interval = setInterval(checkMiningReady, 5000);
+    return () => clearInterval(interval);
+  }, [chainContext, chainContext?.p2p, finalityManager, localCoordinator, nodeAddress]);
+
+  // Phase 30: Update mining effectiveness stats periodically
+  useEffect(() => {
+    const updateStats = async () => {
+      try {
+        const { getMiningStatsTracker } = await import("../core/miningStats.js");
+        const statsTracker = getMiningStatsTracker();
+        const stats = statsTracker.getStats();
+        setMiningEffectiveness(stats);
+      } catch (e) {
+        // Stats tracker not available, ignore
+      }
+    };
+
+    updateStats();
+    const interval = setInterval(updateStats, 2000);
+    return () => clearInterval(interval);
+  }, [isMining, clusterMining]);
 
   // Connect to P2P network
   const handleConnectP2P = async () => {
@@ -685,6 +1211,7 @@ function App() {
 
     try {
       setError("");
+      // Save bootstrap URL when connecting (state will be saved by useEffect)
       const nodeId = getOrCreateBrowserNodeId();
       const p2pNode = new BrowserP2PNode(nodeId);
       p2pNodeRef.current = p2pNode;
@@ -857,6 +1384,119 @@ function App() {
           remoteSnapshotUsed: chainContext.remoteSnapshotUsed,
         };
         setChainContext(updatedContext);
+        
+        // Phase 30: Initialize Global Consistency Sentinel
+        if (chainContext.params.globalSentinelEnabled !== false) {
+          const sentinel = new GlobalStateSentinel(updatedContext, chainContext.params);
+          sentinel.setOnAssessmentUpdate((assessment) => {
+            setDriftAssessment(assessment);
+            
+            // Auto-stop mining if critical drift detected
+            if (assessment.healthLevel === "CRITICAL_DRIFT" && assessment.forkSuspected) {
+              console.warn("[GlobalSentinel] Critical drift with fork detected, stopping mining...");
+              if (isMining) {
+                handleStopMining();
+              }
+              if (clusterMining) {
+                handleStopClusterMining();
+              }
+              if (autoMining) {
+                setAutoMining(false);
+              }
+            }
+          });
+          sentinel.start();
+          setGlobalSentinel(sentinel);
+          console.log("[GlobalSentinel] Initialized and started");
+        }
+
+        // Phase 31: Initialize Mainnet Stability components
+        // 1. Long-range Divergence Detector
+        const { LongRangeDetector } = await import("../core/longRangeDetector.js");
+        const detector = new LongRangeDetector(updatedContext, p2pNode);
+        detector.setOnDivergenceDetected(async (result) => {
+          console.error("[Phase 31] Long-range divergence detected:", result);
+          // Auto-repair: download snapshot from checkpoint height
+          try {
+            // Try to download snapshot at checkpoint height via GSN
+            const { loadAllSnapshotMeta } = await import("../core/snapshot.js");
+            const allMetas = loadAllSnapshotMeta();
+            // Find snapshot closest to majority height
+            const closestMeta = allMetas
+              .filter(m => m.height <= result.majorityHeight)
+              .sort((a, b) => b.height - a.height)[0];
+            
+            if (closestMeta) {
+              console.log(`[Phase 31] Found snapshot at height ${closestMeta.height} for repair`);
+              setError(locale === "zh" 
+                ? `⚠️ 检测到长程分叉，建议重置链并同步到高度 ${result.majorityHeight}（快照高度：${closestMeta.height}）` 
+                : `⚠️ Long-range fork detected, recommend resetting chain and syncing to height ${result.majorityHeight} (snapshot at ${closestMeta.height})`);
+            } else {
+              setError(locale === "zh" 
+                ? `⚠️ 检测到长程分叉，建议重置链并同步到高度 ${result.majorityHeight}` 
+                : `⚠️ Long-range fork detected, recommend resetting chain and syncing to height ${result.majorityHeight}`);
+            }
+          } catch (e) {
+            console.error("[Phase 31] Failed to repair divergence:", e);
+            setError(locale === "zh" 
+              ? `⚠️ 检测到长程分叉，建议重置链并同步到高度 ${result.majorityHeight}` 
+              : `⚠️ Long-range fork detected, recommend resetting chain and syncing to height ${result.majorityHeight}`);
+          }
+        });
+        detector.start();
+        setLongRangeDetector(detector);
+        if (typeof window !== "undefined") {
+          (window as any).longRangeDetector = detector;
+        }
+
+        // 2. Height Consensus Manager
+        const { HeightConsensusManager } = await import("../core/heightConsensus.js");
+        const consensus = new HeightConsensusManager(updatedContext, p2pNode);
+        consensus.setOnConsensusAction(async (result) => {
+          if (result.action === "SYNC") {
+            console.log("[Phase 31] Height consensus: forcing sync");
+            // Request blocks to sync
+            if (p2pNode.broadcast) {
+              const localTip = updatedContext.storage.getTip();
+              if (localTip) {
+                p2pNode.broadcast("REQUEST_BLOCKS", {
+                  fromHeight: localTip.header.height + 1,
+                  toHeight: result.majorityHeight,
+                });
+              }
+            }
+          } else if (result.action === "STOP_MINING") {
+            console.warn("[Phase 31] Height consensus: stopping mining due to fork");
+            if (isMining) handleStopMining();
+            if (clusterMining) handleStopClusterMining();
+            if (autoMining) setAutoMining(false);
+            setError(locale === "zh" 
+              ? "⚠️ 检测到分叉，已自动停止挖矿" 
+              : "⚠️ Fork detected, mining stopped automatically");
+          }
+        });
+        consensus.start();
+        setHeightConsensus(consensus);
+        if (typeof window !== "undefined") {
+          (window as any).heightConsensus = consensus;
+        }
+
+        // 3. Anti-Invalid-Mining
+        const { AntiInvalidMining } = await import("../core/antiInvalidMining.js");
+        const antiInvalid = new AntiInvalidMining(updatedContext);
+        setAntiInvalidMining(antiInvalid);
+
+        // 4. Checkpoint Lock
+        const { CheckpointLock } = await import("../core/checkpointLock.js");
+        const lock = new CheckpointLock(updatedContext);
+        await lock.initializeFromChain();
+        setCheckpointLock(lock);
+
+        // 5. Signal Reconciliation
+        const { SignalReconciliation } = await import("../core/signalReconciliation.js");
+        const reconciliation = new SignalReconciliation(updatedContext, p2pNode, bootstrapUrl);
+        reconciliation.start();
+        setSignalReconciliation(reconciliation);
       }
       
       // Phase 20: Update GSN stats periodically
@@ -899,6 +1539,24 @@ function App() {
       
       setIsP2PConnected(true);
       setError(""); // Clear any previous errors
+      
+      // Immediately request blocks to sync with network
+      if (chainContext) {
+        const localTip = chainContext.storage.getTip();
+        const localHeight = localTip?.header.height ?? -1;
+        
+        // Request blocks from current height + 1 to catch up
+        // Request a reasonable range (e.g., 200 blocks) to sync quickly
+        const requestRange = 200;
+        console.log(`[Sync] Connected to P2P network, requesting blocks from height ${localHeight + 1} to ${localHeight + requestRange}`);
+        p2pNode.broadcast("REQUEST_BLOCKS", {
+          fromHeight: localHeight + 1,
+          toHeight: localHeight + requestRange,
+        });
+        
+        // Also request peers to get more connections
+        p2pNode.requestPeers();
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to connect to P2P network";
       setError(errorMessage);
@@ -1026,6 +1684,7 @@ function App() {
 
   // Phase 18: Start cluster mining
   // Phase 27: Check if this instance can mine (must be LEADER)
+  // Phase 30: Add mining guard checks
   const handleStartClusterMining = async () => {
     if (!chainContext) return;
     
@@ -1037,6 +1696,27 @@ function App() {
           ? `⚠️ 本机已有一个挖矿实例：${leaderId}，当前实例为只读模式。如需在本实例挖矿，请先在其他实例中关闭挖矿或关闭页面。`
           : `⚠️ This machine already has a mining instance: ${leaderId}. Current instance is read-only. To mine on this instance, please stop mining on other instances or close their pages.`
       );
+      return;
+    }
+    
+    // Phase 30: Mining guard check
+    const { MiningGuard } = await import("../core/miningGuard.js");
+    const walletStore = getMultiWalletStore();
+    const miningWallet = walletStore.getMiningWallet();
+    const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+    
+    const guardResult = await MiningGuard.canMineNow(
+      chainContext,
+      chainContext.p2p || null,
+      finalityManager,
+      localCoordinator.getRole(),
+      minerAddr
+    );
+    
+    if (!guardResult.ok) {
+      const { MiningGuard: Guard } = await import("../core/miningGuard.js");
+      const message = Guard.getStatusMessage(guardResult, locale);
+      setError(message);
       return;
     }
 
@@ -1206,6 +1886,7 @@ function App() {
 
   // Phase 8: Start mining using Worker (single worker mode)
   // Phase 27: Check if this instance can mine (must be LEADER)
+  // Phase 30: Add mining guard checks
   const handleStartMining = async () => {
     if (!chainContext) return;
     
@@ -1220,6 +1901,27 @@ function App() {
       return;
     }
     
+    // Phase 30: Mining guard check
+    const { MiningGuard } = await import("../core/miningGuard.js");
+    const walletStore = getMultiWalletStore();
+    const miningWallet = walletStore.getMiningWallet();
+    const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+    
+    const guardResult = await MiningGuard.canMineNow(
+      chainContext,
+      chainContext.p2p || null,
+      finalityManager,
+      localCoordinator.getRole(),
+      minerAddr
+    );
+    
+    if (!guardResult.ok) {
+      const { MiningGuard: Guard } = await import("../core/miningGuard.js");
+      const message = Guard.getStatusMessage(guardResult, locale);
+      setError(message);
+      return;
+    }
+    
     // Allow mining even without pending transactions (coinbase only blocks are valid)
     const pendingTxs = mempool.getAll();
 
@@ -1229,11 +1931,6 @@ function App() {
         setError("No previous block found");
         return;
       }
-
-      // Phase 24: Get miner address from mining wallet (can be different from current wallet)
-      const walletStore = getMultiWalletStore();
-      const miningWallet = walletStore.getMiningWallet();
-      const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
 
       // Phase 8: Build candidate block
       // Phase 15: Pass current IndexState for stateCommitment calculation
@@ -1272,6 +1969,19 @@ function App() {
           }));
         },
         onFound: async (event) => {
+          // Phase 30: Record block as mined before verification
+          try {
+            const { getMiningStatsTracker } = await import("../core/miningStats.js");
+            const statsTracker = getMiningStatsTracker();
+            statsTracker.recordBlockMined(
+              event.block.header.height,
+              event.block.hash,
+              minerAddr
+            );
+          } catch (e) {
+            // Stats tracker not available, ignore
+          }
+          
           // Verify and append block
           const allBlocksForVerify = chainContext.storage.getAllBlocks();
           const verification = await verifyBlock(
@@ -1297,15 +2007,36 @@ function App() {
               // Don't update chainContext here - let the useEffect handle it
               setError("");
             } else {
+              // Phase 30: Record rejected block
+              try {
+                const { getMiningStatsTracker } = await import("../core/miningStats.js");
+                const statsTracker = getMiningStatsTracker();
+                statsTracker.recordBlockRejected(event.block.hash, result.error);
+              } catch (e) {
+                // Stats tracker not available, ignore
+              }
               setError(result.error || "Failed to append block");
             }
           } else {
+            // Phase 30: Record rejected block
+            try {
+              const { getMiningStatsTracker } = await import("../core/miningStats.js");
+              const statsTracker = getMiningStatsTracker();
+              statsTracker.recordBlockRejected(event.block.hash, verification.error);
+            } catch (e) {
+              // Stats tracker not available, ignore
+            }
             setError(verification.error || "Block verification failed");
           }
 
           setIsMining(false);
           setMiningHash("");
           setMiningNonce(0);
+          
+          // Phase 31: Stop mining epoch
+          if (antiInvalidMining) {
+            antiInvalidMining.stopMiningEpoch();
+          }
           
           // Don't auto-restart here - let the useEffect handle it based on tip change
           // This prevents immediate restart and gives time for state to stabilize
@@ -1569,7 +2300,86 @@ function App() {
           />
         )}
 
-        {needsReset && (
+        {/* Always show debug info at top */}
+        <div style={{ 
+          padding: "0.75rem", 
+          background: "#e9ecef", 
+          fontSize: "0.85rem", 
+          marginBottom: "1rem",
+          borderRadius: "4px",
+          border: "1px solid #dee2e6"
+        }}>
+          <strong>Debug Info:</strong> error={error ? `"${error.substring(0, 80)}..."` : "empty"} (length: {error.length}), needsReset={needsReset ? "true" : "false"}, loading={loading ? "true" : "false"}
+        </div>
+
+        {error && (
+          <div 
+            className={error.includes("✅") ? "success" : "error"} 
+            style={{ 
+              whiteSpace: "pre-line",
+              maxWidth: "100%",
+              wordBreak: "break-word",
+              padding: "1.5rem",
+              marginBottom: "1rem"
+            }}
+          >
+            <strong style={{ fontSize: "1.2rem", display: "block", marginBottom: "0.75rem" }}>
+              {error.includes("✅") ? "✅ Success:" : "❌ Chain Initialization Error:"}
+            </strong>
+            <div style={{ marginBottom: "1rem", fontSize: "1rem", lineHeight: "1.6" }}>
+              {error}
+            </div>
+            {needsReset ? (
+              <div style={{ 
+                marginTop: "1.5rem", 
+                paddingTop: "1.5rem", 
+                borderTop: "3px solid rgba(255,255,255,0.5)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: "1rem"
+              }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleResetChain}
+                  style={{ 
+                    padding: "1.25rem 2.5rem",
+                    fontSize: "1.2rem",
+                    fontWeight: "bold",
+                    backgroundColor: "#dc3545",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    display: "inline-block",
+                    minWidth: "300px",
+                    boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
+                    transition: "all 0.2s"
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = "#c82333";
+                    e.currentTarget.style.transform = "scale(1.05)";
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = "#dc3545";
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  🔄 Reset Chain (Clear All Data)
+                </button>
+                <p style={{ marginTop: "0.5rem", fontSize: "1rem", opacity: 0.95, maxWidth: "600px", lineHeight: "1.5" }}>
+                  ⚠️ <strong>Warning:</strong> This will permanently delete all chain data and snapshots, then start fresh from genesis block.
+                </p>
+              </div>
+            ) : (
+              <div style={{ marginTop: "1rem", padding: "0.75rem", background: "rgba(255,255,255,0.2)", borderRadius: "4px" }}>
+                Debug: needsReset is false (button should not show)
+              </div>
+            )}
+          </div>
+        )}
+
+        {needsReset && !error && (
           <div
             style={{
               color: "#856404",
@@ -1595,78 +2405,143 @@ function App() {
           </div>
         )}
 
-        {error && (
-          <div className={error.includes("✅") ? "success" : "error"} style={{ whiteSpace: "pre-line" }}>
-            <strong>{error.includes("✅") ? "Success:" : "Error:"}</strong>
-            <br />
-            {error}
-          </div>
-        )}
-
         {/* Tab Navigation */}
         <div className="tab-container">
           <div className="tab-nav">
             <button
               className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
-              onClick={() => setActiveTab("overview")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("overview");
+              }}
             >
               {t("tabs.overview")}
             </button>
             <button
               className={`tab-button ${activeTab === "wallet" ? "active" : ""}`}
-              onClick={() => setActiveTab("wallet")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("wallet");
+              }}
             >
               {t("tabs.wallet")}
             </button>
             <button
               className={`tab-button ${activeTab === "mining" ? "active" : ""}`}
-              onClick={() => setActiveTab("mining")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("mining");
+              }}
             >
               {t("tabs.mining")}
             </button>
             <button
               className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
-              onClick={() => setActiveTab("transactions")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("transactions");
+              }}
             >
               {t("tabs.transactions")}
             </button>
             <button
               className={`tab-button ${activeTab === "network" ? "active" : ""}`}
-              onClick={() => setActiveTab("network")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("network");
+              }}
             >
               {t("tabs.network")}
             </button>
             <button
               className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
-              onClick={() => setActiveTab("storage")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("storage");
+              }}
             >
               {t("tabs.storage")}
             </button>
             <button
               className={`tab-button ${activeTab === "advanced" ? "active" : ""}`}
-              onClick={() => setActiveTab("advanced")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("advanced");
+              }}
             >
               {t("tabs.advanced")}
             </button>
             <button
               className={`tab-button ${activeTab === "token" ? "active" : ""}`}
-              onClick={() => setActiveTab("token")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("token");
+              }}
             >
               {t("tabs.token")}
             </button>
             <button
               className={`tab-button ${activeTab === "privacy" ? "active" : ""}`}
-              onClick={() => setActiveTab("privacy")}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("privacy");
+              }}
             >
               {locale === "zh" ? "🔒 隐私" : "🔒 Privacy"}
+            </button>
+            <button
+              className={`tab-button ${activeTab === "tools" ? "active" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab("tools");
+              }}
+            >
+              {locale === "zh" ? "🔧 工具" : "🔧 Tools"}
             </button>
           </div>
 
           {/* Overview Tab */}
           {activeTab === "overview" && (
             <div className="tab-content active">
-              {/* Quick Start Guide */}
-              {(!isP2PConnected || (!isMining && !clusterMining)) && (
+              {/* Phase 30: Global Consistency Sentinel Panel */}
+              {chainContext && chainContext.params.globalSentinelEnabled !== false && (
+                <GlobalSentinelPanel
+                  assessment={driftAssessment}
+                  onReassess={() => {
+                    if (globalSentinel) {
+                      // Trigger immediate drift check
+                      globalSentinel.performDriftCheck();
+                    }
+                  }}
+                  onSyncFromSnapshot={async () => {
+                    if (!chainContext) return;
+                    try {
+                      setError("");
+                      // Use remote snapshot sync if available
+                      if (chainContext.params.remoteSnapshotEnabled) {
+                        const { syncFromRemoteSnapshot } = await import("../core/remoteSnapshot.js");
+                        await syncFromRemoteSnapshot(chainContext.params, chainContext.storage);
+                        setError("✅ Syncing from remote snapshot...");
+                        setTimeout(() => window.location.reload(), 2000);
+                      } else {
+                        setError("Remote snapshot sync is not enabled. Please enable it in chain parameters.");
+                      }
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Failed to sync from snapshot");
+                    }
+                  }}
+                  onStopMining={() => {
+                    if (isMining) handleStopMining();
+                    if (clusterMining) handleStopClusterMining();
+                    if (autoMining) setAutoMining(false);
+                    setError("✅ Mining stopped due to critical drift");
+                    setTimeout(() => setError(""), 3000);
+                  }}
+                  locale={locale}
+                />
+              )}
+              {/* Quick Start Guide - Only show when not fully set up */}
+              {(!isP2PConnected || !nodeAddress || (!isMining && !clusterMining)) && (
                 <div className="status-card" style={{ 
                   background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                   color: "white",
@@ -1674,33 +2549,31 @@ function App() {
                   marginBottom: "1.5rem"
                 }}>
                   <h2 style={{ color: "white", marginBottom: "1rem" }}>{t("quickStart.title")}</h2>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                     {/* Step 1: Connect Network */}
                     <div style={{ 
-                      background: "rgba(255, 255, 255, 0.15)", 
-                      padding: "1rem", 
-                      borderRadius: "8px",
-                      border: isP2PConnected ? "2px solid #28a745" : "2px solid rgba(255, 255, 255, 0.3)"
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.75rem",
+                      padding: "0.75rem",
+                      background: "rgba(255, 255, 255, 0.15)",
+                      borderRadius: "6px"
                     }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                          <span style={{ 
-                            fontSize: "1.5rem", 
-                            background: isP2PConnected ? "#28a745" : "rgba(255, 255, 255, 0.3)",
-                            width: "32px",
-                            height: "32px",
-                            borderRadius: "50%",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center"
-                          }}>
-                            {isP2PConnected ? "✓" : "1"}
-                          </span>
-                          <strong style={{ fontSize: "1.1rem" }}>{t("quickStart.step1Title")}</strong>
-                        </div>
-                        {isP2PConnected ? (
-                          <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("quickStart.step1Completed")}</span>
-                        ) : (
+                      <span style={{ 
+                        fontSize: "1.2rem",
+                        background: isP2PConnected ? "#28a745" : "rgba(255, 255, 255, 0.3)",
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        {isP2PConnected ? "✓" : "1"}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "0.95rem" }}>{t("quickStart.step1Title")}</strong>
+                        {!isP2PConnected && (
                           <button
                             className="btn"
                             onClick={() => {
@@ -1714,115 +2587,87 @@ function App() {
                             style={{ 
                               background: "white", 
                               color: "#667eea",
-                              padding: "0.5rem 1rem",
-                              fontSize: "0.9rem"
+                              padding: "0.4rem 0.8rem",
+                              fontSize: "0.85rem",
+                              marginLeft: "0.5rem"
                             }}
                           >
                             {t("quickStart.step1Action")}
                           </button>
                         )}
                       </div>
-                      <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
-                        {isP2PConnected 
-                          ? t("quickStart.networkConnected", { 
-                              mode: isMainnetMode ? t("network.mainnet") : t("network.dev"),
-                              count: peerCount 
-                            })
-                          : t("quickStart.step1Desc")}
-                      </p>
                     </div>
 
                     {/* Step 2: Check Wallet */}
                     <div style={{ 
-                      background: "rgba(255, 255, 255, 0.15)", 
-                      padding: "1rem", 
-                      borderRadius: "8px",
-                      border: nodeAddress ? "2px solid #28a745" : "2px solid rgba(255, 255, 255, 0.3)"
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.75rem",
+                      padding: "0.75rem",
+                      background: "rgba(255, 255, 255, 0.15)",
+                      borderRadius: "6px"
                     }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                          <span style={{ 
-                            fontSize: "1.5rem", 
-                            background: nodeAddress ? "#28a745" : "rgba(255, 255, 255, 0.3)",
-                            width: "32px",
-                            height: "32px",
-                            borderRadius: "50%",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center"
-                          }}>
-                            {nodeAddress ? "✓" : "2"}
-                          </span>
-                          <strong style={{ fontSize: "1.1rem" }}>{t("quickStart.step2Title")}</strong>
-                        </div>
-                        {nodeAddress ? (
-                          <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("quickStart.step2Completed")}</span>
-                        ) : (
-                          <span style={{ color: "#ffc107", fontWeight: "bold" }}>{t("common.loading")}</span>
+                      <span style={{ 
+                        fontSize: "1.2rem",
+                        background: nodeAddress ? "#28a745" : "rgba(255, 255, 255, 0.3)",
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        {nodeAddress ? "✓" : "2"}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "0.95rem" }}>{t("quickStart.step2Title")}</strong>
+                        {!nodeAddress && (
+                          <span style={{ color: "#ffc107", fontSize: "0.85rem", marginLeft: "0.5rem" }}>{t("common.loading")}</span>
                         )}
                       </div>
-                      <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
-                        {nodeAddress 
-                          ? `${t("wallet.address")}: ${nodeAddress.substring(0, 20)}... (${t("wallet.balance")}: ${chainContext ? chainContext.indexState.getBalance(nodeAddress as any).toFixed(2) : "0"} IDC)`
-                          : t("quickStart.walletInitializing")}
-                      </p>
                     </div>
 
                     {/* Step 3: Start Mining */}
                     <div style={{ 
-                      background: "rgba(255, 255, 255, 0.15)", 
-                      padding: "1rem", 
-                      borderRadius: "8px",
-                      border: (isMining || clusterMining) ? "2px solid #28a745" : "2px solid rgba(255, 255, 255, 0.3)"
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.75rem",
+                      padding: "0.75rem",
+                      background: "rgba(255, 255, 255, 0.15)",
+                      borderRadius: "6px"
                     }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                          <span style={{ 
-                            fontSize: "1.5rem", 
-                            background: (isMining || clusterMining) ? "#28a745" : "rgba(255, 255, 255, 0.3)",
-                            width: "32px",
-                            height: "32px",
-                            borderRadius: "50%",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center"
-                          }}>
-                            {(isMining || clusterMining) ? "✓" : "3"}
-                          </span>
-                          <strong style={{ fontSize: "1.1rem" }}>{t("quickStart.step3Title")}</strong>
-                        </div>
-                        {(isMining || clusterMining) ? (
-                          <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("quickStart.step3Mining")}</span>
-                        ) : (
+                      <span style={{ 
+                        fontSize: "1.2rem",
+                        background: (isMining || clusterMining) ? "#28a745" : "rgba(255, 255, 255, 0.3)",
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        {(isMining || clusterMining) ? "✓" : "3"}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "0.95rem" }}>{t("quickStart.step3Title")}</strong>
+                        {!(isMining || clusterMining) && nodeAddress && (
                           <button
                             className="btn"
                             onClick={() => {
                               setActiveTab("mining");
                             }}
-                            disabled={!nodeAddress}
                             style={{ 
-                              background: nodeAddress ? "white" : "rgba(255, 255, 255, 0.5)", 
-                              color: nodeAddress ? "#667eea" : "rgba(255, 255, 255, 0.7)",
-                              padding: "0.5rem 1rem",
-                              fontSize: "0.9rem",
-                              cursor: nodeAddress ? "pointer" : "not-allowed"
+                              background: "white", 
+                              color: "#667eea",
+                              padding: "0.4rem 0.8rem",
+                              fontSize: "0.85rem",
+                              marginLeft: "0.5rem"
                             }}
                           >
                             {t("quickStart.step3Action")}
                           </button>
                         )}
                       </div>
-                      <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.9 }}>
-                        {(isMining || clusterMining) 
-                          ? t("quickStart.miningStarted", { 
-                              hashRate: clusterMining && clusterStats.totalHashRate 
-                                ? (clusterStats.totalHashRate / 1000).toFixed(2) + " K hash/s"
-                                : miningStats.hashRate 
-                                ? (miningStats.hashRate / 1000).toFixed(2) + " K hash/s"
-                                : t("mining.calculating")
-                            })
-                          : t("quickStart.miningNotStarted")}
-                      </p>
                     </div>
                   </div>
                 </div>
@@ -1889,6 +2734,73 @@ function App() {
                         : "⚠️ Local fork conflict detected, will auto-rollback and resync."}
                     </div>
                   )}
+                  
+                  {/* Phase 29: Local State Sync Status */}
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #ddd" }}>
+                    <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+                      {locale === "zh" ? "本地状态同步" : "Local State Sync"}
+                    </h3>
+                    <div className="status-item">
+                      <span className="label">{locale === "zh" ? "同步状态" : "Sync Status"}:</span>
+                      <span className="value">
+                        {localStateSyncInfo.syncStatus === "synced" ? (
+                          <span style={{ color: "#28a745" }}>✓ {locale === "zh" ? "已同步" : "Synced"}</span>
+                        ) : localStateSyncInfo.syncStatus === "syncing" ? (
+                          <span style={{ color: "#ffc107" }}>⟳ {locale === "zh" ? "同步中..." : "Syncing..."}</span>
+                        ) : localStateSyncInfo.syncStatus === "out_of_sync" ? (
+                          <span style={{ color: "#dc3545" }}>⚠ {locale === "zh" ? "未同步" : "Out of Sync"}</span>
+                        ) : (
+                          <span style={{ color: "#dc3545" }}>✗ {locale === "zh" ? "错误" : "Error"}</span>
+                        )}
+                      </span>
+                    </div>
+                    {localStateSyncInfo.lastSyncEpoch > 0 && (
+                      <>
+                        <div className="status-item">
+                          <span className="label">{locale === "zh" ? "最后同步高度" : "Last Sync Height"}:</span>
+                          <span className="value">{localStateSyncInfo.lastSyncEpoch}</span>
+                        </div>
+                        <div className="status-item">
+                          <span className="label">{locale === "zh" ? "最后同步时间" : "Last Sync Time"}:</span>
+                          <span className="value" style={{ fontSize: "0.85rem" }}>
+                            {new Date(localStateSyncInfo.lastSyncTime).toLocaleTimeString()}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {localStateSyncInfo.error && (
+                      <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f8d7da", borderRadius: "4px", border: "1px solid #dc3545", fontSize: "0.85rem", color: "#721c24" }}>
+                        {locale === "zh" ? "错误" : "Error"}: {localStateSyncInfo.error}
+                      </div>
+                    )}
+                    
+                    {/* Consistency Check */}
+                    <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #eee" }}>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "一致性检查" : "Consistency Check"}:</span>
+                        <span className="value">
+                          {consistencyCheck.isConsistent ? (
+                            <span style={{ color: "#28a745" }}>✓ {locale === "zh" ? "一致" : "Consistent"}</span>
+                          ) : (
+                            <span style={{ color: "#dc3545" }}>✗ {locale === "zh" ? "不一致" : "Inconsistent"}</span>
+                          )}
+                        </span>
+                      </div>
+                      {!consistencyCheck.isConsistent && (
+                        <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.25rem" }}>
+                          {!consistencyCheck.tipHashMatch && (
+                            <div>⚠ {locale === "zh" ? "Tip Hash 不匹配" : "Tip Hash mismatch"}</div>
+                          )}
+                          {!consistencyCheck.heightMatch && (
+                            <div>⚠ {locale === "zh" ? "高度不匹配" : "Height mismatch"}</div>
+                          )}
+                          {!consistencyCheck.stateCommitmentMatch && (
+                            <div>⚠ {locale === "zh" ? "State Commitment 不匹配" : "State Commitment mismatch"}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1958,6 +2870,62 @@ function App() {
                       )}
                     </span>
                   </div>
+                  {/* Phase 30: Mining Ready Status */}
+                  {miningGuardResult && (() => {
+                    // Use static import at top of file or handle async
+                    // For now, we'll compute message directly
+                    const isOk = miningGuardResult.ok;
+                    let message = "";
+                    if (isOk) {
+                      message = locale === "zh" ? "✅ 挖矿就绪：安全" : "✅ Mining Ready: SAFE";
+                    } else {
+                      switch (miningGuardResult.code) {
+                        case "NOT_SYNCED":
+                          message = locale === "zh" 
+                            ? `🚫 挖矿就绪：已阻止 - 节点未同步（本地高度: ${miningGuardResult.details?.localHeight || 0}）`
+                            : `🚫 Mining Ready: BLOCKED - Node not synced (local height: ${miningGuardResult.details?.localHeight || 0})`;
+                          break;
+                        case "INSUFFICIENT_PEERS":
+                          message = locale === "zh"
+                            ? `🚫 挖矿就绪：已阻止 - 对等节点不足（${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3}）`
+                            : `🚫 Mining Ready: BLOCKED - Insufficient peers (${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3})`;
+                          break;
+                        case "NOT_FINALIZED":
+                          message = locale === "zh"
+                            ? `⚠️ 挖矿就绪：降级 - 未最终确认的区块过多`
+                            : `⚠️ Mining Ready: DEGRADED - Too many unfinalized blocks`;
+                          break;
+                        case "NETWORK_MISMATCH":
+                          message = locale === "zh"
+                            ? `🚫 挖矿就绪：已阻止 - 网络参数不匹配`
+                            : `🚫 Mining Ready: BLOCKED - Network parameters mismatch`;
+                          break;
+                        case "NO_VALID_WALLET":
+                          message = locale === "zh"
+                            ? `🚫 挖矿就绪：已阻止 - 未选择有效的挖矿钱包`
+                            : `🚫 Mining Ready: BLOCKED - No valid mining wallet selected`;
+                          break;
+                        case "FOLLOWER_MODE":
+                          message = locale === "zh"
+                            ? `🚫 挖矿就绪：已阻止 - 本窗口为只读模式（Follower）`
+                            : `🚫 Mining Ready: BLOCKED - This window is read-only (Follower)`;
+                          break;
+                        default:
+                          message = miningGuardResult.reason || (locale === "zh" ? "🚫 挖矿就绪：已阻止" : "🚫 Mining Ready: BLOCKED");
+                      }
+                    }
+                    return (
+                      <div className="status-item" style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #e9ecef" }}>
+                        <span className="label">{locale === "zh" ? "挖矿就绪:" : "Mining Ready:"}</span>
+                        <span className="value" style={{ 
+                          color: isOk ? "#28a745" : miningGuardResult.code === "NOT_FINALIZED" ? "#ffc107" : "#dc3545",
+                          fontWeight: "bold"
+                        }}>
+                          {message}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Wallet Status Card */}
@@ -1970,68 +2938,12 @@ function App() {
                     </span>
                   </div>
                   {nodeAddress && chainContext && (
-                    <>
-                      <div className="status-item">
-                        <span className="label">{t("wallet.balance")}:</span>
-                        <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
-                          {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
-                        </span>
-                      </div>
-                      {/* Balance Debug Info */}
-                      <div className="status-item" style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
-                        <details style={{ cursor: "pointer" }}>
-                          <summary style={{ userSelect: "none" }}>
-                            {locale === "zh" ? "🔍 余额诊断" : "🔍 Balance Debug"}
-                          </summary>
-                          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f8f9fa", borderRadius: "4px", fontFamily: "monospace", fontSize: "0.7rem" }}>
-                            <div><strong>{locale === "zh" ? "地址" : "Address"}:</strong> {nodeAddress}</div>
-                            <div><strong>{locale === "zh" ? "区块高度" : "Block Height"}:</strong> {tip?.header.height ?? 0}</div>
-                            <div><strong>{locale === "zh" ? "区块数量" : "Block Count"}:</strong> {chainContext.storage.getAllBlocks().length}</div>
-                            <div><strong>{locale === "zh" ? "余额 (balances namespace)" : "Balance (balances namespace)"}:</strong> {chainContext.indexState.get("balances", nodeAddress) ?? (locale === "zh" ? "未设置" : "not set")}</div>
-                            <div><strong>{locale === "zh" ? "P2P 连接" : "P2P Connection"}:</strong> {isP2PConnected ? (peerCount > 0 ? (locale === "zh" ? `已连接 (${peerCount} 个节点)` : `Connected (${peerCount} peers)`) : (locale === "zh" ? "未连接" : "Not connected")) : (locale === "zh" ? "未初始化" : "Not initialized")}</div>
-                            {tip && (
-                              <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                                <div><strong>{locale === "zh" ? "最新区块哈希" : "Latest Block Hash"}:</strong> {tip.hash.substring(0, 20)}...</div>
-                                <div><strong>{locale === "zh" ? "最新区块时间" : "Latest Block Time"}:</strong> {new Date(tip.header.timestamp * 1000).toLocaleString()}</div>
-                              </div>
-                            )}
-                            {/* Force Sync Button */}
-                            {isP2PConnected && peerCount > 0 && chainContext.p2p && (
-                              <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      const localTip = chainContext.storage.getTip();
-                                      const localHeight = localTip?.header.height ?? -1;
-                                      // Request blocks from network
-                                      chainContext.p2p!.broadcast("REQUEST_BLOCKS", {
-                                        fromHeight: localHeight + 1,
-                                        toHeight: localHeight + 100, // Request up to 100 blocks ahead
-                                      });
-                                      setError(locale === "zh" ? "已请求同步区块，请等待..." : "Requested block sync, please wait...");
-                                      setTimeout(() => setError(""), 3000);
-                                    } catch (err) {
-                                      setError(err instanceof Error ? err.message : "Failed to request sync");
-                                    }
-                                  }}
-                                  style={{
-                                    padding: "0.25rem 0.5rem",
-                                    fontSize: "0.7rem",
-                                    background: "#667eea",
-                                    color: "white",
-                                    border: "none",
-                                    borderRadius: "3px",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  {locale === "zh" ? "🔄 强制同步区块" : "🔄 Force Sync Blocks"}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </details>
-                      </div>
-                    </>
+                    <div className="status-item">
+                      <span className="label">{t("wallet.balance")}:</span>
+                      <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
+                        {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                      </span>
+                    </div>
                   )}
                   <div className="status-item">
                     <span className="label">{t("wallet.nodeId")}:</span>
@@ -2042,36 +2954,38 @@ function App() {
                 </div>
               </div>
 
-              {/* Latest Block */}
+              {/* Latest Block - Compact View */}
               {tip && (
                 <div className="status-card">
                   <h2>📦 {t("chain.latestBlock")}</h2>
-                  <div className="status-item">
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem" }}>
+                    <div className="status-item">
+                      <span className="label">{t("chain.height")}:</span>
+                      <span className="value" style={{ fontWeight: "bold" }}>{tip.header.height}</span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">{t("chain.transactions")}:</span>
+                      <span className="value">{tip.txs.length}</span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">{t("chain.difficulty")}:</span>
+                      <span className="value">{tip.header.difficulty}</span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">{t("chain.nonce")}:</span>
+                      <span className="value" style={{ fontSize: "0.85rem" }}>{tip.header.nonce.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #e9ecef" }}>
                     <span className="label">{t("chain.hash")}:</span>
-                    <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
-                      {tip.hash.substring(0, 32)}...
+                    <span className="value" style={{ fontSize: "0.75rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                      {tip.hash.substring(0, 24)}...
                     </span>
                   </div>
-                  <div className="status-item">
-                    <span className="label">{t("chain.height")}:</span>
-                    <span className="value">{tip.header.height}</span>
-                  </div>
-                  <div className="status-item">
-                    <span className="label">{t("chain.transactions")}:</span>
-                    <span className="value">{tip.txs.length}</span>
-                  </div>
-                  <div className="status-item">
-                    <span className="label">{t("chain.difficulty")}:</span>
-                    <span className="value">{tip.header.difficulty}</span>
-                  </div>
-                  <div className="status-item">
-                    <span className="label">{t("chain.nonce")}:</span>
-                    <span className="value">{tip.header.nonce.toLocaleString()}</span>
-                  </div>
                   {tip.header.stateCommitment && (
-                    <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                    <div className="status-item" style={{ marginTop: "0.5rem" }}>
                       <span className="label">{t("chain.stateCommitment")}:</span>
-                      <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                      <span className="value" style={{ fontSize: "0.75rem", wordBreak: "break-all", fontFamily: "monospace" }}>
                         {tip.header.stateCommitment.substring(0, 24)}...
                       </span>
                     </div>
@@ -2172,6 +3086,67 @@ function App() {
           {/* Mining Tab */}
           {activeTab === "mining" && (
             <div className="tab-content active">
+              {/* Phase 30: Mining Effectiveness Stats */}
+              {_miningEffectiveness && _miningEffectiveness.totalBlocksMined > 0 && (() => {
+                const stats = _miningEffectiveness;
+                // Check if concerning: acceptedBlocks === 0 && rejectedBlocks > 0 && totalBlocksMined >= 3
+                const isConcerning = stats.acceptedBlocks === 0 && stats.rejectedBlocks > 0 && stats.totalBlocksMined >= 3;
+                
+                if (stats.totalBlocksMined > 0) {
+                  return (
+                    <div className="status-card" style={{
+                      background: isConcerning ? "#fff3cd" : "#d4edda",
+                      border: `2px solid ${isConcerning ? "#ffc107" : "#28a745"}`,
+                      marginBottom: "1rem"
+                    }}>
+                      <h2>📊 {locale === "zh" ? "挖矿有效性统计" : "Mining Effectiveness"}</h2>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "已接受区块:" : "Accepted Blocks:"}</span>
+                        <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
+                          {stats.acceptedBlocks}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "拒绝/孤块:" : "Rejected/Orphaned:"}</span>
+                        <span className="value" style={{ color: "#dc3545", fontWeight: "bold" }}>
+                          {stats.rejectedBlocks}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "总挖矿数:" : "Total Mined:"}</span>
+                        <span className="value">{stats.totalBlocksMined}</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "有效率:" : "Effectiveness:"}</span>
+                        <span className="value" style={{ 
+                          fontSize: "1.2rem", 
+                          fontWeight: "bold",
+                          color: stats.effectivenessRate >= 50 ? "#28a745" : stats.effectivenessRate >= 10 ? "#ffc107" : "#dc3545"
+                        }}>
+                          {stats.effectivenessRate.toFixed(1)}%
+                        </span>
+                      </div>
+                      {isConcerning && (
+                        <div style={{
+                          marginTop: "0.75rem",
+                          padding: "0.75rem",
+                          background: "#fff3cd",
+                          borderRadius: "4px",
+                          border: "1px solid #ffc107"
+                        }}>
+                          <strong style={{ color: "#856404" }}>
+                            ⚠️ {locale === "zh" 
+                              ? "警告：你的节点可能在错误链或孤立网络上挖矿，请检查网络连接和同步状态。" 
+                              : "Warning: Your node may be mining on the wrong chain or isolated network. Please check network connection and sync status."}
+                          </strong>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+              
               {/* Mining Guide */}
               {!isMining && !clusterMining && (
                 <div className="status-card" style={{ 
@@ -2325,8 +3300,10 @@ function App() {
                               type="checkbox"
                               checked={autoMining}
                               onChange={(e) => {
-                                setAutoMining(e.target.checked);
-                                if (e.target.checked && chainContext && !isMining && !clusterMining) {
+                                const newValue = e.target.checked;
+                                setAutoMining(newValue);
+                                // State will be saved automatically by useEffect
+                                if (newValue && chainContext && !isMining && !clusterMining) {
                                   setTimeout(() => handleStartMining(), 500);
                                 }
                               }}
@@ -4133,8 +5110,361 @@ function App() {
             </div>
           )}
 
+          {/* Tools Tab */}
+          {activeTab === "tools" && (
+            <div className="tab-content active">
+              <div className="status-card">
+                <h2>{locale === "zh" ? "🔧 工具" : "🔧 Tools"}</h2>
+                <p style={{ marginBottom: "1.5rem", color: "#666" }}>
+                  {locale === "zh" 
+                    ? "用于处理本地存储引起的问题和链数据管理" 
+                    : "Tools for handling local storage issues and chain data management"}
+                </p>
+
+                {/* Storage Information */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ marginBottom: "1rem" }}>
+                    {locale === "zh" ? "📊 存储信息" : "📊 Storage Information"}
+                  </h3>
+                  <div style={{ 
+                    background: "#f8f9fa", 
+                    padding: "1rem", 
+                    borderRadius: "6px",
+                    marginBottom: "1rem"
+                  }}>
+                    {(() => {
+                      const chainBlocksKey = "indexerchain_blocks_v1";
+                      const snapshotsMetaKey = "indexerchain_snapshots_meta";
+                      const snapshotKeys = Object.keys(localStorage).filter(k => k.startsWith("indexerchain_snapshot_"));
+                      
+                      const chainBlocksData = localStorage.getItem(chainBlocksKey);
+                      const snapshotsMetaData = localStorage.getItem(snapshotsMetaKey);
+                      
+                      let totalSize = 0;
+                      let chainBlocksSize = 0;
+                      let snapshotsSize = 0;
+                      let snapshotsMetaSize = 0;
+                      
+                      if (chainBlocksData) {
+                        chainBlocksSize = new Blob([chainBlocksData]).size;
+                        totalSize += chainBlocksSize;
+                      }
+                      
+                      if (snapshotsMetaData) {
+                        snapshotsMetaSize = new Blob([snapshotsMetaData]).size;
+                        totalSize += snapshotsMetaSize;
+                      }
+                      
+                      snapshotKeys.forEach(key => {
+                        const data = localStorage.getItem(key);
+                        if (data) {
+                          const size = new Blob([data]).size;
+                          snapshotsSize += size;
+                          totalSize += size;
+                        }
+                      });
+                      
+                      const formatSize = (bytes: number) => {
+                        if (bytes < 1024) return bytes + " B";
+                        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+                        return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+                      };
+                      
+                      return (
+                        <div style={{ display: "grid", gap: "0.75rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>{locale === "zh" ? "链区块数据:" : "Chain Blocks:"}</span>
+                            <strong>{formatSize(chainBlocksSize)}</strong>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>{locale === "zh" ? "快照元数据:" : "Snapshots Metadata:"}</span>
+                            <strong>{formatSize(snapshotsMetaSize)}</strong>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>{locale === "zh" ? `快照数据 (${snapshotKeys.length}):` : `Snapshots (${snapshotKeys.length}):`}</span>
+                            <strong>{formatSize(snapshotsSize)}</strong>
+                          </div>
+                          <div style={{ 
+                            display: "flex", 
+                            justifyContent: "space-between",
+                            paddingTop: "0.75rem",
+                            borderTop: "2px solid #dee2e6",
+                            marginTop: "0.5rem"
+                          }}>
+                            <span style={{ fontWeight: "bold" }}>
+                              {locale === "zh" ? "总计:" : "Total:"}
+                            </span>
+                            <strong style={{ fontSize: "1.1rem", color: "#667eea" }}>
+                              {formatSize(totalSize)}
+                            </strong>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Chain Data Management */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ marginBottom: "1rem" }}>
+                    {locale === "zh" ? "⛓️ 链数据管理" : "⛓️ Chain Data Management"}
+                  </h3>
+                  <div style={{ display: "grid", gap: "1rem" }}>
+                    <div style={{ 
+                      background: "#fff3cd", 
+                      padding: "1rem", 
+                      borderRadius: "6px",
+                      border: "1px solid #ffc107"
+                    }}>
+                      <h4 style={{ marginBottom: "0.5rem" }}>
+                        {locale === "zh" ? "重置链" : "Reset Chain"}
+                      </h4>
+                      <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#856404" }}>
+                        {locale === "zh" 
+                          ? "清除所有链数据和快照，然后从创世区块重新开始。用于修复链状态损坏或数据不一致问题。" 
+                          : "Clear all chain data and snapshots, then start fresh from genesis block. Use this to fix chain state corruption or data inconsistency issues."}
+                      </p>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={handleResetChain}
+                        style={{ 
+                          backgroundColor: "#dc3545",
+                          color: "white",
+                          border: "none",
+                          padding: "0.75rem 1.5rem",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontWeight: "bold"
+                        }}
+                      >
+                        {locale === "zh" ? "🔄 重置链" : "🔄 Reset Chain"}
+                      </button>
+                    </div>
+
+                    <div style={{ 
+                      background: "#d1ecf1", 
+                      padding: "1rem", 
+                      borderRadius: "6px",
+                      border: "1px solid #bee5eb"
+                    }}>
+                      <h4 style={{ marginBottom: "0.5rem" }}>
+                        {locale === "zh" ? "清除快照" : "Clear Snapshots"}
+                      </h4>
+                      <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#0c5460" }}>
+                        {locale === "zh" 
+                          ? "仅清除快照数据，保留链区块数据。下次启动时会从创世区块重建状态。" 
+                          : "Clear only snapshot data, keeping chain blocks. State will be rebuilt from genesis on next startup."}
+                      </p>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={async () => {
+                          if (window.confirm(
+                            locale === "zh" 
+                              ? "确定要清除所有快照吗？下次启动时会从创世区块重建状态。" 
+                              : "Clear all snapshots? Next startup will rebuild from genesis."
+                          )) {
+                            clearAllSnapshots();
+                            setError(
+                              locale === "zh" 
+                                ? "✅ 所有快照已清除。下次启动时会从创世区块重建状态。" 
+                                : "✅ All snapshots cleared. Next startup will rebuild from genesis."
+                            );
+                            setTimeout(() => setError(""), 3000);
+                            window.location.reload();
+                          }
+                        }}
+                        style={{ 
+                          backgroundColor: "#17a2b8",
+                          color: "white",
+                          border: "none",
+                          padding: "0.75rem 1.5rem",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontWeight: "bold"
+                        }}
+                      >
+                        {locale === "zh" ? "🗑️ 清除快照" : "🗑️ Clear Snapshots"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Common Issues & Fixes */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ marginBottom: "1rem" }}>
+                    {locale === "zh" ? "🔍 常见问题修复" : "🔍 Common Issues & Fixes"}
+                  </h3>
+                  <div style={{ display: "grid", gap: "1rem" }}>
+                    <div style={{ 
+                      background: "#f8d7da", 
+                      padding: "1rem", 
+                      borderRadius: "6px",
+                      border: "1px solid #f5c6cb"
+                    }}>
+                      <h4 style={{ marginBottom: "0.5rem" }}>
+                        {locale === "zh" ? "余额不足错误" : "Insufficient Balance Error"}
+                      </h4>
+                      <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#721c24" }}>
+                        {locale === "zh" 
+                          ? "如果遇到 'Insufficient balance' 错误，通常表示链状态损坏或快照不一致。点击下面的按钮清除所有数据并重新开始。" 
+                          : "If you encounter 'Insufficient balance' errors, it usually means chain state corruption or snapshot inconsistency. Click the button below to clear all data and start fresh."}
+                      </p>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          if (window.confirm(
+                            locale === "zh" 
+                              ? "这将清除所有链数据和快照。确定继续吗？" 
+                              : "This will clear all chain data and snapshots. Continue?"
+                          )) {
+                            localStorage.removeItem("indexerchain_blocks_v1");
+                            localStorage.removeItem("indexerchain_snapshots_meta");
+                            Object.keys(localStorage)
+                              .filter(k => k.startsWith("indexerchain_snapshot_"))
+                              .forEach(k => localStorage.removeItem(k));
+                            setError(
+                              locale === "zh" 
+                                ? "✅ 已清除所有数据。正在重新加载..." 
+                                : "✅ All data cleared. Reloading..."
+                            );
+                            setTimeout(() => window.location.reload(), 1000);
+                          }
+                        }}
+                        style={{ 
+                          backgroundColor: "#dc3545",
+                          color: "white",
+                          border: "none",
+                          padding: "0.75rem 1.5rem",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontWeight: "bold"
+                        }}
+                      >
+                        {locale === "zh" ? "🔧 修复余额错误" : "🔧 Fix Balance Error"}
+                      </button>
+                    </div>
+
+                    <div style={{ 
+                      background: "#fff3cd", 
+                      padding: "1rem", 
+                      borderRadius: "6px",
+                      border: "1px solid #ffc107"
+                    }}>
+                      <h4 style={{ marginBottom: "0.5rem" }}>
+                        {locale === "zh" ? "链初始化失败" : "Chain Initialization Failed"}
+                      </h4>
+                      <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#856404" }}>
+                        {locale === "zh" 
+                          ? "如果链初始化失败，可能是数据损坏。尝试清除所有数据并重新开始。" 
+                          : "If chain initialization fails, it may be due to data corruption. Try clearing all data and starting fresh."}
+                      </p>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={handleResetChain}
+                        style={{ 
+                          backgroundColor: "#ffc107",
+                          color: "#333",
+                          border: "none",
+                          padding: "0.75rem 1.5rem",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontWeight: "bold"
+                        }}
+                      >
+                        {locale === "zh" ? "🔧 修复初始化错误" : "🔧 Fix Initialization Error"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Storage Cleanup */}
+                <div style={{ marginBottom: "2rem" }}>
+                  <h3 style={{ marginBottom: "1rem" }}>
+                    {locale === "zh" ? "🧹 存储清理" : "🧹 Storage Cleanup"}
+                  </h3>
+                  <div style={{ 
+                    background: "#e7f3ff", 
+                    padding: "1rem", 
+                    borderRadius: "6px",
+                    border: "1px solid #b3d9ff"
+                  }}>
+                    <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#004085" }}>
+                      {locale === "zh" 
+                        ? "检查并清理未使用的本地存储数据。这不会影响链数据。" 
+                        : "Check and clean up unused local storage data. This won't affect chain data."}
+                    </p>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        const allKeys = Object.keys(localStorage);
+                        const chainKeys = allKeys.filter(k => 
+                          k.startsWith("indexerchain_") || 
+                          k.startsWith("browser_node_") ||
+                          k.startsWith("node_address_")
+                        );
+                        const otherKeys = allKeys.filter(k => !chainKeys.includes(k));
+                        
+                        if (otherKeys.length === 0) {
+                          alert(
+                            locale === "zh" 
+                              ? "没有发现未使用的存储数据。" 
+                              : "No unused storage data found."
+                          );
+                          return;
+                        }
+                        
+                        if (window.confirm(
+                          locale === "zh" 
+                            ? `发现 ${otherKeys.length} 个非链相关的存储项。是否清除？` 
+                            : `Found ${otherKeys.length} non-chain storage items. Clear them?`
+                        )) {
+                          otherKeys.forEach(k => localStorage.removeItem(k));
+                          alert(
+                            locale === "zh" 
+                              ? `✅ 已清除 ${otherKeys.length} 个存储项。` 
+                              : `✅ Cleared ${otherKeys.length} storage items.`
+                          );
+                          window.location.reload();
+                        }
+                      }}
+                      style={{ 
+                        backgroundColor: "#17a2b8",
+                        color: "white",
+                        border: "none",
+                        padding: "0.75rem 1.5rem",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        fontWeight: "bold"
+                      }}
+                    >
+                      {locale === "zh" ? "🧹 清理未使用的存储" : "🧹 Clean Unused Storage"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Warning */}
+                <div style={{ 
+                  background: "#f8d7da", 
+                  padding: "1rem", 
+                  borderRadius: "6px",
+                  border: "1px solid #f5c6cb",
+                  marginTop: "2rem"
+                }}>
+                  <strong style={{ color: "#721c24" }}>
+                    ⚠️ {locale === "zh" ? "警告" : "Warning"}
+                  </strong>
+                  <p style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#721c24" }}>
+                    {locale === "zh" 
+                      ? "这些操作会永久删除数据。请确保您了解操作的后果。建议在执行前备份重要数据。" 
+                      : "These operations will permanently delete data. Make sure you understand the consequences. It's recommended to backup important data before proceeding."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Other tabs placeholder - to be implemented */}
-          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && activeTab !== "token" && activeTab !== "privacy" && activeTab !== "runtime" && (
+          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && activeTab !== "token" && activeTab !== "privacy" && activeTab !== "tools" && activeTab !== "runtime" && (
             <div className="tab-content active">
               <div className="status-card">
                 <h2>🚧 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Tab</h2>

@@ -298,7 +298,11 @@ export class IndexState {
     if (!isSystemAddress) {
       const fromBalance = this.getBalance(from);
       if (fromBalance < amount) {
-        throw new Error(`Insufficient balance: ${fromBalance} < ${amount}`);
+        // Enhanced error message with more context
+        throw new Error(
+          `Insufficient balance: ${fromBalance.toFixed(6)} < ${amount.toFixed(6)} ` +
+          `(from: ${from}, to: ${to}, amount: ${amount.toFixed(6)} IDC)`
+        );
       }
       // Deduct from sender (only for non-system addresses)
       this.setBalance(from, fromBalance - amount);
@@ -319,9 +323,18 @@ export class IndexState {
    * Phase 7: Pass ownerAddress for TRANSFER operations
    */
   applyTx(tx: Tx): void {
-    for (const op of tx.ops) {
-      // Phase 7: Pass ownerAddress for TRANSFER operations
-      this.applyOperation(op, tx.ownerAddress);
+    try {
+      for (const op of tx.ops) {
+        // Phase 7: Pass ownerAddress for TRANSFER operations
+        this.applyOperation(op, tx.ownerAddress);
+      }
+    } catch (error) {
+      // Enhanced error with transaction context
+      const txIdShort = tx.txId ? tx.txId.substring(0, 16) + "..." : "unknown";
+      const owner = tx.ownerAddress || "unknown";
+      throw new Error(
+        `Failed to apply transaction ${txIdShort} (owner: ${owner}): ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -329,8 +342,24 @@ export class IndexState {
    * Apply all transactions in a block
    */
   applyBlock(block: Block): void {
-    for (const tx of block.txs) {
-      this.applyTx(tx);
+    try {
+      for (let i = 0; i < block.txs.length; i++) {
+        const tx = block.txs[i];
+        try {
+          this.applyTx(tx);
+        } catch (error) {
+          // Enhanced error with block and transaction context
+          const txIdShort = tx.txId ? tx.txId.substring(0, 16) + "..." : "unknown";
+          throw new Error(
+            `Failed to apply transaction ${i} (${txIdShort}) in block ${block.header.height}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+    } catch (error) {
+      // Re-throw with block context
+      throw new Error(
+        `Failed to apply block at height ${block.header.height}: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

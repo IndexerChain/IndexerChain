@@ -425,7 +425,6 @@ export function WalletBackupPanel({
               }}
               style={{ width: "100%", padding: "0.5rem" }}
               disabled={isImporting}
-              autoFocus
             />
             <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
               {t("wallet.passwordHint")}

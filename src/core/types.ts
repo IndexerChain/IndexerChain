@@ -149,6 +149,14 @@ export interface ChainParams {
   finalityThreshold?: number; // Threshold ratio for finality (2/3), default 0.67
   finalityVoteTimeoutMs?: number; // Timeout for collecting votes, e.g., 5000 (5 seconds)
   finalityCommitteeRoundInterval?: number; // Blocks between committee re-election, e.g., 10
+  
+  // Phase 30: Global Consistency Sentinel parameters
+  globalSentinelEnabled?: boolean; // Whether to enable global consistency sentinel, default true
+  globalDriftCheckIntervalMs?: number; // Drift check interval in milliseconds, default 5000
+  globalDriftCriticalBlocks?: number; // Critical drift threshold in blocks, default 10
+  globalDriftMinorBlocks?: number; // Minor drift threshold in blocks, default 3
+  globalMinPeersForAssessment?: number; // Minimum peers required for assessment, default 3
+  globalMinReputationForVoting?: number; // Minimum reputation score for voting, default 0
 }
 
 /**
@@ -254,6 +262,53 @@ export interface FinalityVote {
   signerAddress: Address; // Address of the committee member
   signature: string; // ECDSA signature (base64 encoded)
   timestamp: number; // Vote timestamp in milliseconds
+}
+
+/**
+ * Phase 30: Global Consistency Sentinel types
+ * 
+ * Tracks peer views and assesses local node drift from network majority
+ */
+
+/**
+ * Global view summary from a peer
+ */
+export interface GlobalViewSummary {
+  peerId: string;
+  height: number;
+  tipHash: string;
+  finalizedHeight: number;
+  stateCommitment?: string;
+  reputationScore?: number;
+  lastSeenAt: number;
+}
+
+/**
+ * Drift assessment result
+ */
+export interface DriftAssessment {
+  localHeight: number;
+  localTipHash: string;
+  localFinalizedHeight: number;
+  peerCount: number;
+  majorityHeight: number;
+  majorityTipHash: string;
+  majorityFinalizedHeight: number;
+  driftBlocks: number; // localHeight 与 majorityHeight 差
+  forkSuspected: boolean; // localTipHash != majorityTipHash 且高度接近
+  healthLevel: "HEALTHY" | "MINOR_DRIFT" | "CRITICAL_DRIFT";
+  reason: string; // 用于 UI 展示
+}
+
+/**
+ * Global view response message payload
+ */
+export interface GlobalViewResponse {
+  height: number;
+  tipHash: string;
+  finalizedHeight: number;
+  stateCommitment?: string;
+  reputationScore?: number;
 }
 
 /**
