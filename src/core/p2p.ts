@@ -375,9 +375,15 @@ export class BrowserP2PNode implements P2PNode {
           // Note: This is set when we receive the 'peers' response
           // We'll store it and use it for quorum scoring
           if (typeof window !== "undefined") {
-            const { getQuorumManager } = require("./quorumManager.js");
-            const quorumManager = getQuorumManager();
-            quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
+            (async () => {
+              try {
+                const { getQuorumManager } = await import("./quorumManager.js");
+                const quorumManager = getQuorumManager();
+                quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
+              } catch (error) {
+                console.warn("[P2P] Failed to set IP hash:", error);
+              }
+            })();
           }
         }
         
@@ -386,11 +392,17 @@ export class BrowserP2PNode implements P2PNode {
           // Signal server may send IP hashes for all peers
           const peerIPHashes = message.peerIPHashes;
           if (typeof window !== "undefined") {
-            const { getQuorumManager } = require("./quorumManager.js");
-            const quorumManager = getQuorumManager();
-            for (const [peerId, ipHash] of Object.entries(peerIPHashes)) {
-              quorumManager.setPeerIPHash(peerId, ipHash as string);
-            }
+            (async () => {
+              try {
+                const { getQuorumManager } = await import("./quorumManager.js");
+                const quorumManager = getQuorumManager();
+                for (const [peerId, ipHash] of Object.entries(peerIPHashes)) {
+                  quorumManager.setPeerIPHash(peerId, ipHash as string);
+                }
+              } catch (error) {
+                console.warn("[P2P] Failed to set peer IP hashes:", error);
+              }
+            })();
           }
         }
         

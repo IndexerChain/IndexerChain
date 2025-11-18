@@ -18,6 +18,17 @@ export interface RuntimeConfig {
   enableMultiTabDetection: boolean;
 }
 
+/**
+ * Phase 37-D: Runtime mining profile
+ * 
+ * Provides recommended worker count and duty cycle based on current runtime conditions
+ */
+export interface RuntimeMiningProfile {
+  workerCount: number;
+  dutyCycle: number; // 0.1 ~ 1.0
+  mode: "power_save" | "balanced" | "performance" | "extreme";
+}
+
 export interface PerformanceMetrics {
   eventLoopLag: number; // ms
   fps: number;
@@ -274,6 +285,9 @@ export class RuntimeManager {
   private deviceCapability: DeviceCapability;
   private crashWindow: number[] = []; // Timestamps of crashes in last minute
   private safetyCheckInterval: number | null = null;
+  
+  // Phase 37-D: Runtime change callbacks
+  private runtimeChangeCallbacks: Set<(profile: RuntimeMiningProfile) => void> = new Set();
 
   constructor(config?: Partial<RuntimeConfig>) {
     this.deviceCapability = detectDeviceCapability();
@@ -339,28 +353,33 @@ export class RuntimeManager {
     if (document.hidden) {
       // Tab is in background
       if (this.config.backgroundMode === "auto") {
-        // Auto-reduce duty cycle and workers
-        this.config.dutyCycle = Math.min(this.config.dutyCycle, 0.1);
-        // Emit event for UI to handle worker reduction
+        // Phase 37-D: Auto-reduce duty cycle and notify listeners
+        this.config.dutyCycle = Math.min(this.config.dutyCycle, 0.25);
+        // Notify listeners of profile change
+        this.notifyRuntimeChange();
       }
     } else {
       // Tab is in foreground - restore previous settings
-      // (UI should handle this)
+      // Phase 37-D: Notify listeners to restore profile
+      this.notifyRuntimeChange();
     }
   }
 
   private performSafetyCheck(): void {
     const metrics = this.performanceMetrics;
     const issues: string[] = [];
+    let shouldReduceProfile = false;
 
     // Check event loop lag
     if (metrics.eventLoopLag > 200) {
       issues.push(`Event loop lag: ${metrics.eventLoopLag.toFixed(1)}ms`);
+      shouldReduceProfile = true;
     }
 
     // Check FPS
     if (metrics.fps < 20) {
       issues.push(`Low FPS: ${metrics.fps}`);
+      shouldReduceProfile = true;
     }
 
     // Check crash frequency
@@ -371,11 +390,29 @@ export class RuntimeManager {
     
     if (recentCrashes.length > 3) {
       issues.push(`High crash rate: ${recentCrashes.length} crashes/min`);
+      shouldReduceProfile = true;
     }
 
     if (issues.length > 0) {
       console.warn("[RuntimeManager] Safety issues detected:", issues);
-      // Emit event or callback for UI to handle
+      // Phase 37-D: Notify listeners to reduce profile if needed
+      if (shouldReduceProfile) {
+        this.notifyRuntimeChange();
+      }
+    }
+  }
+
+  /**
+   * Phase 37-D: Notify all listeners of runtime profile change
+   */
+  private notifyRuntimeChange(): void {
+    const profile = this.getRecommendedProfile();
+    for (const callback of this.runtimeChangeCallbacks) {
+      try {
+        callback(profile);
+      } catch (error) {
+        console.error("[RuntimeManager] Error in runtime change callback:", error);
+      }
     }
   }
 
@@ -422,6 +459,70 @@ export class RuntimeManager {
     await this.wakeLockManager.release();
   }
 
+  /**
+   * Phase 37-D: Get recommended mining profile based on current runtime conditions
+   */
+  getRecommendedProfile(): RuntimeMiningProfile {
+    const metrics = this.performanceMetrics;
+    const isBackground = typeof document !== "undefined" && document.hidden;
+    const device = this.deviceCapability;
+    
+    let mode: RuntimeMiningProfile["mode"];
+    let workerCount: number;
+    let dutyCycle: number;
+
+    // Determine mode based on conditions
+    if (isBackground) {
+      // Background mode: power save
+      mode = "power_save";
+      workerCount = Math.max(1, Math.floor(device.recommendedWorkers * 0.5));
+      dutyCycle = 0.25;
+    } else if (metrics.eventLoopLag > 100 || metrics.fps < 30) {
+      // Performance issues: balanced mode
+      mode = "balanced";
+      workerCount = Math.max(1, Math.floor(device.recommendedWorkers * 0.75));
+      dutyCycle = 0.5;
+    } else if (metrics.eventLoopLag > 50 || metrics.fps < 50) {
+      // Minor issues: balanced mode
+      mode = "balanced";
+      workerCount = device.recommendedWorkers;
+      dutyCycle = 0.75;
+    } else if (this.crashWindow.length > 5) {
+      // High crash rate: balanced mode
+      mode = "balanced";
+      workerCount = Math.max(1, Math.floor(device.recommendedWorkers * 0.75));
+      dutyCycle = 0.75;
+    } else {
+      // Good conditions: performance or extreme mode
+      const isExtreme = metrics.eventLoopLag < 10 && metrics.fps >= 55 && this.crashWindow.length === 0;
+      mode = isExtreme ? "extreme" : "performance";
+      workerCount = device.recommendedWorkers;
+      dutyCycle = isExtreme ? 1.0 : 0.9;
+    }
+
+    // Clamp values to device limits
+    workerCount = Math.min(workerCount, device.maxWorkers);
+    workerCount = Math.max(1, workerCount);
+    dutyCycle = Math.max(0.1, Math.min(1.0, dutyCycle));
+
+    return {
+      workerCount,
+      dutyCycle,
+      mode,
+    };
+  }
+
+  /**
+   * Phase 37-D: Register callback for runtime profile changes
+   */
+  onRuntimeChange(callback: (profile: RuntimeMiningProfile) => void): () => void {
+    this.runtimeChangeCallbacks.add(callback);
+    // Return unsubscribe function
+    return () => {
+      this.runtimeChangeCallbacks.delete(callback);
+    };
+  }
+
   destroy(): void {
     this.fpsMonitor.stop();
     this.multiTabDetector.destroy();
@@ -429,6 +530,8 @@ export class RuntimeManager {
     if (this.safetyCheckInterval !== null) {
       clearInterval(this.safetyCheckInterval);
     }
+    // Phase 37-D: Clear callbacks
+    this.runtimeChangeCallbacks.clear();
   }
 }
 

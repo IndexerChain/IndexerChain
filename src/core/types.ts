@@ -108,6 +108,22 @@ export interface Block {
 }
 
 /**
+ * Phase 37-C: Compact block header for mining
+ * 
+ * Contains only the fields needed for PoW mining, without the full block.
+ * This reduces message passing overhead between main thread and workers.
+ */
+export interface MiningCompactBlockHeader {
+  version: number;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  timestamp: number;
+  difficulty: number;
+  stateCommitment?: string;
+}
+
+/**
  * Chain parameters
  * 
  * Phase 7: Added blockReward for mining rewards

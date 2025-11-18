@@ -9,27 +9,44 @@
 import type { Block } from "./types.js";
 
 /**
+ * Phase 37-C: Compact block header for mining
+ */
+type MiningCompactBlockHeader = {
+  version: number;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  timestamp: number;
+  difficulty: number;
+  stateCommitment?: string;
+};
+
+/**
  * Worker command types (defined inline to avoid import issues)
  * 
  * Phase 18: Added nonceStart and nonceEnd for cluster mining
+ * Phase 37-A: Added miningEpochId to prevent stale mining results
+ * Phase 37-C: Changed from candidateBlock to header (compact block header)
  */
 type MinerWorkerCommand =
   | {
       type: "START";
-      candidateBlock: Block;
+      header: MiningCompactBlockHeader; // Phase 37-C: Compact block header instead of full block
       difficulty: number;
       maxIterations?: number;
       nonceStart?: number; // Phase 18: Starting nonce
       nonceEnd?: number; // Phase 18: Ending nonce
       dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     }
-  | { type: "STOP" }
+  | { type: "STOP"; miningEpochId?: string } // Phase 37-A: Include epoch ID in STOP
   | { type: "SET_DUTY_CYCLE"; dutyCycle: number }; // Phase 26: Update duty cycle dynamically
 
 /**
  * Worker event types (defined inline to avoid import issues)
  * 
  * Phase 18: Added "exhausted" reason
+ * Phase 37-A: Added miningEpochId to all events
  */
 type MinerWorkerEvent =
   | {
@@ -38,50 +55,71 @@ type MinerWorkerEvent =
       hash: string;
       hashesTried: number;
       startedAt: number;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     }
   | {
       type: "FOUND";
-      block: Block;
+      nonce: number; // Phase 37-C: Only nonce, not full block
       hash: string;
       hashesTried: number;
       startedAt: number;
       finishedAt: number;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     }
   | {
       type: "STOPPED";
       reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
       errorMessage?: string;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
+    }
+  | {
+      type: "EXHAUSTED"; // Phase 37-A: Separate EXHAUSTED event
+      lastNonce: number;
+      hashesTried: number;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
+    }
+  | {
+      type: "ERROR"; // Phase 37-A: Separate ERROR event
+      error: string;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     };
 
 /**
  * Progress event handler
+ * Phase 37-A: Added miningEpochId
  */
 export type MinerProgressHandler = (event: {
   nonce: number;
   hash: string;
   hashesTried: number;
   startedAt: number;
+  miningEpochId?: string; // Phase 37-A: Mining epoch ID
 }) => void;
 
 /**
  * Found event handler
+ * Phase 37-A: Added miningEpochId
+ * Phase 37-C: Changed from block to nonce
  */
 export type MinerFoundHandler = (event: {
-  block: Block;
+  nonce: number; // Phase 37-C: Only nonce, not full block
   hash: string;
   hashesTried: number;
   startedAt: number;
   finishedAt: number;
+  miningEpochId?: string; // Phase 37-A: Mining epoch ID
 }) => void;
 
 /**
  * Stopped event handler
  * 
  * Phase 18: Added "exhausted" reason
+ * Phase 37-A: Added miningEpochId
  */
 export type MinerStoppedHandler = (event: {
   reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
   errorMessage?: string;
+  miningEpochId?: string; // Phase 37-A: Mining epoch ID
 }) => void;
 
 /**
@@ -112,6 +150,9 @@ export class MinerClient {
   private statsUpdateInterval: number | null = null;
   // Phase 26: Duty cycle control
   private dutyCycle: number = 1.0; // 0.0 to 1.0
+  // Phase 37-A: Mining epoch tracking
+  private currentEpochId: string | null = null;
+  private epochValidator?: (epochId: string | undefined | null) => boolean; // Optional validator function
 
   constructor() {
     this.initWorker();
@@ -130,8 +171,19 @@ export class MinerClient {
       // Handle messages from worker (will be set again below with logging)
 
       // Handle worker errors
+      // Phase 37-E: Worker crash detection
       this.worker.onerror = (error) => {
-        console.error("Miner worker error:", error);
+        console.error("[MinerClient] Worker error:", error);
+        // Notify stopped handlers with error reason
+        this.isMining = false;
+        this.stopStatsUpdate();
+        this.stoppedHandlers.forEach((handler) => {
+          handler({
+            reason: "error",
+            errorMessage: error.message || "Worker crashed",
+            miningEpochId: this.currentEpochId ?? undefined,
+          });
+        });
         console.error("Worker error details:", {
           message: error.message,
           filename: error.filename,
@@ -176,12 +228,30 @@ export class MinerClient {
 
   /**
    * Handle messages from worker
+   * Phase 37-A: Validate epoch ID before processing events
    */
   private handleWorkerMessage(event: MinerWorkerEvent): void {
+    // Phase 37-A: Validate epoch ID if validator is provided
+    if (this.epochValidator) {
+      const isValid = this.epochValidator(event.miningEpochId);
+      if (!isValid) {
+        // Discard stale event from old epoch
+        console.log(`[MinerClient] Discarding stale event from old epoch: ${event.type}, epochId=${event.miningEpochId?.substring(0, 16)}...`);
+        return;
+      }
+    }
+
     switch (event.type) {
       case "PROGRESS":
         this.stats.hashesTried = event.hashesTried;
         this.updateHashRate(event.startedAt, event.hashesTried);
+        // Debug: Log first few progress events
+        if (event.hashesTried <= 10) {
+          console.log(`[MinerClient] Received PROGRESS: hashesTried=${event.hashesTried}, handlers=${this.progressHandlers.size}`);
+          if (this.progressHandlers.size === 0) {
+            console.warn(`[MinerClient] WARNING: No progress handlers registered! This will cause stats not to update.`);
+          }
+        }
         // Notify all progress handlers
         this.progressHandlers.forEach((handler) => {
           try {
@@ -193,11 +263,12 @@ export class MinerClient {
         break;
 
       case "FOUND":
+        // Phase 37-C: FOUND event now only contains nonce, not full block
         this.stats.hashesTried = event.hashesTried;
         this.updateHashRate(event.startedAt, event.hashesTried);
         this.isMining = false;
         this.stopStatsUpdate();
-        // Notify all found handlers
+        // Notify all found handlers (they receive nonce, not full block)
         this.foundHandlers.forEach((handler) => handler(event));
         break;
 
@@ -207,6 +278,32 @@ export class MinerClient {
         // Phase 18: If exhausted, we'll handle it in cluster
         // Notify all stopped handlers
         this.stoppedHandlers.forEach((handler) => handler(event));
+        break;
+
+      case "EXHAUSTED":
+        // Phase 37-A: Handle EXHAUSTED as separate event
+        this.isMining = false;
+        this.stopStatsUpdate();
+        // Convert to STOPPED event for backward compatibility
+        this.stoppedHandlers.forEach((handler) => {
+          handler({
+            reason: "exhausted",
+            errorMessage: undefined,
+          });
+        });
+        break;
+
+      case "ERROR":
+        // Phase 37-A: Handle ERROR as separate event
+        this.isMining = false;
+        this.stopStatsUpdate();
+        // Convert to STOPPED event for backward compatibility
+        this.stoppedHandlers.forEach((handler) => {
+          handler({
+            reason: "error",
+            errorMessage: event.error,
+          });
+        });
         break;
     }
   }
@@ -247,17 +344,28 @@ export class MinerClient {
   }
 
   /**
+   * Set epoch validator function
+   * Phase 37-A: Allow external validation of epoch IDs
+   */
+  setEpochValidator(validator: (epochId: string | undefined | null) => boolean): void {
+    this.epochValidator = validator;
+  }
+
+  /**
    * Start mining
    * 
    * Phase 18: Added nonceStart and nonceEnd parameters for cluster mining
    * Phase 26: Added dutyCycle parameter for CPU control
+   * Phase 37-A: Added miningEpochId parameter
+   * Phase 37-C: Accepts candidateBlock but converts to compact header internally
    */
   startMining(args: {
-    candidateBlock: Block;
+    candidateBlock: Block; // Phase 37-C: Still accepts Block for backward compatibility, converts to header
     difficulty: number;
     nonceStart?: bigint | number; // Phase 18: Starting nonce
     nonceEnd?: bigint | number; // Phase 18: Ending nonce
     dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
     onProgress?: MinerProgressHandler;
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
@@ -281,6 +389,7 @@ export class MinerClient {
    * Internal start mining implementation
    * 
    * Phase 18: Added nonceStart and nonceEnd support
+   * Phase 37-A: Added miningEpochId support
    */
   private doStartMining(args: {
     candidateBlock: Block;
@@ -288,28 +397,31 @@ export class MinerClient {
     nonceStart?: bigint | number; // Phase 18: Starting nonce
     nonceEnd?: bigint | number; // Phase 18: Ending nonce
     dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
     onProgress?: MinerProgressHandler;
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
   }): void {
-    // Clear existing handlers to avoid duplicates
-    this.progressHandlers.clear();
-    this.foundHandlers.clear();
-    this.stoppedHandlers.clear();
-    
-    // Register handlers
+    // Only clear handlers if new ones are provided via args
+    // This allows handlers registered via onProgress()/onFound()/onStopped() to persist
     if (args.onProgress) {
-      // Registering onProgress handler
+      // Clear and replace with new handler if provided
+      this.progressHandlers.clear();
       this.progressHandlers.add(args.onProgress);
     }
+    // If no onProgress provided, keep existing handlers (registered via onProgress())
+    
     if (args.onFound) {
+      this.foundHandlers.clear();
       this.foundHandlers.add(args.onFound);
     }
+    
     if (args.onStopped) {
+      this.stoppedHandlers.clear();
       this.stoppedHandlers.add(args.onStopped);
     }
     
-    // Handlers registered
+    // Handlers registered (either from args or from onProgress()/onFound()/onStopped())
 
     // Reset stats
     this.stats.hashesTried = 0;
@@ -329,37 +441,63 @@ export class MinerClient {
       throw new Error("Worker initialization failed");
     }
 
+    // Phase 37-A: Store current epoch ID
+    if (args.miningEpochId) {
+      this.currentEpochId = args.miningEpochId;
+    }
+
+    // Phase 37-C: Convert Block to CompactBlockHeader
+    const compactHeader: MiningCompactBlockHeader = {
+      version: args.candidateBlock.header.version,
+      height: args.candidateBlock.header.height,
+      prevHash: args.candidateBlock.header.prevHash,
+      merkleRoot: args.candidateBlock.header.merkleRoot,
+      timestamp: args.candidateBlock.header.timestamp,
+      difficulty: args.candidateBlock.header.difficulty,
+      stateCommitment: args.candidateBlock.header.stateCommitment,
+    };
+
     const command: MinerWorkerCommand = {
       type: "START",
-      candidateBlock: args.candidateBlock,
+      header: compactHeader, // Phase 37-C: Send compact header instead of full block
       difficulty: args.difficulty,
       // Phase 18: Convert bigint to number (nonce is stored as number in worker)
       nonceStart: args.nonceStart !== undefined ? Number(args.nonceStart) : undefined,
       nonceEnd: args.nonceEnd !== undefined ? Number(args.nonceEnd) : undefined,
       // Phase 26: Pass duty cycle to worker
       dutyCycle: this.dutyCycle,
+      // Phase 37-A: Pass mining epoch ID to worker
+      miningEpochId: args.miningEpochId,
     };
 
+    console.log(`[MinerClient] Starting mining with nonceStart=${args.nonceStart}, nonceEnd=${args.nonceEnd}, dutyCycle=${this.dutyCycle}`);
     this.worker.postMessage(command);
     this.isMining = true;
     this.startStatsUpdate();
+    console.log(`[MinerClient] Mining started, worker readyState: ${this.worker ? 'ready' : 'null'}`);
   }
 
   /**
    * Stop mining
+   * Phase 37-A: Include epoch ID in STOP command
    */
   stopMining(_reason: "user" | "replaced" = "user"): void {
     if (!this.worker || !this.isMining) {
       return;
     }
 
-    const command: MinerWorkerCommand = { type: "STOP" };
+    const command: MinerWorkerCommand = { 
+      type: "STOP",
+      miningEpochId: this.currentEpochId ?? undefined, // Phase 37-A: Include epoch ID
+    };
     // Worker is checked above, but TypeScript needs explicit check
     if (this.worker) {
       this.worker.postMessage(command);
     }
     this.isMining = false;
     this.stopStatsUpdate();
+    // Phase 37-A: Clear epoch ID when stopping
+    this.currentEpochId = null;
   }
 
   /**

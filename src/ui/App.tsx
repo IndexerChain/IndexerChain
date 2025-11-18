@@ -15,7 +15,7 @@ import { MinerClient } from "../core/minerClient.js";
 import { MinerCluster } from "../core/minerCluster.js";
 import { DelegatorManager } from "../core/delegatorManager.js";
 import { WorkerNodeManager } from "../core/workerNode.js";
-import type { NodeCapability } from "../core/globalNonceAllocator.js";
+import type { NodeCapability, NonceRange } from "../core/globalNonceAllocator.js";
 import { SnapshotDownloader } from "../core/snapshotDownloader.js";
 import { SnapshotSeeder } from "../core/snapshotSeeder.js";
 import { BrowserP2PNode } from "../core/p2p.js";
@@ -146,7 +146,11 @@ function App() {
     // Phase 26: Use RuntimeManager to get recommended worker count
     if (runtimeManager) {
       const deviceCap = runtimeManager.getDeviceCapability();
-      return deviceCap.recommendedWorkers;
+      const recommended = deviceCap.recommendedWorkers;
+      // Ensure at least 1 worker
+      if (recommended > 0) {
+        return recommended;
+      }
     }
     // Fallback to CPU cores
     if (typeof navigator !== "undefined" && "hardwareConcurrency" in navigator) {
@@ -203,7 +207,7 @@ function App() {
       hashRate: number | null;
       currentNonceStart: bigint;
       currentNonceEnd: bigint | null;
-      status: "running" | "stopped" | "exhausted";
+      status: "running" | "stopped" | "exhausted" | "error"; // Phase 37-E: Added error status
     }>;
   }>({
     totalWorkers: 0,
@@ -685,16 +689,29 @@ function App() {
   }, [chainContext, loading]); // Only run when chainContext becomes available
 
   // Auto-mining: Start mining automatically when chain is ready
+  const autoMiningStartedRef = useRef<boolean>(false);
   useEffect(() => {
-    if (autoMining && chainContext && !isMining && !clusterMining) {
+    // Only start once when autoMining is enabled and conditions are met
+    if (autoMining && chainContext && !isMining && !clusterMining && !autoMiningStartedRef.current) {
       const tip = chainContext.storage.getTip();
       if (tip) {
+        autoMiningStartedRef.current = true;
         // Small delay to ensure everything is initialized
         const timer = setTimeout(() => {
           handleStartMining();
+          // Reset flag after starting to allow restart if needed
+          setTimeout(() => {
+            autoMiningStartedRef.current = false;
+          }, 2000);
         }, 1000);
-        return () => clearTimeout(timer);
+        return () => {
+          clearTimeout(timer);
+          autoMiningStartedRef.current = false;
+        };
       }
+    } else if (!autoMining) {
+      // Reset flag when auto-mining is disabled
+      autoMiningStartedRef.current = false;
     }
   }, [autoMining, chainContext, isMining, clusterMining]);
 
@@ -866,7 +883,7 @@ function App() {
       if (!mempool.getAll().some((t) => t.txId === tx.txId)) {
         const added = await mempool.addTx(tx);
         if (added) {
-          setChainContext({ ...chainContext }); // Trigger re-render
+          setChainContext((prev) => prev ? { ...prev } : prev); // Trigger re-render
         }
       }
     });
@@ -1094,13 +1111,16 @@ function App() {
         if (!wasConnected) {
           try {
             const savedState = loadPersistedState();
-            const state = {
-              ...savedState,
-              autoConnect: true,
-              bootstrapUrl: bootstrapUrl,
-            };
-            localStorage.setItem("indexerchain_app_state", JSON.stringify(state));
-            console.log(`[Auto-Connect] Saved connection state: autoConnect=true, bootstrapUrl=${bootstrapUrl}`);
+            // Only save if state actually changed to avoid excessive writes
+            if (!savedState.autoConnect || savedState.bootstrapUrl !== bootstrapUrl) {
+              const state = {
+                ...savedState,
+                autoConnect: true,
+                bootstrapUrl: bootstrapUrl,
+              };
+              localStorage.setItem("indexerchain_app_state", JSON.stringify(state));
+              console.log(`[Auto-Connect] Saved connection state: autoConnect=true, bootstrapUrl=${bootstrapUrl}`);
+            }
           } catch (e) {
             console.warn("Failed to save connection state:", e);
           }
@@ -2201,6 +2221,12 @@ function App() {
   const handleStartClusterMining = async () => {
     if (!chainContext) return;
     
+    // Prevent multiple simultaneous starts
+    if (isClusterRestartingRef.current && clusterMining) {
+      console.log("[Cluster Mining] Already restarting or mining, skipping duplicate start");
+      return;
+    }
+    
     // Phase 27: Only LEADER can mine
     if (!localCoordinator.canMine()) {
       const leaderId = leaderInfo?.instanceId || "unknown";
@@ -2270,6 +2296,9 @@ function App() {
 
       setClusterMining(true);
       setError("");
+      
+      // Reset restart flag when successfully starting
+      isClusterRestartingRef.current = false;
 
       // Set up cluster event handlers
       minerCluster.onProgress((stats) => {
@@ -2284,7 +2313,7 @@ function App() {
             hashRate: w.hashRate,
             currentNonceStart: w.currentNonceStart,
             currentNonceEnd: w.currentNonceEnd,
-            status: w.status,
+            status: w.status as "running" | "stopped" | "exhausted" | "error", // Phase 37-E: Include error status
           })),
         });
       });
@@ -2292,79 +2321,145 @@ function App() {
       minerCluster.onFound(async (block) => {
         // Block found by worker
         
-        // Verify and append block
-        const allBlocksForVerify = chainContext.storage.getAllBlocks();
-        const verification = await verifyBlock(
-          block,
-          prevBlock,
-          allBlocksForVerify,
-          chainContext.params
-        );
-
-        if (verification.valid) {
-          const result = await appendMinedBlock(block, chainContext);
-          if (result.success) {
-            // Remove transactions from mempool
-            const txIds = block.txs.map((tx) => tx.txId);
-            mempool.removeTxs(txIds);
-
-            // Update context
-            setChainContext({ ...chainContext });
-            setError("");
-          } else {
-            setError(result.error || "Failed to append block");
-          }
+        // Re-fetch prevBlock to ensure we have the latest tip (may have changed during mining)
+        const currentTip = chainContext.storage.getTip();
+        
+        let shouldRestart = false;
+        let blockAppended = false;
+        
+        // Check if block is still valid (tip may have advanced)
+        if (currentTip && currentTip.header.height >= block.header.height) {
+          console.log(`[Cluster Mining] Block ${block.header.height} found but tip is now at ${currentTip.header.height}, block is stale`);
+          // Block is stale - don't restart immediately, let tip change detection handle it
+          // This prevents infinite restart loops when multiple workers find stale blocks
         } else {
-          setError(verification.error || "Block verification failed");
+          // Verify and append block
+          const allBlocksForVerify = chainContext.storage.getAllBlocks();
+          const verification = await verifyBlock(
+            block,
+            currentTip,
+            allBlocksForVerify,
+            chainContext.params
+          );
+
+          if (verification.valid) {
+            const result = await appendMinedBlock(block, chainContext);
+            if (result.success) {
+              // Block successfully appended
+              blockAppended = true;
+              shouldRestart = true; // Only restart if block was successfully appended
+              
+              // Remove transactions from mempool
+              const txIds = block.txs.map((tx) => tx.txId);
+              mempool.removeTxs(txIds);
+
+              // Update context (use functional update to avoid unnecessary re-renders)
+              setChainContext((prev) => prev ? { ...prev } : prev);
+              setError("");
+            } else {
+              // Don't show error for stale blocks (race condition is normal)
+              if (!result.error?.includes("stale")) {
+                setError(result.error || "Failed to append block");
+              }
+              // If block is stale, don't restart - tip change detection will handle it
+            }
+          } else {
+            setError(verification.error || "Block verification failed");
+          }
         }
 
         setClusterMining(false);
 
-        // Auto-restart cluster mining if auto-mining is enabled
-        if (autoMining && chainContext) {
-          setTimeout(() => {
-            if (!clusterMining) {
-              handleStartClusterMining();
-            }
-          }, 1000);
+        // Auto-restart cluster mining only if block was successfully appended
+        // For stale blocks, let tip change detection handle the restart (prevents infinite loops)
+        if (shouldRestart && blockAppended && chainContext && !isClusterRestartingRef.current) {
+          // Clear any pending restart timeout
+          if (clusterRestartTimeoutRef.current) {
+            clearTimeout(clusterRestartTimeoutRef.current);
+            clusterRestartTimeoutRef.current = null;
+          }
+          
+          isClusterRestartingRef.current = true;
+          clusterRestartTimeoutRef.current = window.setTimeout(() => {
+            // Use functional update to get latest clusterMining state
+            setClusterMining((current) => {
+              if (!current && !isClusterRestartingRef.current) {
+                // Only restart if not already mining and not already restarting
+                handleStartClusterMining();
+              }
+              // Reset restart flag after a delay
+              setTimeout(() => {
+                isClusterRestartingRef.current = false;
+              }, 2000);
+              return current;
+            });
+            clusterRestartTimeoutRef.current = null;
+          }, 1500); // Increased delay to prevent rapid restarts
         }
       });
 
       minerCluster.onStopped((reason) => {
         if (reason === "found") {
-          // Already handled in onFound
+          // Already handled in onFound (which will auto-restart)
           return;
         }
         setClusterMining(false);
         if (reason === "error") {
           setError("Cluster mining error occurred");
+          // Don't auto-restart on error - user should investigate
         } else if (reason === "user") {
           setError("Cluster mining was stopped");
           if (autoMining) {
             setAutoMining(false);
           }
-        }
-        // "replaced" reason means we're restarting, don't show error
-        if (reason === "replaced" && autoMining && chainContext) {
-          setTimeout(() => {
-            if (!clusterMining) {
-              handleStartClusterMining();
-            }
-          }, 100);
+          // Don't auto-restart if user manually stopped
+        } else if (reason === "replaced") {
+          // "replaced" reason means we're restarting, don't show error
+          // Auto-restart will be handled by onFound or tip change detection
+        } else if (reason === "exhausted") {
+          // Nonce range exhausted - this is normal, should auto-restart with new range
+          // But this should be handled by MinerCluster.assignNewNonceRange
+          // If we get here, it means the range wasn't reassigned, so restart mining
+          if (chainContext && !isClusterRestartingRef.current) {
+            isClusterRestartingRef.current = true;
+            setTimeout(() => {
+              setClusterMining((current) => {
+                if (!current && !isClusterRestartingRef.current) {
+                  handleStartClusterMining();
+                }
+                setTimeout(() => {
+                  isClusterRestartingRef.current = false;
+                }, 2000);
+                return current;
+              });
+            }, 500);
+          }
         }
       });
 
-      // Phase 19: If global pool enabled, use allocated ranges
+      // Phase 37-B: Setup global pool integration
       if (globalPoolEnabled && isP2PConnected) {
-        // Setup range received handler
-        workerNodeManager.onRangeReceived(() => {
-          // Update worker with new range
-          // This will be handled by modifying the cluster to use global ranges
+        // Setup range received handler - restart mining with new range
+        workerNodeManager.onRangeReceived((range) => {
+          console.log(`[Cluster Mining] Received new global nonce range: ${range.start}..${range.end}`);
+          // If currently mining, restart with new range
+          if (clusterMining) {
+            // Stop current mining and restart with new range
+            minerCluster.stopMining("replaced").then(() => {
+              // Restart with new range
+              setTimeout(() => {
+                if (clusterMining) {
+                  handleStartClusterMining();
+                }
+              }, 100);
+            });
+          }
         });
         
-        // Setup range exhausted handler
-        workerNodeManager.onRangeExhausted(() => {
-          // Request new range
+        // Phase 37-B: Setup global range exhausted handler
+        minerCluster.onExhaustedGlobalRange(() => {
+          console.log(`[Cluster Mining] Global nonce range exhausted, requesting new range...`);
+          // Request new range from delegator
           const nodeId = getOrCreateBrowserNodeId();
           const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
             ? navigator.hardwareConcurrency || 4
@@ -2379,20 +2474,94 @@ function App() {
             estimatedHashrate: clusterStats.totalHashRate || 100_000,
             lastSeen: Date.now(),
           };
-          // Find which worker exhausted (we'll track this)
-          // For now, request for all workers
-          for (let i = 0; i < clusterWorkerCount; i++) {
-            workerNodeManager.requestNonceRange(i, capability);
-          }
+          // Request new range for worker 0 (node-level range)
+          workerNodeManager.requestNonceRange(0, capability);
         });
       }
 
+      // Phase 37-B: Get global nonce range if global pool is enabled
+      let globalNonceRange: NonceRange | null = null;
+      if (globalPoolEnabled && isP2PConnected) {
+        // Get current range from workerNodeManager
+        const currentRange = workerNodeManager.getCurrentRange?.();
+        if (currentRange) {
+          globalNonceRange = currentRange;
+          console.log(`[Cluster Mining] Using global nonce range: ${currentRange.start}..${currentRange.end}`);
+        } else {
+          // No range yet, request one
+          console.log(`[Cluster Mining] No global range available, requesting...`);
+          const nodeId = getOrCreateBrowserNodeId();
+          const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
+            ? navigator.hardwareConcurrency || 4
+            : 4;
+          const capability: NodeCapability = {
+            nodeId,
+            workerCount: clusterWorkerCount,
+            threads: cores,
+            hasWebGL: typeof WebGLRenderingContext !== "undefined",
+            hasWebGPU: typeof (globalThis as any).GPU !== "undefined" && (globalThis as any).GPU !== undefined,
+            hasSIMD: typeof WebAssembly !== "undefined" && WebAssembly.validate !== undefined,
+            estimatedHashrate: clusterStats.totalHashRate || 100_000,
+            lastSeen: Date.now(),
+          };
+          workerNodeManager.requestNonceRange(0, capability);
+          // Wait a bit for range to arrive, or start in local mode
+          // For now, start in local mode and switch when range arrives
+          globalNonceRange = null;
+        }
+      }
+
+      // Phase 37-D: Integrate with RuntimeManager if available
+      if (runtimeManager) {
+        minerCluster.setRuntimeManager(runtimeManager);
+        // Get recommended profile and use it
+        const profile = runtimeManager.getRecommendedProfile();
+        const recommendedWorkerCount = Math.min(clusterWorkerCount, profile.workerCount);
+        const recommendedDutyCycle = profile.dutyCycle;
+        
+        console.log(`[Cluster Mining] RuntimeManager profile: mode=${profile.mode}, workers=${profile.workerCount}, dutyCycle=${profile.dutyCycle.toFixed(2)}`);
+        console.log(`[Cluster Mining] Using: workers=${recommendedWorkerCount}, dutyCycle=${recommendedDutyCycle.toFixed(2)}`);
+        
+        // Update state to match recommended values
+        if (recommendedWorkerCount !== clusterWorkerCount) {
+          setClusterWorkerCount(recommendedWorkerCount);
+        }
+        if (Math.abs(recommendedDutyCycle - dutyCycle) > 0.05) {
+          // Update duty cycle if significantly different
+          setDutyCycle(recommendedDutyCycle);
+        }
+        
+        // Use recommended values
+        const actualWorkerCount = Math.max(1, recommendedWorkerCount);
+        const actualDutyCycle = recommendedDutyCycle;
+        
+        await minerCluster.startMining({
+          candidateBlock,
+          difficulty: candidateBlock.header.difficulty,
+          workerCount: actualWorkerCount,
+          dutyCycle: actualDutyCycle,
+          globalNonceRange: globalNonceRange,
+        });
+        return;
+      }
+      
+      // Fallback: Use manual settings if RuntimeManager not available
       // Phase 26: Start cluster mining with duty cycle
+      // Ensure worker count is at least 1
+      const actualWorkerCount = Math.max(1, clusterWorkerCount);
+      if (actualWorkerCount !== clusterWorkerCount) {
+        console.warn(`[Cluster Mining] Worker count was ${clusterWorkerCount}, using ${actualWorkerCount} instead`);
+        setClusterWorkerCount(actualWorkerCount);
+      }
+      
+      console.log(`[Cluster Mining] Starting with ${actualWorkerCount} workers, duty cycle: ${dutyCycle}`);
+      
       await minerCluster.startMining({
         candidateBlock,
         difficulty: candidateBlock.header.difficulty,
-        workerCount: clusterWorkerCount,
+        workerCount: actualWorkerCount,
         dutyCycle: dutyCycle, // Phase 26: Use runtime manager duty cycle
+        globalNonceRange: globalNonceRange, // Phase 37-B: Pass global nonce range
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start cluster mining");
@@ -2506,13 +2675,23 @@ function App() {
           }));
         },
         onFound: async (event) => {
+          // Phase 37-C: Reconstruct full block from nonce
+          const foundBlock: Block = {
+            ...candidateBlock,
+            header: {
+              ...candidateBlock.header,
+              nonce: event.nonce,
+            },
+            hash: event.hash,
+          };
+
           // Phase 30: Record block as mined before verification
           try {
             const { getMiningStatsTracker } = await import("../core/miningStats.js");
             const statsTracker = getMiningStatsTracker();
             statsTracker.recordBlockMined(
-              event.block.header.height,
-              event.block.hash,
+              foundBlock.header.height,
+              foundBlock.hash,
               minerAddr
             );
           } catch (e) {
@@ -2522,17 +2701,17 @@ function App() {
           // Verify and append block
           const allBlocksForVerify = chainContext.storage.getAllBlocks();
           const verification = await verifyBlock(
-            event.block,
+            foundBlock,
             prevBlock,
             allBlocksForVerify,
             chainContext.params
           );
 
           if (verification.valid) {
-            const result = await appendMinedBlock(event.block, chainContext);
+            const result = await appendMinedBlock(foundBlock, chainContext);
             if (result.success) {
               // Remove transactions from mempool
-              const txIds = event.block.txs.map((tx) => tx.txId);
+              const txIds = foundBlock.txs.map((tx: Tx) => tx.txId);
               mempool.removeTxs(txIds);
 
               // Update lastHeightRef to prevent immediate restart
@@ -2548,7 +2727,7 @@ function App() {
               try {
                 const { getMiningStatsTracker } = await import("../core/miningStats.js");
                 const statsTracker = getMiningStatsTracker();
-                statsTracker.recordBlockRejected(event.block.hash, result.error);
+                statsTracker.recordBlockRejected(foundBlock.hash, result.error);
               } catch (e) {
                 // Stats tracker not available, ignore
               }
@@ -2559,7 +2738,7 @@ function App() {
             try {
               const { getMiningStatsTracker } = await import("../core/miningStats.js");
               const statsTracker = getMiningStatsTracker();
-              statsTracker.recordBlockRejected(event.block.hash, verification.error);
+              statsTracker.recordBlockRejected(foundBlock.hash, verification.error);
             } catch (e) {
               // Stats tracker not available, ignore
             }
@@ -2611,9 +2790,12 @@ function App() {
   // Use useRef to persist lastHeight across re-renders
   const lastHeightRef = useRef<number>(0);
   const isRestartingRef = useRef<boolean>(false); // Prevent multiple simultaneous restarts
+  const isClusterRestartingRef = useRef<boolean>(false); // Prevent multiple simultaneous cluster mining restarts
+  const clusterRestartTimeoutRef = useRef<number | null>(null); // Track pending restart timeout
   const chainContextRef = useRef<ChainContext | null>(chainContext);
   const isMiningRef = useRef<boolean>(isMining);
   const autoMiningRef = useRef<boolean>(autoMining);
+  const clusterMiningRef = useRef<boolean>(clusterMining); // Track cluster mining state
   
   // Update refs when values change
   useEffect(() => {
@@ -2627,6 +2809,10 @@ function App() {
   useEffect(() => {
     autoMiningRef.current = autoMining;
   }, [autoMining]);
+  
+  useEffect(() => {
+    clusterMiningRef.current = clusterMining;
+  }, [clusterMining]);
   
   useEffect(() => {
     if (!chainContext) return;
@@ -2646,13 +2832,14 @@ function App() {
       const newHeight = newTip?.header.height ?? 0;
       const currentIsMining = isMiningRef.current;
       const currentAutoMining = autoMiningRef.current;
+      const currentClusterMining = clusterMiningRef.current;
       
       if (newHeight > lastHeightRef.current) {
         // Tip changed, restart mining if currently mining or auto-mining is enabled
         console.log("[App] Tip height changed:", lastHeightRef.current, "->", newHeight);
         lastHeightRef.current = newHeight;
         
-        // Only restart if we're actually mining (not just auto-mining enabled)
+        // Handle single-threaded mining restart
         if (currentIsMining) {
           isRestartingRef.current = true;
           minerClient.stopMining("replaced");
@@ -2686,6 +2873,35 @@ function App() {
               isRestartingRef.current = false;
             }
           }, 1500);
+        }
+        
+        // Handle cluster mining restart (always restart if cluster mining was active)
+        // This ensures continuous mining when user clicks "Start Cluster Mining"
+        if (currentClusterMining && !isClusterRestartingRef.current) {
+          console.log("[App] Tip changed during cluster mining, restarting cluster mining...");
+          
+          // Clear any pending restart timeout
+          if (clusterRestartTimeoutRef.current) {
+            clearTimeout(clusterRestartTimeoutRef.current);
+            clusterRestartTimeoutRef.current = null;
+          }
+          
+          isClusterRestartingRef.current = true;
+          // Stop current cluster mining
+          minerCluster.stopMining("replaced");
+          // Restart after a short delay
+          clusterRestartTimeoutRef.current = window.setTimeout(() => {
+            const ctx = chainContextRef.current;
+            const clusterMining = clusterMiningRef.current;
+            if (ctx && clusterMining && !isClusterRestartingRef.current) {
+              handleStartClusterMining();
+            }
+            // Reset restart flag after a delay
+            setTimeout(() => {
+              isClusterRestartingRef.current = false;
+            }, 2000);
+            clusterRestartTimeoutRef.current = null;
+          }, 1000);
         }
       }
     };
@@ -4041,7 +4257,7 @@ function App() {
                       <div style={{ fontSize: "0.9rem", opacity: 0.9 }}>
                         {clusterMining ? (
                           <>
-                            {locale === "zh" ? "集群模式" : "Cluster Mode"} • {clusterStats.activeWorkers} {locale === "zh" ? "个工作线程" : "workers"} • 
+                            {locale === "zh" ? "集群模式" : "Cluster Mode"} • {clusterStats.totalWorkers || clusterStats.activeWorkers || clusterWorkerCount} {locale === "zh" ? "个工作线程" : "workers"} • 
                             {t("mining.hashRate")} {clusterStats.totalHashRate ? (clusterStats.totalHashRate / 1000).toFixed(2) + " K hash/s" : t("mining.calculating")} • 
                             {locale === "zh" ? "已尝试" : "Tried"}: {clusterStats.totalHashesTried.toString()} {locale === "zh" ? "次哈希" : "hashes"}
                           </>

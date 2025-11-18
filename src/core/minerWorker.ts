@@ -12,27 +12,44 @@
 // Worker context - no imports needed, types defined inline
 
 /**
+ * Phase 37-C: Compact block header for mining (only fields needed for PoW)
+ */
+type MiningCompactBlockHeader = {
+  version: number;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  timestamp: number;
+  difficulty: number;
+  stateCommitment?: string;
+};
+
+/**
  * Worker command from main thread
  * 
  * Phase 18: Added nonceStart and nonceEnd for cluster mining
+ * Phase 37-A: Added miningEpochId to prevent stale mining results
+ * Phase 37-C: Changed from candidateBlock to header (compact block header)
  */
 type MinerWorkerCommand =
   | {
       type: "START";
-      candidateBlock: any; // Block with nonce=0, ready for mining
-      difficulty: number; // Difficulty from block header
+      header: MiningCompactBlockHeader; // Phase 37-C: Compact block header instead of full block
+      difficulty: number; // Difficulty from block header (redundant but kept for compatibility)
       maxIterations?: number; // Optional: max iterations per batch
       nonceStart?: number; // Phase 18: Starting nonce (default: 0)
       nonceEnd?: number; // Phase 18: Ending nonce (default: unlimited)
       dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     }
-  | { type: "STOP" }
+  | { type: "STOP"; miningEpochId?: string } // Phase 37-A: Include epoch ID in STOP
   | { type: "SET_DUTY_CYCLE"; dutyCycle: number }; // Phase 26: Update duty cycle dynamically
 
 /**
  * Worker event to main thread
  * 
  * Phase 18: Added "exhausted" reason for nonce range exhaustion
+ * Phase 37-A: Added miningEpochId to all events and separate EXHAUSTED/ERROR events
  */
 type MinerWorkerEvent =
   | {
@@ -41,19 +58,33 @@ type MinerWorkerEvent =
       hash: string;
       hashesTried: number; // Total hashes tried in this session
       startedAt: number; // Timestamp when mining started
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     }
   | {
       type: "FOUND";
-      block: any; // Complete block with valid nonce
+      nonce: number; // Phase 37-C: Only return nonce, not full block
       hash: string;
       hashesTried: number;
       startedAt: number;
       finishedAt: number;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     }
   | {
       type: "STOPPED";
       reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
       errorMessage?: string;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
+    }
+  | {
+      type: "EXHAUSTED"; // Phase 37-A: Separate EXHAUSTED event
+      lastNonce: number;
+      hashesTried: number;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
+    }
+  | {
+      type: "ERROR"; // Phase 37-A: Separate ERROR event
+      error: string;
+      miningEpochId?: string; // Phase 37-A: Mining epoch ID
     };
 
 /**
@@ -96,7 +127,7 @@ async function hashBlockHeader(header: any): Promise<string> {
 }
 
 // Worker state
-let currentBlock: any | null = null;
+let currentHeader: MiningCompactBlockHeader | null = null; // Phase 37-C: Store header instead of full block
 let currentDifficulty: number = 0;
 let isRunning: boolean = false;
 let hashesTried: number = 0;
@@ -104,6 +135,7 @@ let startedAt: number = 0;
 let nonce: number = 0;
 let nonceStart: number = 0; // Phase 18: Starting nonce
 let nonceEnd: number | null = null; // Phase 18: Ending nonce (null = unlimited)
+let currentMiningEpochId: string | null = null; // Phase 37-A: Current mining epoch ID
 
 // Phase 26: Duty Cycle CPU control
 let dutyCycle: number = 1.0; // 0.0 to 1.0, default 100%
@@ -144,50 +176,65 @@ async function checkDutyCycle(): Promise<void> {
 
 /**
  * Mining loop
+ * Phase 37-C: Uses compact header instead of full block
  */
 async function miningLoop(): Promise<void> {
-  if (!isRunning || !currentBlock) {
+  if (!isRunning || !currentHeader) {
+    console.log(`[Worker] Mining loop not starting: isRunning=${isRunning}, currentHeader=${!!currentHeader}`);
     return;
   }
 
+  console.log(`[Worker] Mining loop started: height=${currentHeader.height}, difficulty=${currentDifficulty}, nonceStart=${nonceStart}, nonceEnd=${nonceEnd}`);
   dutyCycleStartTime = performance.now();
 
   try {
-    while (isRunning && currentBlock) {
+    while (isRunning && currentHeader) {
       // Phase 26: Check duty cycle (CPU throttling)
       await checkDutyCycle();
       // Phase 18: Check if nonce range is exhausted
       if (nonceEnd !== null && nonce >= nonceEnd) {
         // Nonce range exhausted, request new range
+        console.log(`[Worker] Nonce range exhausted: nonce=${nonce} >= nonceEnd=${nonceEnd}`);
         isRunning = false;
+        // Phase 37-A: Send EXHAUSTED event with epoch ID
         self.postMessage({
-          type: "STOPPED",
-          reason: "exhausted",
+          type: "EXHAUSTED",
+          lastNonce: nonce,
+          hashesTried,
+          miningEpochId: currentMiningEpochId ?? undefined,
         } as MinerWorkerEvent);
         return;
       }
 
-      // Update nonce
-      currentBlock.header.nonce = nonce;
+      // Phase 37-C: Create header with current nonce for hashing
+      const headerWithNonce = {
+        ...currentHeader,
+        nonce,
+      };
 
       // Compute hash
-      const hash = await hashBlockHeader(currentBlock.header);
+      const hash = await hashBlockHeader(headerWithNonce);
       hashesTried++;
+      
+      // Debug: Log first hash
+      if (hashesTried === 1) {
+        console.log(`[Worker] First hash computed: nonce=${nonce}, hash=${hash.substring(0, 16)}...`);
+      }
 
       // Check difficulty
       if (checkDifficulty(hash, currentDifficulty)) {
-        // Found valid block!
-        currentBlock.hash = hash;
+        // Found valid nonce!
         const finishedAt = Date.now();
 
-        // Send FOUND event
+        // Phase 37-C: Send FOUND event with only nonce (not full block)
         self.postMessage({
           type: "FOUND",
-          block: currentBlock,
+          nonce,
           hash,
           hashesTried,
           startedAt,
           finishedAt,
+          miningEpochId: currentMiningEpochId ?? undefined,
         } as MinerWorkerEvent);
 
         // Stop mining
@@ -206,14 +253,20 @@ async function miningLoop(): Promise<void> {
         hashesTried === 1; // Report first hash immediately
       
       if (shouldReport) {
+        // Phase 37-A: Include epoch ID in PROGRESS event
         self.postMessage({
           type: "PROGRESS",
           nonce,
           hash,
           hashesTried,
           startedAt,
+          miningEpochId: currentMiningEpochId ?? undefined,
         } as MinerWorkerEvent);
         lastProgressTime = now;
+        // Debug: Log first few progress reports
+        if (hashesTried <= 10) {
+          console.log(`[Worker] Progress: hashesTried=${hashesTried}, nonce=${nonce}, hash=${hash.substring(0, 16)}...`);
+        }
       }
 
       // Yield control periodically to prevent blocking
@@ -222,12 +275,12 @@ async function miningLoop(): Promise<void> {
       }
     }
   } catch (error) {
-    // Send error event
+    // Phase 37-A: Send ERROR event with epoch ID
     console.error("[Worker] Mining loop error:", error);
     self.postMessage({
-      type: "STOPPED",
-      reason: "error",
-      errorMessage: error instanceof Error ? error.message : "Unknown error",
+      type: "ERROR",
+      error: error instanceof Error ? error.message : "Unknown error",
+      miningEpochId: currentMiningEpochId ?? undefined,
     } as MinerWorkerEvent);
     isRunning = false;
   }
@@ -246,8 +299,8 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
       await new Promise((resolve) => setTimeout(resolve, 100)); // Wait a bit
     }
 
-    // Initialize new mining session
-    currentBlock = JSON.parse(JSON.stringify(command.candidateBlock)); // Deep copy
+    // Phase 37-C: Initialize with compact header instead of full block
+    currentHeader = JSON.parse(JSON.stringify(command.header)); // Deep copy
     currentDifficulty = command.difficulty;
     isRunning = true;
     hashesTried = 0;
@@ -260,9 +313,13 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
     
     // Phase 26: Set duty cycle
     dutyCycle = Math.max(0.0, Math.min(1.0, command.dutyCycle ?? 1.0));
+    
+    // Phase 37-A: Store mining epoch ID
+    currentMiningEpochId = command.miningEpochId ?? null;
 
     // Start mining loop (will send PROGRESS after first hash)
     // Use setImmediate or setTimeout to ensure async loop starts
+    console.log(`[Worker] Starting mining loop: nonceStart=${nonceStart}, nonceEnd=${nonceEnd}, difficulty=${currentDifficulty}, dutyCycle=${dutyCycle}`);
     miningLoop().catch((error) => {
       console.error("[Worker] Mining loop promise rejected:", error);
       self.postMessage({
@@ -272,12 +329,22 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
       } as MinerWorkerEvent);
     });
   } else if (command.type === "STOP") {
+    // Phase 37-A: Check if STOP command matches current epoch (optional validation)
+    // If epoch ID is provided and doesn't match, ignore the stop command
+    if (command.miningEpochId && currentMiningEpochId && command.miningEpochId !== currentMiningEpochId) {
+      console.log(`[Worker] Ignoring STOP command from old epoch: ${command.miningEpochId.substring(0, 16)}... (current: ${currentMiningEpochId.substring(0, 16)}...)`);
+      return;
+    }
+    
     // Stop mining
     isRunning = false;
     self.postMessage({
       type: "STOPPED",
       reason: "user",
+      miningEpochId: currentMiningEpochId ?? undefined,
     } as MinerWorkerEvent);
+    // Phase 37-A: Clear epoch ID when stopped
+    currentMiningEpochId = null;
   } else if (command.type === "SET_DUTY_CYCLE") {
     // Phase 26: Update duty cycle dynamically
     dutyCycle = Math.max(0.0, Math.min(1.0, command.dutyCycle));

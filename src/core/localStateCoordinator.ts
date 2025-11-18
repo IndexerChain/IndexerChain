@@ -659,15 +659,23 @@ export class LocalStateCoordinator {
     });
     
     if (!isConsistent) {
-      console.warn("[LocalStateSync] Consistency check failed:", {
-        tipHashMatch,
-        heightMatch,
-        stateCommitmentMatch,
-        localEpoch,
-        leaderEpoch: this.leaderEpoch,
-        localTipHash: localTipHash.substring(0, 16),
-        leaderTipHash: this.leaderTipHash.substring(0, 16),
-      });
+      // Only warn if leaderEpoch > 0 (leader has reported state)
+      // If leaderEpoch is 0, it means we haven't received any state updates from leader yet,
+      // which is normal during initialization or when there's no leader
+      if (this.leaderEpoch > 0) {
+        console.warn("[LocalStateSync] Consistency check failed:", {
+          tipHashMatch,
+          heightMatch,
+          stateCommitmentMatch,
+          localEpoch,
+          leaderEpoch: this.leaderEpoch,
+          localTipHash: localTipHash.substring(0, 16),
+          leaderTipHash: this.leaderTipHash.substring(0, 16),
+        });
+      } else {
+        // Leader hasn't reported state yet - this is normal, just log at debug level
+        console.log("[LocalStateSync] Waiting for leader state update (leaderEpoch: 0)");
+      }
     }
     
     return isConsistent;

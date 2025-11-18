@@ -450,8 +450,35 @@ export async function appendMinedBlock(
   block: Block,
   context: ChainContext
 ): Promise<{ success: boolean; error?: string }> {
-  // Get previous block
+  // Check if block already exists (race condition: block may have been appended by another worker or from P2P)
+  const existingBlock = context.storage.getBlockByHeight(block.header.height);
+  if (existingBlock) {
+    // Block already exists - check if it's the same block
+    if (existingBlock.hash === block.hash) {
+      // Same block - already appended, return success
+      console.log(`[appendMinedBlock] Block ${block.header.height} already exists with same hash, skipping append`);
+      return { success: true };
+    } else {
+      // Different block at same height - this is a fork, reject
+      return { 
+        success: false, 
+        error: `Block ${block.header.height} already exists with different hash (fork detected)` 
+      };
+    }
+  }
+
+  // Get previous block (re-fetch to ensure we have the latest tip)
   const prevBlock = context.storage.getTip();
+  
+  // Check if tip has advanced beyond this block (race condition: another block was appended)
+  if (prevBlock && prevBlock.header.height >= block.header.height) {
+    // Tip has advanced - this block is stale
+    console.log(`[appendMinedBlock] Block ${block.header.height} is stale (tip is now at ${prevBlock.header.height}), skipping append`);
+    return { 
+      success: false, 
+      error: `Block ${block.header.height} is stale (tip is now at ${prevBlock.header.height})` 
+    };
+  }
 
   // Phase 6: Get all blocks for difficulty verification
   const allBlocks = context.storage.getAllBlocks();
@@ -463,6 +490,33 @@ export async function appendMinedBlock(
   }
 
   try {
+    // Re-check tip right before appending (race condition: tip may have changed)
+    const currentTip = context.storage.getTip();
+    if (currentTip && currentTip.header.height >= block.header.height) {
+      // Tip has advanced - this block is stale
+      console.log(`[appendMinedBlock] Block ${block.header.height} is stale (tip is now at ${currentTip.header.height}), skipping append`);
+      return { 
+        success: false, 
+        error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})` 
+      };
+    }
+    
+    // Check if block already exists (race condition: another worker may have appended it)
+    const existingBlock = context.storage.getBlockByHeight(block.header.height);
+    if (existingBlock) {
+      if (existingBlock.hash === block.hash) {
+        // Same block - already appended, return success
+        console.log(`[appendMinedBlock] Block ${block.header.height} already exists with same hash, skipping append`);
+        return { success: true };
+      } else {
+        // Different block at same height - this is a fork, reject
+        return { 
+          success: false, 
+          error: `Block ${block.header.height} already exists with different hash (fork detected)` 
+        };
+      }
+    }
+    
     // Append to storage (this also saves to persistence)
     context.storage.appendBlock(block);
 
@@ -597,9 +651,33 @@ export async function appendMinedBlock(
 
     return { success: true };
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    
+    // Handle race condition: block may have been appended by another worker
+    if (errorMsg.includes("Invalid block height") || errorMsg.includes("already exists")) {
+      // Re-check if block exists with same hash
+      const existingBlock = context.storage.getBlockByHeight(block.header.height);
+      if (existingBlock && existingBlock.hash === block.hash) {
+        // Same block - already appended, return success (this is normal in cluster mining)
+        console.log(`[appendMinedBlock] Block ${block.header.height} was appended by another worker, skipping duplicate append`);
+        return { success: true };
+      }
+      
+      // Check if tip has advanced
+      const currentTip = context.storage.getTip();
+      if (currentTip && currentTip.header.height > block.header.height) {
+        // Tip has advanced - this block is stale
+        console.log(`[appendMinedBlock] Block ${block.header.height} is stale (tip is now at ${currentTip.header.height}), skipping append`);
+        return { 
+          success: false, 
+          error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})` 
+        };
+      }
+    }
+    
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: errorMsg,
     };
   }
 }
