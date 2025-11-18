@@ -118,11 +118,16 @@ export class StateLockManager {
     };
 
     if (locked) {
-      console.log(`[Phase 36] State Lock formed at height ${currentHeight}:`, {
-        stateCommitment: majorityCommit.stateCommitment.substring(0, 16) + "...",
-        quorum: majorityCommit.quorum.toFixed(2) + "%",
-        independentPeers: majorityCommit.independentCount,
-      });
+      // Only log if this is a new lock (height changed) to avoid spam
+      const lastLockedHeight = (this as any).lastLockedHeight || 0;
+      if (currentHeight > lastLockedHeight) {
+        (this as any).lastLockedHeight = currentHeight;
+        console.log(`[Phase 36] State Lock formed at height ${currentHeight}:`, {
+          stateCommitment: majorityCommit.stateCommitment.substring(0, 16) + "...",
+          quorum: majorityCommit.quorum.toFixed(2) + "%",
+          independentPeers: majorityCommit.independentCount,
+        });
+      }
     }
   }
 

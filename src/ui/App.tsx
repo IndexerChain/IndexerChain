@@ -487,6 +487,15 @@ function App() {
 
   // Tab navigation state
   const [activeTab, setActiveTab] = useState<string>("overview");
+  const [showAdvancedTabs, setShowAdvancedTabs] = useState<boolean>(false); // Advanced tabs collapsed by default
+  
+  // Auto-expand advanced tabs if user navigates to an advanced tab
+  useEffect(() => {
+    const advancedTabs = ["storage", "advanced", "token", "privacy", "tools", "runtime"];
+    if (advancedTabs.includes(activeTab) && !showAdvancedTabs) {
+      setShowAdvancedTabs(true);
+    }
+  }, [activeTab, showAdvancedTabs]);
 
   // Save state to localStorage whenever relevant state changes
   useEffect(() => {
@@ -625,58 +634,60 @@ function App() {
     }
   }, [chainContext, isP2PConnected, gsnEnabled, snapshotSeeder]);
 
-  // Auto-connect to P2P network on mount if it was connected before
+  // Auto-connect to P2P network on mount
+  // Always attempts to connect automatically when page loads (first-time users included)
   const autoConnectAttemptedRef = useRef<boolean>(false);
   useEffect(() => {
     // Only attempt auto-connect once, when chainContext is ready and not loading
+    // Skip if already connected or already attempted
     if (!chainContext || loading || isP2PConnected || autoConnectAttemptedRef.current) {
-      if (autoConnectAttemptedRef.current) {
-        console.log(`[Auto-Connect] Already attempted, skipping. chainContext: ${!!chainContext}, loading: ${loading}, isP2PConnected: ${isP2PConnected}`);
-      }
       return;
     }
     
+    // Always attempt auto-connect if we have a bootstrapUrl
+    // This ensures first-time users also connect automatically
     const savedState = loadPersistedState();
-    console.log(`[Auto-Connect] Checking saved state:`, { autoConnect: savedState.autoConnect, bootstrapUrl: savedState.bootstrapUrl });
+    const urlToUse = savedState.bootstrapUrl || bootstrapUrl || DEFAULT_MAINNET_SIGNALING;
     
-    // Auto-connect if:
-    // 1. Previously connected (autoConnect: true) OR
-    // 2. Has a saved bootstrapUrl (user has connected before)
-    const shouldAutoConnect = (savedState.autoConnect === true) || (savedState.bootstrapUrl && savedState.bootstrapUrl !== DEFAULT_MAINNET_SIGNALING);
-    
-    if (shouldAutoConnect && savedState.bootstrapUrl) {
-      autoConnectAttemptedRef.current = true; // Mark as attempted
-      console.log(`[Auto-Connect] Restoring P2P connection to ${savedState.bootstrapUrl}`);
+    if (urlToUse) {
+      autoConnectAttemptedRef.current = true; // Mark as attempted immediately to prevent duplicate attempts
       
-      // Set bootstrap URL if different, then connect
-      if (savedState.bootstrapUrl !== bootstrapUrl) {
+      console.log(`[Auto-Connect] Attempting automatic connection to ${urlToUse}`, { 
+        hasSavedState: !!savedState.bootstrapUrl,
+        savedUrl: savedState.bootstrapUrl,
+        currentUrl: bootstrapUrl,
+        willUse: urlToUse
+      });
+      
+      // If saved state has a different URL, update it first
+      if (savedState.bootstrapUrl && savedState.bootstrapUrl !== bootstrapUrl) {
         console.log(`[Auto-Connect] Updating bootstrap URL from ${bootstrapUrl} to ${savedState.bootstrapUrl}`);
         setBootstrapUrl(savedState.bootstrapUrl);
         // Wait for state update, then connect
         setTimeout(() => {
-          console.log(`[Auto-Connect] Attempting connection after URL update...`);
+          console.log(`[Auto-Connect] Connecting after URL update...`);
           handleConnectP2P();
         }, 500);
       } else {
-        // Connect immediately
-        setTimeout(() => {
-          console.log(`[Auto-Connect] Attempting connection...`);
-          handleConnectP2P();
-        }, 1000); // Small delay to ensure everything is ready
+        // Ensure bootstrapUrl is set if it's not already
+        if (bootstrapUrl !== urlToUse) {
+          setBootstrapUrl(urlToUse);
+          setTimeout(() => {
+            console.log(`[Auto-Connect] Connecting to ${urlToUse}...`);
+            handleConnectP2P();
+          }, 500);
+        } else {
+          // Connect immediately with current bootstrapUrl
+          setTimeout(() => {
+            console.log(`[Auto-Connect] Connecting to ${urlToUse}...`);
+            handleConnectP2P();
+          }, 1000); // Small delay to ensure everything is ready
+        }
       }
     } else {
-      // Even if no saved state, try to auto-connect to default mainnet signaling if we have bootstrapUrl
-      if (bootstrapUrl && bootstrapUrl === DEFAULT_MAINNET_SIGNALING) {
-        autoConnectAttemptedRef.current = true;
-        console.log(`[Auto-Connect] No saved state, but attempting default mainnet connection to ${bootstrapUrl}`);
-        setTimeout(() => {
-          handleConnectP2P();
-        }, 1500);
-      } else {
-        console.log(`[Auto-Connect] No saved connection state or bootstrap URL`);
-      }
+      console.log(`[Auto-Connect] No bootstrap URL available, skipping auto-connect`);
     }
-  }, [chainContext, loading]); // Only depend on chainContext and loading, not isP2PConnected or bootstrapUrl
+  }, [chainContext, loading]); // Only depend on chainContext and loading to avoid re-triggering
 
   // Restore mining state after chain is initialized
   const restoreMiningRef = useRef<boolean>(false);
@@ -1001,10 +1012,31 @@ function App() {
     });
 
     // Handle REQUEST_BLOCKS messages
+    // Track recent requests to avoid spam and reduce logging
+    const recentBlockRequests = new Map<string, number>(); // sender -> last request time
     p2p.onMessage("REQUEST_BLOCKS", async (request: { fromHeight: number; toHeight: number }, sender: string) => {
       const localTip = chainContext.storage.getTip();
-      const localHeight = localTip?.header.height ?? -1;
-      console.log(`[Sync] Received REQUEST_BLOCKS from ${sender.substring(0, 16)}... for height ${request.fromHeight}-${request.toHeight} (local height: ${localHeight})`);
+      const localHeight = localTip?.header?.height ?? -1;
+      
+      // Rate limiting: ignore requests from same sender within 2 seconds
+      const now = Date.now();
+      const lastRequest = recentBlockRequests.get(sender);
+      if (lastRequest && now - lastRequest < 2000) {
+        return; // Ignore duplicate requests
+      }
+      recentBlockRequests.set(sender, now);
+      
+      // Clean up old entries (older than 10 seconds)
+      for (const [peerId, timestamp] of recentBlockRequests.entries()) {
+        if (now - timestamp > 10000) {
+          recentBlockRequests.delete(peerId);
+        }
+      }
+      
+      // Only log if it's a new request or significant change
+      if (!lastRequest || Math.abs(request.fromHeight - (lastRequest % 10000)) > 100) {
+        // Suppress frequent logs - only log occasionally
+      }
       
       const blocks: Block[] = [];
       
@@ -1013,12 +1045,19 @@ function App() {
       const actualFromHeight = Math.max(request.fromHeight, minHeight);
       const actualToHeight = Math.min(request.toHeight, localHeight);
       
-      if (actualFromHeight > request.fromHeight) {
-        console.log(`[Sync] Requested blocks ${request.fromHeight}-${actualFromHeight - 1} are pruned (min: ${minHeight}), starting from ${actualFromHeight}`);
-      }
-      
+      // If requested range is completely pruned, send a helpful response
       if (actualFromHeight > actualToHeight) {
-        console.log(`[Sync] ⚠️ No blocks available: requested ${request.fromHeight}-${request.toHeight}, but we only have up to ${localHeight}`);
+        // Send a response indicating the available range
+        // This helps the requesting peer know where to start
+        if (p2p.sendToPeer) {
+          p2p.sendToPeer(sender, "GLOBAL_VIEW_RESPONSE", {
+            height: localHeight,
+            tipHash: localTip?.hash ?? "",
+            finalizedHeight: 0,
+            stateCommitment: localTip?.header?.stateCommitment,
+            availableFromHeight: minHeight, // Tell them where blocks are available
+          });
+        }
         return;
       }
       
@@ -1030,7 +1069,7 @@ function App() {
       }
       
       if (blocks.length > 0) {
-        console.log(`[Sync] ✅ Sending ${blocks.length} blocks (height ${actualFromHeight}-${actualToHeight}) to ${sender.substring(0, 16)}...`);
+        // Only log when actually sending blocks
         // Send blocks directly to the requesting peer if sendToPeer is available
         if (p2p.sendToPeer) {
           p2p.sendToPeer(sender, "BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
@@ -1038,21 +1077,18 @@ function App() {
           // Fallback to broadcast
           p2p.broadcast("BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
         }
-      } else {
-        console.log(`[Sync] ⚠️ No blocks available for height ${request.fromHeight}-${request.toHeight} (local height: ${localHeight})`);
       }
     });
 
     // Handle BLOCKS messages (chain sync)
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("BLOCKS", async (data: { blocks: Block[] }, sender: string) => {
-      const localTip = chainContext.storage.getTip();
-      const localHeight = localTip?.header.height ?? -1;
-      console.log(`[Sync] Received BLOCKS from ${sender.substring(0, 16)}...`, {
-        count: data.blocks.length,
-        heights: data.blocks.length > 0 ? `${data.blocks[0].header.height}-${data.blocks[data.blocks.length - 1].header.height}` : "none",
-        localHeight
-      });
+      // Suppress frequent BLOCKS logs - only log occasionally or for significant events
+      // console.log(`[Sync] Received BLOCKS from ${sender.substring(0, 16)}...`, {
+      //   count: data.blocks.length,
+      //   heights: data.blocks.length > 0 ? `${data.blocks[0]?.header?.height ?? '?'}-${data.blocks[data.blocks.length - 1]?.header?.height ?? '?'}` : "none",
+      //   localHeight
+      // });
       
       if (data.blocks.length === 0) {
         console.warn("[Sync] Received empty BLOCKS message");
@@ -1066,7 +1102,10 @@ function App() {
       const newHeight = newTip?.header.height ?? 0;
       
       if (result.success && result.appended > 0) {
-        console.log(`[Sync] ✅ Successfully appended ${result.appended} blocks. New height: ${newHeight}`);
+        // Only log when significant progress is made (e.g., > 10 blocks or reaching milestones)
+        if (result.appended > 10 || newHeight % 100 === 0) {
+          console.log(`[Sync] ✅ Appended ${result.appended} blocks. New height: ${newHeight}`);
+        }
         setChainContext({ ...chainContext }); // Trigger re-render
         
         // Phase 32: Auto-scroll console to bottom when new blocks arrive
@@ -1081,8 +1120,10 @@ function App() {
           }, 100);
         }
         
-        // Calculate max received height once
-        const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
+        // Calculate max received height once (with safety checks)
+        const maxReceivedHeight = data.blocks.length > 0 
+          ? Math.max(...data.blocks.filter(b => b && b.header).map(b => b.header.height))
+          : 0;
         
         // Update sync status (always update, even if no blocks were appended)
         setSyncStatus(prev => {
@@ -1118,11 +1159,14 @@ function App() {
         });
       } else if (result.success && result.appended === 0) {
         // Even if no blocks were appended, update UI to reflect current state
-        console.log(`[Sync] No new blocks appended (may already have them), but updating UI. Current height: ${newHeight}`);
+        // Suppress this log - it's normal when blocks already exist
+        // console.log(`[Sync] No new blocks appended (may already have them), but updating UI. Current height: ${newHeight}`);
         setChainContext({ ...chainContext }); // Trigger re-render
         
-        // Calculate max received height for this case too
-        const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
+        // Calculate max received height for this case too (with safety checks)
+        const maxReceivedHeight = data.blocks.length > 0
+          ? Math.max(...data.blocks.filter(b => b && b.header).map(b => b.header.height))
+          : 0;
         
         // Update sync status to reflect current state
         setSyncStatus(prev => {
@@ -1241,8 +1285,8 @@ function App() {
       const now = Date.now();
       
       // Query network height periodically (every ~10 seconds) if we have peers
+      // Suppress frequent auto-sync logs - only query occasionally
       if (peerCount > 0 && now % 10000 < 3000) {
-        console.log(`[Auto-Sync] Querying network height from ${peerCount} peer(s)...`);
         p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
       }
       
@@ -1299,7 +1343,10 @@ function App() {
     // Phase 30: Handle GLOBAL_VIEW_REQUEST
     p2p.onMessage("GLOBAL_VIEW_REQUEST", async (_data: any, sender: string) => {
       const localTip = chainContext.storage.getTip();
-      if (!localTip) return;
+      // Only respond if we have a valid tip with header
+      if (!localTip || !localTip.header) {
+        return; // Don't send response if we don't have valid chain state
+      }
       
       // Get finalized height from finality manager if available
       let finalizedHeight = 0;
@@ -1328,19 +1375,22 @@ function App() {
       }
       
       const response = {
-        height: localTip.header.height,
-        tipHash: localTip.hash,
+        height: localTip.header?.height ?? 0,
+        tipHash: localTip.hash ?? "",
         finalizedHeight,
-        stateCommitment: localTip.header.stateCommitment,
+        stateCommitment: localTip.header?.stateCommitment,
         reputationScore,
       };
       
-      // Send response directly to requesting peer
-      if (p2p.sendToPeer) {
-        p2p.sendToPeer(sender, "GLOBAL_VIEW_RESPONSE", response);
-      } else {
-        // Fallback to broadcast if sendToPeer not available
-        p2p.broadcast("GLOBAL_VIEW_RESPONSE", response);
+      // Only send response if we have valid height
+      if (response.height > 0) {
+        // Send response directly to requesting peer
+        if (p2p.sendToPeer) {
+          p2p.sendToPeer(sender, "GLOBAL_VIEW_RESPONSE", response);
+        } else {
+          // Fallback to broadcast if sendToPeer not available
+          p2p.broadcast("GLOBAL_VIEW_RESPONSE", response);
+        }
       }
     });
 
@@ -1365,10 +1415,28 @@ function App() {
     // Phase 30: Handle GLOBAL_VIEW_RESPONSE
     let lastKnownNetworkHeight = -1; // Track network height for auto-sync
     p2p.onMessage("GLOBAL_VIEW_RESPONSE", async (payload: any, sender: string) => {
-      console.log(`[Sync] Received GLOBAL_VIEW_RESPONSE from ${sender.substring(0, 16)}...`, payload);
+      // Suppress frequent GLOBAL_VIEW_RESPONSE logs - only log if height changes significantly
+      // console.log(`[Sync] Received GLOBAL_VIEW_RESPONSE from ${sender.substring(0, 16)}...`, payload);
       
       if (globalSentinel) {
         globalSentinel.onGlobalViewResponse(sender, payload);
+      }
+      
+      // Handle availableFromHeight hint (when peer can't provide requested blocks)
+      if (payload && typeof payload.availableFromHeight === 'number' && payload.availableFromHeight > 0) {
+        const localTip = chainContext.storage.getTip();
+        const localHeight = localTip?.header?.height ?? -1;
+        
+        // If we're requesting blocks that are pruned, update our request to start from availableFromHeight
+        if (localHeight < payload.availableFromHeight && payload.height > localHeight) {
+          console.log(`[Sync] Peer indicates blocks available from height ${payload.availableFromHeight}, updating request range`);
+          // Request from available height instead
+          p2p.broadcast("REQUEST_BLOCKS", {
+            fromHeight: payload.availableFromHeight,
+            toHeight: Math.min(payload.height, payload.availableFromHeight + 500),
+          });
+          return; // Don't process as regular GLOBAL_VIEW_RESPONSE
+        }
       }
       
       // Use network height to trigger sync if we're behind
@@ -1380,7 +1448,8 @@ function App() {
         const localHeight = localTip?.header.height ?? -1;
         const behindBy = networkHeight - localHeight;
         
-        console.log(`[Sync] Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy}`);
+        // Suppress frequent sync status logs - only log when height changes significantly
+        // console.log(`[Sync] Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy}`);
         
         // Update sync status (always update if we have a valid network height)
         setSyncStatus(prev => {
@@ -1400,17 +1469,20 @@ function App() {
         
         if (networkHeight > localHeight) {
           const requestRange = Math.min(behindBy, 500); // Request up to 500 blocks at a time
-          console.log(`[Sync] Requesting ${requestRange} blocks to catch up (from ${localHeight + 1} to ${localHeight + requestRange})`);
+          // Suppress frequent request logs
+          // console.log(`[Sync] Requesting ${requestRange} blocks to catch up (from ${localHeight + 1} to ${localHeight + requestRange})`);
           p2p.broadcast("REQUEST_BLOCKS", {
             fromHeight: localHeight + 1,
             toHeight: localHeight + requestRange,
           });
         } else if (networkHeight === localHeight) {
-          console.log(`[Sync] ✅ Already synced to network height ${networkHeight}`);
+          // Only log when fully synced (important milestone)
+          // console.log(`[Sync] ✅ Already synced to network height ${networkHeight}`);
           setSyncStatus(prev => ({ ...prev, isSyncing: false, behindBy: 0, progress: 100 }));
         } else if (localHeight > networkHeight) {
           // We're ahead of the network (shouldn't happen, but log it)
-          console.log(`[Sync] ⚠️ Local height (${localHeight}) is ahead of network height (${networkHeight})`);
+          // Suppress this log as it's not critical
+          // console.log(`[Sync] ⚠️ Local height (${localHeight}) is ahead of network height (${networkHeight})`);
         }
       }
     });
@@ -3518,57 +3590,92 @@ function App() {
               {t("tabs.network")}
             </button>
             
-            {/* P1-1: Advanced Tabs (Less Used) */}
-            <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <span style={{ fontSize: "0.75rem", color: "#999", marginRight: "0.5rem" }}>
+            {/* P1-1: Advanced Tabs (Less Used) - Collapsible */}
+            <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem", alignItems: "center", paddingLeft: "0.5rem", borderLeft: "1px solid #e0e0e0" }}>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowAdvancedTabs(!showAdvancedTabs);
+                }}
+                style={{
+                  padding: "0.4rem 0.8rem",
+                  fontSize: "0.8rem",
+                  color: showAdvancedTabs ? "#667eea" : "#999",
+                  background: showAdvancedTabs ? "rgba(102, 126, 234, 0.1)" : "transparent",
+                  border: `1px solid ${showAdvancedTabs ? "#667eea" : "#ddd"}`,
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  transition: "all 0.2s ease",
+                  fontWeight: showAdvancedTabs ? "500" : "400",
+                }}
+                onMouseEnter={(e) => {
+                  if (!showAdvancedTabs) {
+                    e.currentTarget.style.borderColor = "#667eea";
+                    e.currentTarget.style.color = "#667eea";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!showAdvancedTabs) {
+                    e.currentTarget.style.borderColor = "#ddd";
+                    e.currentTarget.style.color = "#999";
+                  }
+                }}
+                title={showAdvancedTabs ? (locale === "zh" ? "隐藏高级标签" : "Hide Advanced Tabs") : (locale === "zh" ? "显示高级标签" : "Show Advanced Tabs")}
+              >
+                <span style={{ marginRight: "0.3rem" }}>{showAdvancedTabs ? "▼" : "▶"}</span>
                 {locale === "zh" ? "高级" : "Advanced"}
-              </span>
+              </button>
             </div>
-            <button
-              className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("storage");
-              }}
-            >
-              {t("tabs.storage")}
-            </button>
-            <button
-              className={`tab-button ${activeTab === "advanced" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("advanced");
-              }}
-            >
-              {t("tabs.advanced")}
-            </button>
-            <button
-              className={`tab-button ${activeTab === "token" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("token");
-              }}
-            >
-              {t("tabs.token")}
-            </button>
-            <button
-              className={`tab-button ${activeTab === "privacy" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("privacy");
-              }}
-            >
-              {t("tabs.privacy")}
-            </button>
-            <button
-              className={`tab-button ${activeTab === "tools" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("tools");
-              }}
-            >
-              {t("tabs.tools")}
-            </button>
+            {showAdvancedTabs && (
+              <>
+                <button
+                  className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveTab("storage");
+                  }}
+                >
+                  {t("tabs.storage")}
+                </button>
+                <button
+                  className={`tab-button ${activeTab === "advanced" ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveTab("advanced");
+                  }}
+                >
+                  {t("tabs.advanced")}
+                </button>
+                <button
+                  className={`tab-button ${activeTab === "token" ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveTab("token");
+                  }}
+                >
+                  {t("tabs.token")}
+                </button>
+                <button
+                  className={`tab-button ${activeTab === "privacy" ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveTab("privacy");
+                  }}
+                >
+                  {t("tabs.privacy")}
+                </button>
+                <button
+                  className={`tab-button ${activeTab === "tools" ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveTab("tools");
+                  }}
+                >
+                  {t("tabs.tools")}
+                </button>
+              </>
+            )}
           </div>
 
           {/* Overview Tab - P0-2: Simplified with Quick Status Dashboard */}
