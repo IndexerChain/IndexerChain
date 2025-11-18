@@ -102,6 +102,7 @@ export interface P2PNode {
   sendToPeer?(peerId: string, type: P2PMessageType, payload: any): void; // Phase 30: Optional method for direct peer messaging
   onMessage(type: P2PMessageType, handler: (payload: any, sender: string) => void): void;
   getPeerCount(): number;
+  requestPeers(): void; // Request peers from signaling server
 }
 
 /**
