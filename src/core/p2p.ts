@@ -169,6 +169,13 @@ export class BrowserP2PNode implements P2PNode {
             nodeId: this.nodeId,
           });
 
+          // Request peers immediately after joining
+          // Some signal servers may not automatically send peer list
+          setTimeout(() => {
+            this.requestPeers();
+            console.log("[P2P] Requested peers from signaling server");
+          }, 500); // Small delay to ensure join message is processed
+
           // Process queued messages
           this.processMessageQueue();
 
@@ -369,6 +376,11 @@ export class BrowserP2PNode implements P2PNode {
   private handleSignalingMessage(message: any): void {
     switch (message.type) {
       case "peers":
+        console.log(`[P2P] Received peers list:`, {
+          peerCount: message.peers?.length || 0,
+          peers: message.peers || [],
+          hasIPHashes: !!message.peerIPHashes,
+        });
         // Phase 33: Handle IP hash from signal server
         if (message.ipHash) {
           // Set our own IP hash
@@ -409,9 +421,20 @@ export class BrowserP2PNode implements P2PNode {
         // Original peer list handling
         // Received list of peers, initiate WebRTC connections
         const peerIds: string[] = message.peers || [];
+        console.log(`[P2P] Processing ${peerIds.length} peers, current connections: ${this.peers.size}`);
+        
+        if (peerIds.length === 0) {
+          console.warn("[P2P] ⚠️ Received empty peer list - no other nodes online or signal server issue");
+        }
+        
         for (const peerId of peerIds) {
           if (peerId !== this.nodeId && !this.peers.has(peerId)) {
+            console.log(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
             this.initiatePeerConnection(peerId);
+          } else if (peerId === this.nodeId) {
+            console.log(`[P2P] Skipping self: ${peerId.substring(0, 16)}...`);
+          } else if (this.peers.has(peerId)) {
+            console.log(`[P2P] Already connected/connecting to: ${peerId.substring(0, 16)}...`);
           }
         }
         break;
@@ -429,6 +452,32 @@ export class BrowserP2PNode implements P2PNode {
       case "ice-candidate":
         // Received ICE candidate
         this.handleIceCandidate(message.from, message.candidate);
+        break;
+
+      case "new-peer":
+        // Phase 37: Handle new peer notification from signal server
+        // When signal server notifies us about a new peer, initiate connection
+        const newPeerId = message.peerId;
+        if (newPeerId && newPeerId !== this.nodeId && !this.peers.has(newPeerId)) {
+          console.log(`[P2P] Signal server notified about new peer: ${newPeerId.substring(0, 16)}..., initiating connection`);
+          this.initiatePeerConnection(newPeerId);
+        }
+        break;
+
+      case "peer-left":
+        // Phase 37: Handle peer disconnection notification
+        const leftPeerId = message.peerId;
+        if (leftPeerId && this.peers.has(leftPeerId)) {
+          console.log(`[P2P] Signal server notified that peer left: ${leftPeerId.substring(0, 16)}...`);
+          const peerInfo = this.peers.get(leftPeerId);
+          if (peerInfo) {
+            if (peerInfo.dataChannel) {
+              peerInfo.dataChannel.close();
+            }
+            peerInfo.connection.close();
+            this.peers.delete(leftPeerId);
+          }
+        }
         break;
 
       // Phase 32: Handle bootstrap response from signal server
@@ -472,9 +521,11 @@ export class BrowserP2PNode implements P2PNode {
    */
   private async initiatePeerConnection(peerId: string): Promise<void> {
     if (this.peers.has(peerId)) {
+      console.log(`[P2P] Already have connection to ${peerId.substring(0, 16)}..., skipping`);
       return; // Already connected or connecting
     }
 
+    console.log(`[P2P] Creating WebRTC connection to ${peerId.substring(0, 16)}...`);
     const connection = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
@@ -499,18 +550,31 @@ export class BrowserP2PNode implements P2PNode {
     // Handle ICE candidates
     connection.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log(`[P2P] ICE candidate for ${peerId.substring(0, 16)}...:`, event.candidate.candidate?.substring(0, 50));
         this.sendSignalingMessage({
           type: "ice-candidate",
           to: peerId,
           candidate: event.candidate,
         });
+      } else {
+        console.log(`[P2P] ICE gathering complete for ${peerId.substring(0, 16)}...`);
+      }
+    };
+
+    // Handle connection state changes
+    connection.onconnectionstatechange = () => {
+      console.log(`[P2P] Connection state for ${peerId.substring(0, 16)}...: ${connection.connectionState}`);
+      if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
+        console.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
       }
     };
 
     // Create offer
     try {
+      console.log(`[P2P] Creating offer for ${peerId.substring(0, 16)}...`);
       const offer = await connection.createOffer();
       await connection.setLocalDescription(offer);
+      console.log(`[P2P] Offer created, sending to signal server for ${peerId.substring(0, 16)}...`);
 
       this.sendSignalingMessage({
         type: "offer",
@@ -518,7 +582,7 @@ export class BrowserP2PNode implements P2PNode {
         offer: offer,
       });
     } catch (error) {
-      console.error(`Failed to create offer for ${peerId}:`, error);
+      console.error(`[P2P] ❌ Failed to create offer for ${peerId.substring(0, 16)}...:`, error);
       this.peers.delete(peerId);
     }
   }
@@ -527,6 +591,7 @@ export class BrowserP2PNode implements P2PNode {
    * Handle incoming WebRTC offer
    */
   private async handleOffer(from: string, offer: RTCSessionDescriptionInit): Promise<void> {
+    console.log(`[P2P] Received offer from ${from.substring(0, 16)}...`);
     let peerInfo = this.peers.get(from);
 
     if (!peerInfo) {
@@ -565,6 +630,7 @@ export class BrowserP2PNode implements P2PNode {
       await peerInfo.connection.setRemoteDescription(offer);
       const answer = await peerInfo.connection.createAnswer();
       await peerInfo.connection.setLocalDescription(answer);
+      console.log(`[P2P] Created answer for ${from.substring(0, 16)}..., sending to signal server`);
 
       this.sendSignalingMessage({
         type: "answer",
@@ -614,9 +680,10 @@ export class BrowserP2PNode implements P2PNode {
     peerInfo.dataChannel = dataChannel;
 
     dataChannel.onopen = () => {
-      console.log(`Data channel opened with peer ${peerInfo.id}`);
+      console.log(`[P2P] ✅ Data channel opened with peer ${peerInfo.id.substring(0, 16)}...`);
       peerInfo.connected = true;
       peerInfo.lastSeen = Date.now();
+      console.log(`[P2P] Total connected peers: ${this.getPeerCount()}`);
       
       // Phase 30: Send network handshake when data channel opens
       // This will be handled by App.tsx after P2P connection is established
@@ -704,8 +771,14 @@ export class BrowserP2PNode implements P2PNode {
    * Request peers from signaling server
    */
   requestPeers(): void {
+    if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[P2P] ⚠️ Cannot request peers: not connected to signaling server");
+      return;
+    }
+    console.log("[P2P] Requesting peers from signaling server");
     this.sendSignalingMessage({
       type: "request-peers",
+      nodeId: this.nodeId,
     });
   }
 }

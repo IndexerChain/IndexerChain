@@ -19,12 +19,17 @@ routes = [
 # [vars]
 # ENVIRONMENT = "production"
 
-# Optional: Durable Objects (for production with state persistence)
-# Uncomment and configure if you need persistent peer state across worker restarts
-# [[durable_objects.bindings]]
-# name = "SIGNALING_ROOM"
-# class_name = "SignalingRoom"
-# script_name = "indexerchain-signaling"
+# Durable Objects (for shared state across all worker instances)
+# This ensures all connections see the same peer list, even across different worker instances
+[[durable_objects.bindings]]
+name = "SIGNALING_ROOM"
+class_name = "SignalingRoom"
+script_name = "indexerchain-signaling"
+
+# Durable Objects migrations (required for first-time setup)
+[[migrations]]
+tag = "v1"
+new_classes = ["SignalingRoom"]
 
 # Limits (Cloudflare defaults)
 # [limits]
