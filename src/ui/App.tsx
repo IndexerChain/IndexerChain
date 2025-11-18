@@ -1060,9 +1060,12 @@ function App() {
       }
       
       const result = await handleReceivedBlocks(data.blocks, chainContext, sender);
+      
+      // Always update UI even if no blocks were appended (blocks may already exist)
+      const newTip = chainContext.storage.getTip();
+      const newHeight = newTip?.header.height ?? 0;
+      
       if (result.success && result.appended > 0) {
-        const newTip = chainContext.storage.getTip();
-        const newHeight = newTip?.header.height ?? 0;
         console.log(`[Sync] ✅ Successfully appended ${result.appended} blocks. New height: ${newHeight}`);
         setChainContext({ ...chainContext }); // Trigger re-render
         
@@ -1081,7 +1084,7 @@ function App() {
         // Calculate max received height once
         const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
         
-        // Update sync status
+        // Update sync status (always update, even if no blocks were appended)
         setSyncStatus(prev => {
           // If we have networkHeight, update progress
           if (prev.networkHeight > 0) {
@@ -1113,8 +1116,41 @@ function App() {
           // Just update localHeight if we can't infer networkHeight
           return { ...prev, localHeight: newHeight };
         });
+      } else if (result.success && result.appended === 0) {
+        // Even if no blocks were appended, update UI to reflect current state
+        console.log(`[Sync] No new blocks appended (may already have them), but updating UI. Current height: ${newHeight}`);
+        setChainContext({ ...chainContext }); // Trigger re-render
         
-        // If we appended blocks, check if there are more to request
+        // Calculate max received height for this case too
+        const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
+        
+        // Update sync status to reflect current state
+        setSyncStatus(prev => {
+          if (prev.networkHeight > 0) {
+            const behindBy = prev.networkHeight - newHeight;
+            return {
+              ...prev,
+              localHeight: newHeight,
+              behindBy,
+              isSyncing: behindBy > 0,
+              progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / prev.networkHeight) * 100)) : 0,
+            };
+          }
+          // Try to infer networkHeight from received blocks
+          if (maxReceivedHeight > newHeight) {
+            const inferredNetworkHeight = maxReceivedHeight;
+            const behindBy = inferredNetworkHeight - newHeight;
+            return {
+              ...prev,
+              localHeight: newHeight,
+              networkHeight: inferredNetworkHeight,
+              behindBy,
+              isSyncing: behindBy > 0,
+              progress: inferredNetworkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / inferredNetworkHeight) * 100)) : 0,
+            };
+          }
+          return { ...prev, localHeight: newHeight };
+        });
         
         // If the highest received block is higher than what we have, request more
         if (maxReceivedHeight > newHeight) {
@@ -1139,11 +1175,34 @@ function App() {
     });
 
     // Update peer count periodically and save connection state
+    // Also update sync status from actual storage to ensure UI reflects reality
     const interval = setInterval(() => {
       if (p2p.isConnected) {
         setPeerCount(p2p.getPeerCount());
         const wasConnected = isP2PConnected;
         setIsP2PConnected(true);
+        
+        // Periodically update sync status from actual storage
+        // This ensures UI reflects the real state even if block reception handlers miss updates
+        if (chainContext) {
+          const actualTip = chainContext.storage.getTip();
+          const actualHeight = actualTip?.header.height ?? 0;
+          
+          setSyncStatus(prev => {
+            // Only update if height actually changed or if we need to refresh
+            if (actualHeight !== prev.localHeight || prev.networkHeight > 0) {
+              const behindBy = prev.networkHeight > 0 ? prev.networkHeight - actualHeight : 0;
+              return {
+                ...prev,
+                localHeight: actualHeight,
+                behindBy,
+                isSyncing: behindBy > 0,
+                progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (actualHeight / prev.networkHeight) * 100)) : 0,
+              };
+            }
+            return prev;
+          });
+        }
         
         // Save connection state immediately when connected (only once to avoid excessive writes)
         if (!wasConnected) {

@@ -141,6 +141,7 @@ export async function handleReceivedBlocks(
 
     // Skip if we already have this block
     if (block.header.height <= localHeight) {
+      console.log(`[Sync] Skipping block ${block.header.height} (already have it, local height: ${localHeight})`);
       continue;
     }
 
@@ -152,6 +153,7 @@ export async function handleReceivedBlocks(
       const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
       const reputationManager = getGlobalPeerReputationManager(context.params);
       if (reputationManager.isBanned(sender)) {
+        console.log(`[Sync] Skipping block ${block.header.height} from banned peer`);
         continue; // Skip blocks from banned peers
       }
     }
@@ -168,15 +170,24 @@ export async function handleReceivedBlocks(
         const reputationManager = getGlobalPeerReputationManager(context.params);
         reputationManager.onInvalidBlockFrom(sender);
       }
-      return {
-        success: false,
-        error: `Block ${block.header.height} verification failed: ${verification.error}`,
-        appended,
-      };
+      console.error(`[Sync] Block ${block.header.height} verification failed: ${verification.error}`);
+      // Continue processing other blocks instead of returning immediately
+      // This allows us to append valid blocks even if some fail
+      continue;
     }
 
     // Append block
     try {
+      // Re-check tip before appending (in case another block was appended)
+      const currentTip = context.storage.getTip();
+      const currentHeight = currentTip?.header.height ?? -1;
+      
+      // Skip if we already have this block (race condition)
+      if (block.header.height <= currentHeight) {
+        console.log(`[Sync] Block ${block.header.height} already appended (race condition, current height: ${currentHeight})`);
+        continue;
+      }
+      
       context.storage.appendBlock(block);
       context.indexState.applyBlock(block);
       
@@ -188,12 +199,11 @@ export async function handleReceivedBlocks(
       }
       
       appended++;
+      console.log(`[Sync] ✅ Appended block ${block.header.height} (total appended: ${appended})`);
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-        appended,
-      };
+      console.error(`[Sync] ❌ Failed to append block ${block.header.height}:`, error);
+      // Continue processing other blocks instead of returning immediately
+      continue;
     }
   }
 
