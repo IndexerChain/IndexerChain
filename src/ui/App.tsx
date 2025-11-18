@@ -46,6 +46,7 @@ import {
 import type { Operation, Block, Tx, SnapshotMeta } from "../core/types.js";
 import { WalletBackupPanel } from "./WalletBackupPanel.js";
 import { WalletManagerPanel } from "./WalletManagerPanel.js";
+import { ConfigChecker } from "./ConfigChecker.js";
 import "./index.css";
 
 /**
@@ -63,7 +64,7 @@ function App() {
   const [error, setError] = useState<string>("");
   // Phase 17: Support mainnet mode (default) and dev mode
   // Default to mainnet signaling server (can be configured)
-  const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.io"; // TODO: Replace with actual mainnet signaling server
+  const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.com"; // Custom domain configured
   const [bootstrapUrl, setBootstrapUrl] = useState<string>(DEFAULT_MAINNET_SIGNALING);
   const [isMainnetMode, setIsMainnetMode] = useState<boolean>(true);
   const [peerCount, setPeerCount] = useState<number>(0);
@@ -232,6 +233,9 @@ function App() {
   const p2pNodeRef = useRef<BrowserP2PNode | null>(null);
 
   const [needsReset, setNeedsReset] = useState<boolean>(false);
+
+  // Tab navigation state
+  const [activeTab, setActiveTab] = useState<string>("overview");
 
   // Initialize chain on mount
   useEffect(() => {
@@ -1147,11 +1151,21 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Browser Index Chain</h1>
-        <p className="subtitle">Phase 15: State Commitment & Extreme Pruning</p>
+        <h1>⛓️ IndexerChain</h1>
+        <p className="subtitle">Browser-Native Blockchain • Phase 24 Complete</p>
       </header>
 
       <main className="app-main">
+        {/* Configuration Checker */}
+        {chainContext && (
+          <ConfigChecker
+            chainContext={chainContext}
+            isP2PConnected={isP2PConnected}
+            nodeAddress={nodeAddress}
+            isMining={isMining}
+          />
+        )}
+
         {needsReset && (
           <div
             style={{
@@ -1179,495 +1193,1136 @@ function App() {
         )}
 
         {error && (
-          <div
-            className="error-message"
-            style={{
-              color: "red",
-              marginBottom: "1rem",
-              padding: "1rem",
-              background: "#ffe6e6",
-              borderRadius: "4px",
-              border: "1px solid #ff9999",
-              whiteSpace: "pre-line",
-            }}
-          >
-            <strong>Error:</strong>
+          <div className={error.includes("✅") ? "success" : "error"} style={{ whiteSpace: "pre-line" }}>
+            <strong>{error.includes("✅") ? "Success:" : "Error:"}</strong>
             <br />
             {error}
           </div>
         )}
 
-        {/* Node Identity Section - Phase 5 */}
-        <div className="status-card">
-          <h2>Node Identity</h2>
-          <div className="status-item">
-            <span className="label">Address:</span>
-            <span className="value" style={{ fontSize: "0.9rem", wordBreak: "break-all" }}>
-              {nodeAddress || "Loading..."}
-            </span>
-            {nodeAddress && (
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(nodeAddress);
-                  setError("Address copied to clipboard!");
-                  setTimeout(() => setError(""), 2000);
-                }}
-                style={{
-                  marginLeft: "0.5rem",
-                  padding: "0.25rem 0.5rem",
-                  fontSize: "0.8rem",
-                  background: "#667eea",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                }}
-              >
-                Copy
-              </button>
-            )}
+        {/* Tab Navigation */}
+        <div className="tab-container">
+          <div className="tab-nav">
+            <button
+              className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
+              onClick={() => setActiveTab("overview")}
+            >
+              📊 Overview
+            </button>
+            <button
+              className={`tab-button ${activeTab === "wallet" ? "active" : ""}`}
+              onClick={() => setActiveTab("wallet")}
+            >
+              💼 Wallet
+            </button>
+            <button
+              className={`tab-button ${activeTab === "mining" ? "active" : ""}`}
+              onClick={() => setActiveTab("mining")}
+            >
+              ⛏️ Mining
+            </button>
+            <button
+              className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
+              onClick={() => setActiveTab("transactions")}
+            >
+              💸 Transactions
+            </button>
+            <button
+              className={`tab-button ${activeTab === "network" ? "active" : ""}`}
+              onClick={() => setActiveTab("network")}
+            >
+              🌐 Network
+            </button>
+            <button
+              className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
+              onClick={() => setActiveTab("storage")}
+            >
+              💾 Storage
+            </button>
+            <button
+              className={`tab-button ${activeTab === "advanced" ? "active" : ""}`}
+              onClick={() => setActiveTab("advanced")}
+            >
+              ⚙️ Advanced
+            </button>
           </div>
-          <div className="status-item">
-            <span className="label">Node ID:</span>
-            <span className="value" style={{ fontSize: "0.8rem" }}>
-              {getOrCreateBrowserNodeId().substring(0, 16)}...
-            </span>
-          </div>
-          {/* Phase 7: Balance Display */}
-          {nodeAddress && chainContext && (
-            <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-              <span className="label">IDC Balance:</span>
-              <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
-                {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
-              </span>
-            </div>
-          )}
-          
-          {/* Phase 24: Multi-Wallet Manager */}
-          <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "2px solid #667eea" }}>
-            <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem", color: "#667eea" }}>
-              💼 Wallet Manager (Phase 24)
-            </h3>
-            <WalletManagerPanel
-              onWalletChanged={async () => {
-                // Reload address after wallet change
-                const address = await getOrCreateNodeAddress();
-                setNodeAddress(address);
-              }}
-              onError={(err) => {
-                setError(err);
-              }}
-            />
-          </div>
-          
-          {/* Phase 23: Backup & Recovery */}
-          <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "2px solid #667eea" }}>
-            <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem", color: "#667eea" }}>
-              🔐 Backup & Recovery (Phase 23)
-            </h3>
-            <WalletBackupPanel
-              onExportSuccess={() => {
-                setError("✅ Wallet backup exported successfully! Save the file securely.");
-                setTimeout(() => setError(""), 5000);
-              }}
-              onImportSuccess={async () => {
-                // Reload address after import
-                const address = await getOrCreateNodeAddress();
-                setNodeAddress(address);
-                setError("✅ Wallet imported successfully! Your identity has been restored.");
-                setTimeout(() => setError(""), 5000);
-              }}
-              onError={(err) => {
-                setError(err);
-              }}
-            />
-          </div>
-        </div>
 
-        {/* P2P Network Section */}
-        <div className="status-card">
-          <h2>P2P Network</h2>
-          <div className="status-item">
-            <span className="label">Mode:</span>
-            <span className="value">
-              {isMainnetMode ? (
-                <span style={{ color: "#28a745", fontWeight: "bold" }}>🌐 Mainnet</span>
-              ) : (
-                <span style={{ color: "#ffc107", fontWeight: "bold" }}>🔧 Dev Mode</span>
-              )}
-            </span>
-          </div>
-          <div className="status-item">
-            <span className="label">Status:</span>
-            <span className="value">{isP2PConnected ? "Connected" : "Disconnected"}</span>
-          </div>
-          <div className="status-item">
-            <span className="label">Peers:</span>
-            <span className="value">{peerCount}</span>
-          </div>
-          {!isP2PConnected ? (
-            <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {/* Mode Toggle */}
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={isMainnetMode}
-                    onChange={(e) => {
-                      setIsMainnetMode(e.target.checked);
-                      if (e.target.checked) {
-                        setBootstrapUrl(DEFAULT_MAINNET_SIGNALING);
-                      } else {
-                        setBootstrapUrl("ws://localhost:8080");
-                      }
-                    }}
-                  />
-                  <span>Mainnet Mode (自动连接主网)</span>
-                </label>
-              </div>
-              {/* Signaling Server URL Input */}
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                <input
-                  type="text"
-                  placeholder={isMainnetMode ? "Mainnet Signaling Server (wss://...)" : "Local Signaling Server (ws://localhost:8080)"}
-                  value={bootstrapUrl}
-                  onChange={(e) => setBootstrapUrl(e.target.value)}
-                  style={{ flex: 1, padding: "0.5rem" }}
-                  disabled={isMainnetMode}
-                />
-                <button className="btn btn-primary" onClick={handleConnectP2P}>
-                  Connect
-                </button>
-              </div>
-              {isMainnetMode && (
-                <div style={{ fontSize: "0.85rem", color: "#666", padding: "0.5rem", background: "#f0f0f0", borderRadius: "4px" }}>
-                  💡 <strong>主网模式</strong>：将自动连接到公共 IndexerChain 主网，和全球用户一起挖矿。
-                  <br />
-                  如需本地测试，请取消勾选 "Mainnet Mode"。
-                </div>
-              )}
-              {!isMainnetMode && (
-                <div style={{ fontSize: "0.85rem", color: "#666", padding: "0.5rem", background: "#fff3cd", borderRadius: "4px" }}>
-                  ⚠️ <strong>开发模式</strong>：连接到本地信令服务器，用于开发、测试或私有链。
-                  <br />
-                  需要先运行 <code>node signaling-server-example.js</code>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              <div style={{ fontSize: "0.9rem", color: "#666" }}>
-                Connected to: <code style={{ fontSize: "0.85rem" }}>{bootstrapUrl}</code>
-              </div>
-              <button className="btn btn-secondary" onClick={handleDisconnectP2P}>
-                Disconnect
-              </button>
-            </div>
-          )}
-          {peers.length > 0 && (
-            <div style={{ marginTop: "1rem" }}>
-              <strong>Connected Peers:</strong>
-              <div style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
-                {peers.map((peer) => (
-                  <div key={peer.id} style={{ padding: "0.25rem 0" }}>
-                    {peer.id.substring(0, 16)}... ({peer.connected ? "✓" : "✗"})
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="status-card">
-          <h2>Chain Status</h2>
-          <div className="status-item">
-            <span className="label">Current Height:</span>
-            <span className="value">{height}</span>
-          </div>
-          <div className="status-item">
-            <span className="label">Block Count:</span>
-            <span className="value">{blockCount}</span>
-          </div>
-          <div className="status-item">
-            <span className="label">Pending Txs:</span>
-            <span className="value">{pendingTxs.length}</span>
-          </div>
-          <div className="status-item">
-            <span className="label">Mining:</span>
-            <span className="value">{isMining ? "Active" : "Inactive"}</span>
-          </div>
-          {/* Phase 16: IDC Emission Info */}
-          {chainContext && tip && (() => {
-            const totalMinted = chainContext.indexState.getTotalMinted();
-            const totalMintedIDC = uIDCToIDC(totalMinted);
-            const maxSupplyIDC = uIDCToIDC(IDC_MAX_SUPPLY);
-            const emissionStats = getEmissionStats(tip.header.height);
-            const nextBlockReward = emissionStats.rawRewardIDC;
-            
-            return (
-              <>
-                <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                  <span className="label">Total Minted:</span>
-                  <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
-                    {totalMintedIDC.toFixed(6)} / {maxSupplyIDC.toFixed(6)} IDC
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Minting Progress:</span>
-                  <span className="value">
-                    {((totalMintedIDC / maxSupplyIDC) * 100).toFixed(4)}%
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Current Era:</span>
-                  <span className="value">
-                    Era {emissionStats.era} / {IDC_ERA_COUNT - 1}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Block Reward (next):</span>
-                  <span className="value" style={{ fontWeight: "bold" }}>
-                    {nextBlockReward.toFixed(6)} IDC
-                  </span>
-                </div>
-                <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                  <span className="label">Blocks in Era:</span>
-                  <span className="value">
-                    {Number(emissionStats.blocksRemainingInEra).toLocaleString()} remaining
-                  </span>
-                </div>
-              </>
-            );
-          })()}
-        </div>
-
-        {/* Phase 6: Difficulty Information */}
-        {tip && (
-          <div className="status-card">
-            <h2>Difficulty Status</h2>
-            <div className="status-item">
-              <span className="label">Current Difficulty:</span>
-              <span className="value">{tip.header.difficulty}</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Target Block Time:</span>
-              <span className="value">{chainContext.params.targetBlockTime}s</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Blocks Until Adjustment:</span>
-              <span className="value">
-                {getBlocksUntilAdjustment(
-                  height,
-                  chainContext.params.difficultyAdjustmentInterval
-                )}
-              </span>
-            </div>
-            {(() => {
-              const allBlocks = chainContext.storage.getAllBlocks();
-              const recentBlocks = allBlocks.slice(-chainContext.params.difficultyAdjustmentInterval);
-              const avgTime = getAverageBlockTime(recentBlocks);
-              if (avgTime !== null) {
-                return (
+          {/* Overview Tab */}
+          {activeTab === "overview" && (
+            <div className="tab-content active">
+              {/* Quick Stats Grid */}
+              <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
+                {/* Chain Status Card */}
+                <div className="status-card">
+                  <h2>📊 Chain Status</h2>
                   <div className="status-item">
-                    <span className="label">Avg Block Time (last {recentBlocks.length}):</span>
-                    <span className="value">{avgTime.toFixed(2)}s</span>
+                    <span className="label">Current Height:</span>
+                    <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
+                      {height}
+                    </span>
                   </div>
-                );
-              }
-              return null;
-            })()}
-            {(() => {
-              const allBlocks = chainContext.storage.getAllBlocks();
-              if (allBlocks.length >= chainContext.params.difficultyAdjustmentInterval) {
-                const explanation = explainDifficultyChange(allBlocks, chainContext.params);
-                return (
-                  <div style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#666" }}>
-                    <strong>Next Adjustment:</strong> {explanation.reason}
-                  </div>
-                );
-              }
-              return null;
-            })()}
-          </div>
-        )}
-
-        {/* Phase 9: State & Storage (Snapshots) */}
-        {chainContext && (
-          <div className="status-card">
-            <h2>State & Storage</h2>
-            <div className="status-item">
-              <span className="label">Last Snapshot Height:</span>
-              <span className="value">
-                {latestSnapshot ? latestSnapshot.height : "None"}
-              </span>
-            </div>
-            {latestSnapshot && (
-              <>
-                <div className="status-item">
-                  <span className="label">Last Snapshot Time:</span>
-                  <span className="value">
-                    {new Date(latestSnapshot.createdAt).toLocaleString()}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Blocks Since Snapshot:</span>
-                  <span className="value">
-                    {Math.max(0, height - latestSnapshot.height)}
-                  </span>
-                </div>
-              </>
-            )}
-            <div className="status-item">
-              <span className="label">Snapshot Count:</span>
-              <span className="value">{snapshotMetas.length}</span>
-            </div>
-            {/* Phase 12: Show snapshot type info */}
-            {latestSnapshot && (
-              <div className="status-item">
-                <span className="label">Latest Snapshot Type:</span>
-                <span className="value">
-                  {(() => {
-                    // Check if latest snapshot is full or delta
-                    const latestSnapData = loadSnapshotByHeightSync(latestSnapshot.height);
-                    if (latestSnapData) {
-                      if (latestSnapData.full === false) {
-                        return "Delta (Incremental)";
-                      } else {
-                        return "Full";
-                      }
-                    }
-                    return "Unknown";
-                  })()}
-                </span>
-              </div>
-            )}
-            {/* Phase 11: Compression info */}
-            {snapshotSizeInfo && (
-              <>
-                <div className="status-item">
-                  <span className="label">Latest Snapshot Size:</span>
-                  <span className="value">
-                    {(snapshotSizeInfo.compressedSize / 1024).toFixed(2)} KB
-                  </span>
-                </div>
-                {snapshotSizeInfo.compressionRatio > 0 && (
                   <div className="status-item">
-                    <span className="label">Compression Ratio:</span>
-                    <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
-                      {snapshotSizeInfo.compressionRatio.toFixed(1)}% reduction
-                    </span>
+                    <span className="label">Block Count:</span>
+                    <span className="value">{blockCount}</span>
                   </div>
-                )}
-                {snapshotSizeInfo.estimatedUncompressedSize > 0 && (
-                  <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                    <span className="label">Estimated Uncompressed:</span>
-                    <span className="value">
-                      {(snapshotSizeInfo.estimatedUncompressedSize / 1024).toFixed(2)} KB
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
-            {/* Phase 13: Verification info */}
-            {latestSnapshot && (
-              <>
-                {latestSnapshot.stateHash && (
-                  <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                    <span className="label">State Hash:</span>
-                    <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all", fontFamily: "monospace" }}>
-                      {latestSnapshot.stateHash.substring(0, 16)}...
-                    </span>
-                  </div>
-                )}
-                <div className="status-item">
-                  <span className="label">Verification Status:</span>
-                  <span className="value">
-                    {latestSnapshot.verifiedAt ? (
-                      <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Verified</span>
-                    ) : latestSnapshot.stateHash ? (
-                      <span style={{ color: "#ffc107", fontWeight: "bold" }}>⚠️ Not Verified Yet</span>
-                    ) : (
-                      <span style={{ color: "#666" }}>— No Hash</span>
-                    )}
-                  </span>
-                </div>
-                {latestSnapshot.verifiedAt && (
-                  <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                    <span className="label">Last Verified:</span>
-                    <span className="value">
-                      {new Date(latestSnapshot.verifiedAt).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
-            {/* Phase 15: State Commitment info */}
-            {tip && tip.header.stateCommitment && (
-              <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                <span className="label">State Commitment:</span>
-                <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all", fontFamily: "monospace" }}>
-                  {tip.header.stateCommitment.substring(0, 16)}...
-                </span>
-              </div>
-            )}
-            {latestSnapshot && tip && (
-              <>
-                {latestSnapshot.stateCommitment && tip.header.stateCommitment && (
                   <div className="status-item">
-                    <span className="label">Commitment Match:</span>
+                    <span className="label">Pending Txs:</span>
+                    <span className="value">{pendingTxs.length}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Mining:</span>
                     <span className="value">
-                      {latestSnapshot.stateCommitment === tip.header.stateCommitment ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Matches</span>
+                      {isMining || clusterMining ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
                       ) : (
-                        <span style={{ color: "#dc3545", fontWeight: "bold" }}>❌ Mismatch</span>
+                        <span style={{ color: "#666" }}>Inactive</span>
                       )}
                     </span>
                   </div>
+                </div>
+
+                {/* Network Status Card */}
+                <div className="status-card">
+                  <h2>🌐 Network Status</h2>
+                  <div className="status-item">
+                    <span className="label">Connection:</span>
+                    <span className="value">
+                      {isP2PConnected ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Connected</span>
+                      ) : (
+                        <span style={{ color: "#dc3545" }}>Disconnected</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Peers:</span>
+                    <span className="value">{peerCount}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Mode:</span>
+                    <span className="value">
+                      {isMainnetMode ? (
+                        <span style={{ color: "#28a745" }}>🌐 Mainnet</span>
+                      ) : (
+                        <span style={{ color: "#ffc107" }}>🔧 Dev</span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Wallet Status Card */}
+                <div className="status-card">
+                  <h2>💼 Wallet Status</h2>
+                  <div className="status-item">
+                    <span className="label">Address:</span>
+                    <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all" }}>
+                      {nodeAddress ? `${nodeAddress.substring(0, 20)}...` : "Loading..."}
+                    </span>
+                  </div>
+                  {nodeAddress && chainContext && (
+                    <div className="status-item">
+                      <span className="label">IDC Balance:</span>
+                      <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
+                        {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                      </span>
+                    </div>
+                  )}
+                  <div className="status-item">
+                    <span className="label">Node ID:</span>
+                    <span className="value" style={{ fontSize: "0.8rem" }}>
+                      {getOrCreateBrowserNodeId().substring(0, 16)}...
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Latest Block */}
+              {tip && (
+                <div className="status-card">
+                  <h2>📦 Latest Block</h2>
+                  <div className="status-item">
+                    <span className="label">Hash:</span>
+                    <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                      {tip.hash.substring(0, 32)}...
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Height:</span>
+                    <span className="value">{tip.header.height}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Transactions:</span>
+                    <span className="value">{tip.txs.length}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Difficulty:</span>
+                    <span className="value">{tip.header.difficulty}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Nonce:</span>
+                    <span className="value">{tip.header.nonce.toLocaleString()}</span>
+                  </div>
+                  {tip.header.stateCommitment && (
+                    <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                      <span className="label">State Commitment:</span>
+                      <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                        {tip.header.stateCommitment.substring(0, 24)}...
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Wallet Tab */}
+          {activeTab === "wallet" && (
+            <div className="tab-content active">
+              {/* Node Identity Section */}
+              <div className="status-card">
+                <h2>💼 Node Identity</h2>
+                <div className="status-item">
+                  <span className="label">Address:</span>
+                  <span className="value" style={{ fontSize: "0.9rem", wordBreak: "break-all" }}>
+                    {nodeAddress || "Loading..."}
+                  </span>
+                  {nodeAddress && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(nodeAddress);
+                        setError("Address copied to clipboard!");
+                        setTimeout(() => setError(""), 2000);
+                      }}
+                      style={{
+                        marginLeft: "0.5rem",
+                        padding: "0.25rem 0.5rem",
+                        fontSize: "0.8rem",
+                        background: "#667eea",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Copy
+                    </button>
+                  )}
+                </div>
+                <div className="status-item">
+                  <span className="label">Node ID:</span>
+                  <span className="value" style={{ fontSize: "0.8rem" }}>
+                    {getOrCreateBrowserNodeId().substring(0, 16)}...
+                  </span>
+                </div>
+                {/* Phase 7: Balance Display */}
+                {nodeAddress && chainContext && (
+                  <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                    <span className="label">IDC Balance:</span>
+                    <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
+                      {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                    </span>
+                  </div>
                 )}
-              </>
-            )}
-            {/* Phase 14: Remote snapshot info */}
-            {chainContext && (
-              <>
-                <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                  <span className="label">Remote Snapshot:</span>
+              </div>
+              
+              {/* Phase 24: Multi-Wallet Manager */}
+              <div className="status-card">
+                <h2>💼 Wallet Manager (Phase 24)</h2>
+                <WalletManagerPanel
+                  onWalletChanged={async () => {
+                    // Reload address after wallet change
+                    const address = await getOrCreateNodeAddress();
+                    setNodeAddress(address);
+                  }}
+                  onError={(err) => {
+                    setError(err);
+                  }}
+                />
+              </div>
+              
+              {/* Phase 23: Backup & Recovery */}
+              <div className="status-card">
+                <h2>🔐 Backup & Recovery (Phase 23)</h2>
+                <WalletBackupPanel
+                  onExportSuccess={() => {
+                    setError("✅ Wallet backup exported successfully! Save the file securely.");
+                    setTimeout(() => setError(""), 5000);
+                  }}
+                  onImportSuccess={async () => {
+                    // Reload address after import
+                    const address = await getOrCreateNodeAddress();
+                    setNodeAddress(address);
+                    setError("✅ Wallet imported successfully! Your identity has been restored.");
+                    setTimeout(() => setError(""), 5000);
+                  }}
+                  onError={(err) => {
+                    setError(err);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Mining Tab */}
+          {activeTab === "mining" && (
+            <div className="tab-content active">
+              {/* Mining Controls */}
+              <div className="status-card">
+                <h2>⛏️ Mining Controls</h2>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
+                  {!clusterMining && !isMining ? (
+                    <>
+                      <button
+                        className="btn btn-primary"
+                        onClick={handleStartMining}
+                      >
+                        Start Mining (Single Worker) {pendingTxs.length > 0 ? `(${pendingTxs.length} pending)` : "(coinbase only)"}
+                      </button>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={autoMining}
+                          onChange={(e) => {
+                            setAutoMining(e.target.checked);
+                            if (e.target.checked && chainContext && !isMining && !clusterMining) {
+                              setTimeout(() => handleStartMining(), 500);
+                            }
+                          }}
+                        />
+                        <span style={{ fontSize: "0.9rem" }}>Auto Mining</span>
+                      </label>
+                    </>
+                  ) : clusterMining ? (
+                    <>
+                      <span style={{ fontSize: "0.9rem", color: "#666" }}>
+                        Cluster mining active ({clusterStats.activeWorkers} workers)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn btn-secondary" onClick={handleStopMining}>
+                        Stop Mining
+                      </button>
+                      {autoMining && (
+                        <span style={{ fontSize: "0.9rem", color: "#666" }}>
+                          (Auto-mining enabled - will restart after block)
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Mining Status */}
+              {(isMining || miningStats.hashesTried > 0) && (
+                <div className="status-card">
+                  <h2>📊 Mining Status</h2>
+                  <div className="status-item">
+                    <span className="label">Status:</span>
+                    <span className="value">
+                      {isMining ? "Mining..." : minerClient.getIsMining() ? "Mining..." : "Stopped"}
+                    </span>
+                  </div>
+                  {tip && (
+                    <div className="status-item">
+                      <span className="label">Current Difficulty:</span>
+                      <span className="value">
+                        {tip.header.difficulty} (need {tip.header.difficulty} leading zeros)
+                      </span>
+                    </div>
+                  )}
+                  <div className="status-item">
+                    <span className="label">Estimated Hashrate:</span>
+                    <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
+                      {miningStats.hashRate
+                        ? `${(miningStats.hashRate / 1000).toFixed(2)} K hash/s`
+                        : "Calculating..."}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Total Hashes Tried:</span>
+                    <span className="value">{miningStats.hashesTried.toLocaleString()}</span>
+                  </div>
+                  {miningStats.elapsedTime > 0 && (
+                    <div className="status-item">
+                      <span className="label">Elapsed Time:</span>
+                      <span className="value">{miningStats.elapsedTime.toFixed(1)}s</span>
+                    </div>
+                  )}
+                  {isMining && (
+                    <>
+                      <div className="status-item">
+                        <span className="label">Current Hash:</span>
+                        <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>
+                          {miningHash || "Computing..."}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Current Nonce:</span>
+                        <span className="value">{miningNonce.toLocaleString()}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 18: Cluster Mining Control */}
+              {chainContext && (
+                <div className="status-card">
+                  <h2>🔥 Cluster Mining (Phase 18)</h2>
+                  <div className="status-item">
+                    <span className="label">Mode:</span>
+                    <span className="value">
+                      {clusterMining ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
+                      ) : (
+                        <span style={{ color: "#666" }}>Inactive</span>
+                      )}
+                    </span>
+                  </div>
+                  {!clusterMining && (
+                    <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <label>
+                          Worker Count:
+                          <input
+                            type="range"
+                            min="1"
+                            max={typeof navigator !== "undefined" && "hardwareConcurrency" in navigator 
+                              ? Math.max(1, (navigator.hardwareConcurrency || 4) * 2)
+                              : 32}
+                            value={clusterWorkerCount}
+                            onChange={(e) => setClusterWorkerCount(parseInt(e.target.value))}
+                            style={{ marginLeft: "0.5rem", width: "200px" }}
+                          />
+                          <span style={{ marginLeft: "0.5rem", fontWeight: "bold" }}>
+                            {clusterWorkerCount}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ fontSize: "0.85rem", color: "#666" }}>
+                        Optimal: {MinerCluster.getOptimalWorkerCount()} workers (CPU cores - 1)
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        onClick={handleStartClusterMining}
+                        disabled={!chainContext || clusterMining}
+                      >
+                        Start Cluster Mining {pendingTxs.length > 0 ? `(${pendingTxs.length} pending)` : "(coinbase only)"}
+                      </button>
+                    </div>
+                  )}
+                  {clusterMining && (
+                    <>
+                      <div className="status-item">
+                        <span className="label">Total Hashrate:</span>
+                        <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
+                          {clusterStats.totalHashRate
+                            ? `${(clusterStats.totalHashRate / 1000).toFixed(2)} K hash/s`
+                            : "Calculating..."}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Active Workers:</span>
+                        <span className="value">
+                          {clusterStats.activeWorkers} / {clusterStats.totalWorkers}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Total Hashes Tried:</span>
+                        <span className="value">{clusterStats.totalHashesTried.toString()}</span>
+                      </div>
+                      {clusterStats.workers.length > 0 && (
+                        <div style={{ marginTop: "1rem" }}>
+                          <strong>Worker Details:</strong>
+                          <div style={{ maxHeight: "200px", overflowY: "auto", marginTop: "0.5rem" }}>
+                            {clusterStats.workers.map((worker) => (
+                              <div
+                                key={worker.workerId}
+                                style={{
+                                  padding: "0.5rem",
+                                  marginBottom: "0.25rem",
+                                  background: "#f0f0f0",
+                                  borderRadius: "4px",
+                                  fontSize: "0.85rem",
+                                }}
+                              >
+                                <div>
+                                  <strong>Worker #{worker.workerId}:</strong>{" "}
+                                  <span style={{ color: worker.status === "running" ? "#28a745" : "#666" }}>
+                                    {worker.status}
+                                  </span>
+                                </div>
+                                <div>
+                                  Hashrate: {worker.hashRate ? `${(worker.hashRate / 1000).toFixed(2)} K hash/s` : "—"}
+                                </div>
+                                <div>
+                                  Nonce Range: {worker.currentNonceStart.toString()} -{" "}
+                                  {worker.currentNonceEnd ? worker.currentNonceEnd.toString() : "∞"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div style={{ marginTop: "1rem" }}>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={handleStopClusterMining}
+                        >
+                          Stop Cluster Mining
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 19: Global Miner Pool */}
+              {chainContext && isP2PConnected && (
+                <div className="status-card">
+                  <h2>🌐 Global Miner Pool (Phase 19)</h2>
+                  <div className="status-item">
+                    <span className="label">Mode:</span>
+                    <span className="value">
+                      {globalPoolEnabled ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Enabled</span>
+                      ) : (
+                        <span style={{ color: "#666" }}>Disabled</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Role:</span>
+                    <span className="value">
+                      {isDelegator ? (
+                        <span style={{ color: "#667eea", fontWeight: "bold" }}>Delegator</span>
+                      ) : (
+                        <span style={{ color: "#666" }}>Worker Node</span>
+                      )}
+                    </span>
+                  </div>
+                  {isDelegator && delegatorStats && (
+                    <>
+                      <div className="status-item">
+                        <span className="label">Active Ranges:</span>
+                        <span className="value">{delegatorStats.activeRanges}</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Total Nodes:</span>
+                        <span className="value">{delegatorStats.totalNodes}</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Global Pointer:</span>
+                        <span className="value" style={{ fontSize: "0.85rem", fontFamily: "monospace" }}>
+                          {delegatorStats.globalPointer.toString()}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  {!globalPoolEnabled && (
+                    <div style={{ marginTop: "1rem" }}>
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setGlobalPoolEnabled(true);
+                          const nodeId = getOrCreateBrowserNodeId();
+                          const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
+                            ? navigator.hardwareConcurrency || 4
+                            : 4;
+                          const capability: NodeCapability = {
+                            nodeId,
+                            workerCount: clusterWorkerCount,
+                            threads: cores,
+                            hasWebGL: typeof WebGLRenderingContext !== "undefined",
+                            hasWebGPU: typeof (globalThis as any).GPU !== "undefined" && (globalThis as any).GPU !== undefined,
+                            hasSIMD: typeof WebAssembly !== "undefined" && WebAssembly.validate !== undefined,
+                            estimatedHashrate: clusterStats.totalHashRate || 100_000,
+                            lastSeen: Date.now(),
+                          };
+                          for (let i = 0; i < clusterWorkerCount; i++) {
+                            workerNodeManager.requestNonceRange(i, capability);
+                          }
+                        }}
+                      >
+                        Enable Global Pool
+                      </button>
+                    </div>
+                  )}
+                  {globalPoolEnabled && (
+                    <div style={{ marginTop: "1rem" }}>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          setGlobalPoolEnabled(false);
+                          workerNodeManager.reset();
+                        }}
+                      >
+                        Disable Global Pool
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
+                    💡 <strong>Global Pool:</strong> All nodes coordinate nonce ranges to avoid duplicate work.
+                    {isDelegator && " You are the delegator for this block."}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Transactions Tab */}
+          {activeTab === "transactions" && (
+            <div className="tab-content active">
+              {/* Phase 7: Transfer Form */}
+              <div className="status-card">
+                <h2>💸 Transfer IDC</h2>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Recipient Address (e.g., idc_...)"
+                      value={transferTo}
+                      onChange={(e) => setTransferTo(e.target.value)}
+                      style={{ width: "100%", padding: "0.5rem" }}
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="number"
+                      placeholder="Amount (IDC)"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      style={{ width: "100%", padding: "0.5rem" }}
+                      min="0"
+                      step="0.01"
+                    />
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      if (!chainContext || !transferTo || !transferAmount) {
+                        setError("Please enter recipient address and amount");
+                        return;
+                      }
+                      const amount = parseFloat(transferAmount);
+                      if (isNaN(amount) || amount <= 0) {
+                        setError("Amount must be a positive number");
+                        return;
+                      }
+                      try {
+                        setError("");
+                        setIsSigning(true);
+                        const tx = await createTransferTx(transferTo as any, amount);
+                        const added = await mempool.addTx(tx);
+                        if (!added) {
+                          setError("Failed to add transfer transaction");
+                          setIsSigning(false);
+                          return;
+                        }
+                        broadcastTransaction(tx, chainContext);
+                        setTransferTo("");
+                        setTransferAmount("");
+                        setChainContext({ ...chainContext });
+                        setIsSigning(false);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to create transfer");
+                        setIsSigning(false);
+                      }
+                    }}
+                    disabled={isMining || isSigning || !transferTo || !transferAmount}
+                  >
+                    {isSigning ? "Signing..." : "Transfer IDC"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Create Transaction Form */}
+              <div className="status-card">
+                <h2>📝 Create Transaction (Index Operations)</h2>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                  <div>
+                    <label>
+                      Operation Type:
+                      <select
+                        value={txOpType}
+                        onChange={(e) =>
+                          setTxOpType(e.target.value as "PUT" | "APPEND" | "DELETE")
+                        }
+                        style={{ marginLeft: "0.5rem", padding: "0.25rem" }}
+                      >
+                        <option value="PUT">PUT</option>
+                        <option value="APPEND">APPEND</option>
+                        <option value="DELETE">DELETE</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Namespace (e.g., test)"
+                      value={txNamespace}
+                      onChange={(e) => setTxNamespace(e.target.value)}
+                      style={{ width: "100%", padding: "0.5rem" }}
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Key"
+                      value={txKey}
+                      onChange={(e) => setTxKey(e.target.value)}
+                      style={{ width: "100%", padding: "0.5rem" }}
+                    />
+                  </div>
+                  {txOpType !== "DELETE" && (
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Value"
+                        value={txValue}
+                        onChange={(e) => setTxValue(e.target.value)}
+                        style={{ width: "100%", padding: "0.5rem" }}
+                      />
+                    </div>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleCreateTx}
+                    disabled={isMining || isSigning}
+                  >
+                    {isSigning ? "Signing..." : "Create Transaction"}
+                  </button>
+                  {isSigning && (
+                    <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "0.5rem" }}>
+                      Signing transaction with your private key...
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Pending Transactions */}
+              {pendingTxs.length > 0 && (
+                <div className="status-card">
+                  <h2>⏳ Pending Transactions ({pendingTxs.length})</h2>
+                  <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                    {pendingTxs.map((tx) => (
+                      <div
+                        key={tx.txId}
+                        style={{
+                          padding: "0.5rem",
+                          marginBottom: "0.5rem",
+                          background: "#f0f0f0",
+                          borderRadius: "4px",
+                          fontSize: "0.9rem",
+                        }}
+                      >
+                        <div>
+                          <strong>TxID:</strong> {tx.txId.substring(0, 16)}...
+                        </div>
+                        <div>
+                          <strong>From:</strong> {tx.ownerAddress?.substring(0, 20) || "Unknown"}...
+                        </div>
+                        <div>
+                          <strong>Ops:</strong> {tx.ops.length}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Network Tab */}
+          {activeTab === "network" && (
+            <div className="tab-content active">
+              {/* P2P Network Section */}
+              <div className="status-card">
+                <h2>🌐 P2P Network</h2>
+                <div className="status-item">
+                  <span className="label">Mode:</span>
                   <span className="value">
-                    {chainContext.remoteSnapshotUsed ? (
-                      <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Used</span>
-                    ) : chainContext.params.remoteSnapshotEnabled ? (
-                      <span style={{ color: "#666" }}>Not Used</span>
+                    {isMainnetMode ? (
+                      <span style={{ color: "#28a745", fontWeight: "bold" }}>🌐 Mainnet</span>
                     ) : (
-                      <span style={{ color: "#999" }}>Disabled</span>
+                      <span style={{ color: "#ffc107", fontWeight: "bold" }}>🔧 Dev Mode</span>
                     )}
                   </span>
                 </div>
-                {chainContext.remoteSnapshotUsed && (
-                  <>
-                    {chainContext.params.remoteSnapshotEndpoints && chainContext.params.remoteSnapshotEndpoints.length > 0 && (
-                      <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                        <span className="label">Source:</span>
-                        <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all" }}>
-                          {chainContext.params.remoteSnapshotEndpoints[0]}
-                        </span>
-                      </div>
-                    )}
-                    <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                      <span className="label">Remote Height:</span>
-                      <span className="value">{chainContext.remoteSnapshotUsed.height}</span>
+                <div className="status-item">
+                  <span className="label">Status:</span>
+                  <span className="value">{isP2PConnected ? "Connected" : "Disconnected"}</span>
+                </div>
+                <div className="status-item">
+                  <span className="label">Peers:</span>
+                  <span className="value">{peerCount}</span>
+                </div>
+                {!isP2PConnected ? (
+                  <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    {/* Mode Toggle */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={isMainnetMode}
+                          onChange={(e) => {
+                            setIsMainnetMode(e.target.checked);
+                            if (e.target.checked) {
+                              setBootstrapUrl(DEFAULT_MAINNET_SIGNALING);
+                            } else {
+                              setBootstrapUrl("ws://localhost:8080");
+                            }
+                          }}
+                        />
+                        <span>Mainnet Mode (自动连接主网)</span>
+                      </label>
                     </div>
-                    {chainContext.remoteSnapshotUsed.stateHash && (
-                      <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                        <span className="label">Remote StateHash:</span>
-                        <span className="value" style={{ fontSize: "0.8rem", fontFamily: "monospace" }}>
-                          {chainContext.remoteSnapshotUsed.stateHash.substring(0, 16)}...
+                    {/* Signaling Server URL Input */}
+                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                      <input
+                        type="text"
+                        placeholder={isMainnetMode ? "Mainnet Signaling Server (wss://...)" : "Local Signaling Server (ws://localhost:8080)"}
+                        value={bootstrapUrl}
+                        onChange={(e) => setBootstrapUrl(e.target.value)}
+                        style={{ flex: 1, padding: "0.5rem" }}
+                        disabled={isMainnetMode}
+                      />
+                      <button className="btn btn-primary" onClick={handleConnectP2P}>
+                        Connect
+                      </button>
+                    </div>
+                    {isMainnetMode && (
+                      <div style={{ fontSize: "0.85rem", color: "#666", padding: "0.5rem", background: "#f0f0f0", borderRadius: "4px" }}>
+                        💡 <strong>主网模式</strong>：将自动连接到公共 IndexerChain 主网，和全球用户一起挖矿。
+                        <br />
+                        如需本地测试，请取消勾选 "Mainnet Mode"。
+                      </div>
+                    )}
+                    {!isMainnetMode && (
+                      <div style={{ fontSize: "0.85rem", color: "#666", padding: "0.5rem", background: "#fff3cd", borderRadius: "4px" }}>
+                        ⚠️ <strong>开发模式</strong>：连接到本地信令服务器，用于开发、测试或私有链。
+                        <br />
+                        需要先运行 <code>node signaling-server-example.js</code>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <div style={{ fontSize: "0.9rem", color: "#666" }}>
+                      Connected to: <code style={{ fontSize: "0.85rem" }}>{bootstrapUrl}</code>
+                    </div>
+                    <button className="btn btn-secondary" onClick={handleDisconnectP2P}>
+                      Disconnect
+                    </button>
+                  </div>
+                )}
+                {peers.length > 0 && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <strong>Connected Peers:</strong>
+                    <div style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
+                      {peers.map((peer) => (
+                        <div key={peer.id} style={{ padding: "0.25rem 0" }}>
+                          {peer.id.substring(0, 16)}... ({peer.connected ? "✓" : "✗"})
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Phase 17: Fast Relay Status */}
+              {chainContext && (
+                <div className="status-card">
+                  <h2>📡 Fast Relay Status</h2>
+                  <div className="status-item">
+                    <span className="label">Headers Cached:</span>
+                    <span className="value">{relayStats.headersCached}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Missing Bodies:</span>
+                    <span className="value" style={{ color: relayStats.missingBodies > 0 ? "#ffc107" : "#28a745" }}>
+                      {relayStats.missingBodies}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Pending Body Requests:</span>
+                    <span className="value">{relayStats.pendingBodyRequests}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Received Bodies:</span>
+                    <span className="value">{relayStats.receivedBodyCount}</span>
+                  </div>
+                  {relayStats.lastHeaderDelay !== null && (
+                    <div className="status-item">
+                      <span className="label">Last Header Delay:</span>
+                      <span className="value" style={{ color: relayStats.lastHeaderDelay < 200 ? "#28a745" : "#ffc107" }}>
+                        {relayStats.lastHeaderDelay} ms
+                      </span>
+                    </div>
+                  )}
+                  {relayStats.lastBodyDownloadTime !== null && (
+                    <div className="status-item">
+                      <span className="label">Last Body Download:</span>
+                      <span className="value">{relayStats.lastBodyDownloadTime} ms</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 20: Global Snapshot Network */}
+              {chainContext && isP2PConnected && (
+                <div className="status-card">
+                  <h2>🌍 Global Snapshot Network (Phase 20)</h2>
+                  <div className="status-item">
+                    <span className="label">Status:</span>
+                    <span className="value">
+                      {gsnEnabled ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
+                      ) : (
+                        <span style={{ color: "#666" }}>Disabled</span>
+                      )}
+                    </span>
+                  </div>
+                  {gsnStats && (
+                    <>
+                      <div className="status-item">
+                        <span className="label">Snapshot Sources:</span>
+                        <span className="value">{gsnStats.downloader.totalSources}</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Avg Latency:</span>
+                        <span className="value">{gsnStats.downloader.averageLatency.toFixed(0)} ms</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Avg Integrity:</span>
+                        <span className="value">{(gsnStats.downloader.averageIntegrity * 100).toFixed(1)}%</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Cached Snapshots:</span>
+                        <span className="value">{gsnStats.seeder.cachedCount}</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Cache Size:</span>
+                        <span className="value">{(gsnStats.seeder.totalSize / 1024).toFixed(2)} KB</span>
+                      </div>
+                    </>
+                  )}
+                  {snapshotDownloadProgress && (
+                    <>
+                      <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                        <span className="label">Download Progress:</span>
+                        <span className="value">{snapshotDownloadProgress.percent.toFixed(1)}%</span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Chunks:</span>
+                        <span className="value">
+                          {snapshotDownloadProgress.receivedChunks} / {snapshotDownloadProgress.totalChunks}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Speed:</span>
+                        <span className="value">
+                          {(snapshotDownloadProgress.speed / 1024).toFixed(2)} KB/s
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Peers:</span>
+                        <span className="value">{snapshotDownloadProgress.peers}</span>
+                      </div>
+                    </>
+                  )}
+                  <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
+                    💡 <strong>GSN:</strong> All nodes automatically share snapshots via P2P.
+                    {gsnEnabled && " You are seeding snapshots to other nodes."}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Storage Tab */}
+          {activeTab === "storage" && (
+            <div className="tab-content active">
+              {/* Phase 9: State & Storage (Snapshots) */}
+              {chainContext && (
+                <>
+                  {/* Phase 9: State & Storage (Snapshots) */}
+                  <div className="status-card">
+                    <h2>💾 State & Storage</h2>
+                    <div className="status-item">
+                      <span className="label">Last Snapshot Height:</span>
+                      <span className="value">
+                        {latestSnapshot ? latestSnapshot.height : "None"}
+                      </span>
+                    </div>
+                    {latestSnapshot && (
+                      <>
+                        <div className="status-item">
+                          <span className="label">Last Snapshot Time:</span>
+                          <span className="value">
+                            {new Date(latestSnapshot.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="status-item">
+                          <span className="label">Blocks Since Snapshot:</span>
+                          <span className="value">
+                            {Math.max(0, height - latestSnapshot.height)}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    <div className="status-item">
+                      <span className="label">Snapshot Count:</span>
+                      <span className="value">{snapshotMetas.length}</span>
+                    </div>
+                    {/* Phase 12: Show snapshot type info */}
+                    {latestSnapshot && (
+                      <div className="status-item">
+                        <span className="label">Latest Snapshot Type:</span>
+                        <span className="value">
+                          {(() => {
+                            // Check if latest snapshot is full or delta
+                            const latestSnapData = loadSnapshotByHeightSync(latestSnapshot.height);
+                            if (latestSnapData) {
+                              if (latestSnapData.full === false) {
+                                return "Delta (Incremental)";
+                              } else {
+                                return "Full";
+                              }
+                            }
+                            return "Unknown";
+                          })()}
                         </span>
                       </div>
                     )}
-                  </>
-                )}
-              </>
-            )}
-            <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {/* Phase 11: Compression info */}
+                    {snapshotSizeInfo && (
+                      <>
+                        <div className="status-item">
+                          <span className="label">Latest Snapshot Size:</span>
+                          <span className="value">
+                            {(snapshotSizeInfo.compressedSize / 1024).toFixed(2)} KB
+                          </span>
+                        </div>
+                        {snapshotSizeInfo.compressionRatio > 0 && (
+                          <div className="status-item">
+                            <span className="label">Compression Ratio:</span>
+                            <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
+                              {snapshotSizeInfo.compressionRatio.toFixed(1)}% reduction
+                            </span>
+                          </div>
+                        )}
+                        {snapshotSizeInfo.estimatedUncompressedSize > 0 && (
+                          <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                            <span className="label">Estimated Uncompressed:</span>
+                            <span className="value">
+                              {(snapshotSizeInfo.estimatedUncompressedSize / 1024).toFixed(2)} KB
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {/* Phase 13: Verification info */}
+                    {latestSnapshot && (
+                      <>
+                        {latestSnapshot.stateHash && (
+                          <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                            <span className="label">State Hash:</span>
+                            <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                              {latestSnapshot.stateHash.substring(0, 16)}...
+                            </span>
+                          </div>
+                        )}
+                        <div className="status-item">
+                          <span className="label">Verification Status:</span>
+                          <span className="value">
+                            {latestSnapshot.verifiedAt ? (
+                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Verified</span>
+                            ) : latestSnapshot.stateHash ? (
+                              <span style={{ color: "#ffc107", fontWeight: "bold" }}>⚠️ Not Verified Yet</span>
+                            ) : (
+                              <span style={{ color: "#666" }}>— No Hash</span>
+                            )}
+                          </span>
+                        </div>
+                        {latestSnapshot.verifiedAt && (
+                          <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                            <span className="label">Last Verified:</span>
+                            <span className="value">
+                              {new Date(latestSnapshot.verifiedAt).toLocaleString()}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {/* Phase 15: State Commitment info */}
+                    {tip && tip.header.stateCommitment && (
+                      <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                        <span className="label">State Commitment:</span>
+                        <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all", fontFamily: "monospace" }}>
+                          {tip.header.stateCommitment.substring(0, 16)}...
+                        </span>
+                      </div>
+                    )}
+                    {latestSnapshot && tip && (
+                      <>
+                        {latestSnapshot.stateCommitment && tip.header.stateCommitment && (
+                          <div className="status-item">
+                            <span className="label">Commitment Match:</span>
+                            <span className="value">
+                              {latestSnapshot.stateCommitment === tip.header.stateCommitment ? (
+                                <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Matches</span>
+                              ) : (
+                                <span style={{ color: "#dc3545", fontWeight: "bold" }}>❌ Mismatch</span>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {/* Phase 14: Remote snapshot info */}
+                    {chainContext && (
+                      <>
+                        <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
+                          <span className="label">Remote Snapshot:</span>
+                          <span className="value">
+                            {chainContext.remoteSnapshotUsed ? (
+                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Used</span>
+                            ) : chainContext.params.remoteSnapshotEnabled ? (
+                              <span style={{ color: "#666" }}>Not Used</span>
+                            ) : (
+                              <span style={{ color: "#999" }}>Disabled</span>
+                            )}
+                          </span>
+                        </div>
+                        {chainContext.remoteSnapshotUsed && (
+                          <>
+                            {chainContext.params.remoteSnapshotEndpoints && chainContext.params.remoteSnapshotEndpoints.length > 0 && (
+                              <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                                <span className="label">Source:</span>
+                                <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all" }}>
+                                  {chainContext.params.remoteSnapshotEndpoints[0]}
+                                </span>
+                              </div>
+                            )}
+                            <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                              <span className="label">Remote Height:</span>
+                              <span className="value">{chainContext.remoteSnapshotUsed.height}</span>
+                            </div>
+                            {chainContext.remoteSnapshotUsed.stateHash && (
+                              <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                                <span className="label">Remote StateHash:</span>
+                                <span className="value" style={{ fontSize: "0.8rem", fontFamily: "monospace" }}>
+                                  {chainContext.remoteSnapshotUsed.stateHash.substring(0, 16)}...
+                                </span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                    <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
               <button
                 className="btn btn-secondary"
                 onClick={async () => {
@@ -1861,919 +2516,387 @@ function App() {
                 disabled={!chainContext || !chainContext.params.remoteSnapshotEnabled || !chainContext.params.remoteSnapshotEndpoints || chainContext.params.remoteSnapshotEndpoints.length === 0}
                 style={{ background: "#28a745", color: "white" }}
               >
-                Fetch Remote Snapshot
-              </button>
-            </div>
-          </div>
-        )}
+                      Fetch Remote Snapshot
+                    </button>
+                  </div>
+                </div>
 
-        {/* Phase 20: Global Snapshot Network */}
-        {chainContext && isP2PConnected && (
-          <div className="status-card">
-            <h2>🌍 Global Snapshot Network (Phase 20)</h2>
-            <div className="status-item">
-              <span className="label">Status:</span>
-              <span className="value">
-                {gsnEnabled ? (
-                  <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
-                ) : (
-                  <span style={{ color: "#666" }}>Disabled</span>
-                )}
-              </span>
-            </div>
-            {gsnStats && (
-              <>
-                <div className="status-item">
-                  <span className="label">Snapshot Sources:</span>
-                  <span className="value">{gsnStats.downloader.totalSources}</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Avg Latency:</span>
-                  <span className="value">{gsnStats.downloader.averageLatency.toFixed(0)} ms</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Avg Integrity:</span>
-                  <span className="value">{(gsnStats.downloader.averageIntegrity * 100).toFixed(1)}%</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Cached Snapshots:</span>
-                  <span className="value">{gsnStats.seeder.cachedCount}</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Cache Size:</span>
-                  <span className="value">{(gsnStats.seeder.totalSize / 1024).toFixed(2)} KB</span>
-                </div>
-              </>
-            )}
-            {snapshotDownloadProgress && (
-              <>
-                <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                  <span className="label">Download Progress:</span>
-                  <span className="value">{snapshotDownloadProgress.percent.toFixed(1)}%</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Chunks:</span>
-                  <span className="value">
-                    {snapshotDownloadProgress.receivedChunks} / {snapshotDownloadProgress.totalChunks}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Speed:</span>
-                  <span className="value">
-                    {(snapshotDownloadProgress.speed / 1024).toFixed(2)} KB/s
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Peers:</span>
-                  <span className="value">{snapshotDownloadProgress.peers}</span>
-                </div>
-              </>
-            )}
-            <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-              💡 <strong>GSN:</strong> All nodes automatically share snapshots via P2P.
-              {gsnEnabled && " You are seeding snapshots to other nodes."}
-            </div>
-          </div>
-        )}
-
-        {/* Phase 17: Fast Relay Status */}
-        {chainContext && (
-          <div className="status-card">
-            <h2>📡 Fast Relay Status</h2>
-            <div className="status-item">
-              <span className="label">Headers Cached:</span>
-              <span className="value">{relayStats.headersCached}</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Missing Bodies:</span>
-              <span className="value" style={{ color: relayStats.missingBodies > 0 ? "#ffc107" : "#28a745" }}>
-                {relayStats.missingBodies}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Pending Body Requests:</span>
-              <span className="value">{relayStats.pendingBodyRequests}</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Received Bodies:</span>
-              <span className="value">{relayStats.receivedBodyCount}</span>
-            </div>
-            {relayStats.lastHeaderDelay !== null && (
-              <div className="status-item">
-                <span className="label">Last Header Delay:</span>
-                <span className="value" style={{ color: relayStats.lastHeaderDelay < 200 ? "#28a745" : "#ffc107" }}>
-                  {relayStats.lastHeaderDelay} ms
-                </span>
-              </div>
-            )}
-            {relayStats.lastBodyDownloadTime !== null && (
-              <div className="status-item">
-                <span className="label">Last Body Download:</span>
-                <span className="value">{relayStats.lastBodyDownloadTime} ms</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Phase 10: Light Node Status */}
-        {chainContext && (
-          <div className="status-card">
-            <h2>Light Node Status</h2>
-            <div className="status-item">
-              <span className="label">Light Node Window:</span>
-              <span className="value">
-                {chainContext.params.lightNodeWindow ?? 200} blocks
-                {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow <= 20 && (
-                  <span style={{ marginLeft: "0.5rem", color: "#28a745", fontSize: "0.85rem" }}>
-                    (Extreme Pruning - Phase 15)
-                  </span>
-                )}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Stored Blocks:</span>
-              <span className="value">{blockCount}</span>
-            </div>
-            {(() => {
-              const minHeight = chainContext.storage.getMinHeight();
-              const maxHeight = chainContext.storage.getMaxHeight();
-              return (
-                <>
+                {/* Phase 10: Light Node Status */}
+                <div className="status-card">
+                  <h2>💡 Light Node Status</h2>
                   <div className="status-item">
-                    <span className="label">Earliest Block Height:</span>
-                    <span className="value">{minHeight}</span>
-                  </div>
-                  <div className="status-item">
-                    <span className="label">Latest Block Height:</span>
-                    <span className="value">{maxHeight}</span>
-                  </div>
-                  {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow > 0 && (
-                    <div className="status-item">
-                      <span className="label">Storage Reduction:</span>
-                      <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
-                        {height > 0
-                          ? `${((1 - blockCount / Math.max(1, height + 1)) * 100).toFixed(1)}%`
-                          : "0%"}
-                      </span>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-            <div style={{ marginTop: "1rem" }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  if (!chainContext) return;
-                  const lightNodeWindow = chainContext.params.lightNodeWindow ?? 200;
-                  if (lightNodeWindow > 0) {
-                    const tip = chainContext.storage.getTip();
-                    if (tip) {
-                      const pruneHeight = tip.header.height - lightNodeWindow + 1;
-                      if (pruneHeight > 0) {
-                        chainContext.storage.pruneBlocksBefore(pruneHeight);
-                        setChainContext({ ...chainContext });
-                        setError("Pruned old blocks");
-                        setTimeout(() => setError(""), 2000);
-                      }
-                    }
-                  }
-                }}
-                disabled={!chainContext || height === 0}
-                style={{ background: "#ffc107", color: "#000" }}
-              >
-                Clear Pruned Blocks
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Phase 7: Transfer Form */}
-        <div className="status-card">
-          <h2>Transfer IDC</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-            <div>
-              <input
-                type="text"
-                placeholder="Recipient Address (e.g., idc_...)"
-                value={transferTo}
-                onChange={(e) => setTransferTo(e.target.value)}
-                style={{ width: "100%", padding: "0.5rem" }}
-              />
-            </div>
-            <div>
-              <input
-                type="number"
-                placeholder="Amount (IDC)"
-                value={transferAmount}
-                onChange={(e) => setTransferAmount(e.target.value)}
-                style={{ width: "100%", padding: "0.5rem" }}
-                min="0"
-                step="0.01"
-              />
-            </div>
-            <button
-              className="btn btn-primary"
-              onClick={async () => {
-                if (!chainContext || !transferTo || !transferAmount) {
-                  setError("Please enter recipient address and amount");
-                  return;
-                }
-                const amount = parseFloat(transferAmount);
-                if (isNaN(amount) || amount <= 0) {
-                  setError("Amount must be a positive number");
-                  return;
-                }
-                try {
-                  setError("");
-                  setIsSigning(true);
-                  const tx = await createTransferTx(transferTo as any, amount);
-                  const added = await mempool.addTx(tx);
-                  if (!added) {
-                    setError("Failed to add transfer transaction");
-                    setIsSigning(false);
-                    return;
-                  }
-                  broadcastTransaction(tx, chainContext);
-                  setTransferTo("");
-                  setTransferAmount("");
-                  setChainContext({ ...chainContext });
-                  setIsSigning(false);
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : "Failed to create transfer");
-                  setIsSigning(false);
-                }
-              }}
-              disabled={isMining || isSigning || !transferTo || !transferAmount}
-            >
-              {isSigning ? "Signing..." : "Transfer IDC"}
-            </button>
-          </div>
-        </div>
-
-        {/* Create Transaction Form */}
-        <div className="status-card">
-          <h2>Create Transaction (Index Operations)</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-            <div>
-              <label>
-                Operation Type:
-                <select
-                  value={txOpType}
-                  onChange={(e) =>
-                    setTxOpType(e.target.value as "PUT" | "APPEND" | "DELETE")
-                  }
-                  style={{ marginLeft: "0.5rem", padding: "0.25rem" }}
-                >
-                  <option value="PUT">PUT</option>
-                  <option value="APPEND">APPEND</option>
-                  <option value="DELETE">DELETE</option>
-                </select>
-              </label>
-            </div>
-            <div>
-              <input
-                type="text"
-                placeholder="Namespace (e.g., test)"
-                value={txNamespace}
-                onChange={(e) => setTxNamespace(e.target.value)}
-                style={{ width: "100%", padding: "0.5rem" }}
-              />
-            </div>
-            <div>
-              <input
-                type="text"
-                placeholder="Key"
-                value={txKey}
-                onChange={(e) => setTxKey(e.target.value)}
-                style={{ width: "100%", padding: "0.5rem" }}
-              />
-            </div>
-            {txOpType !== "DELETE" && (
-              <div>
-                <input
-                  type="text"
-                  placeholder="Value"
-                  value={txValue}
-                  onChange={(e) => setTxValue(e.target.value)}
-                  style={{ width: "100%", padding: "0.5rem" }}
-                />
-              </div>
-            )}
-            <button
-              className="btn btn-primary"
-              onClick={handleCreateTx}
-              disabled={isMining || isSigning}
-            >
-              {isSigning ? "Signing..." : "Create Transaction"}
-            </button>
-            {isSigning && (
-              <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "0.5rem" }}>
-                Signing transaction with your private key...
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Pending Transactions */}
-        {pendingTxs.length > 0 && (
-          <div className="status-card">
-            <h2>Pending Transactions ({pendingTxs.length})</h2>
-            <div style={{ maxHeight: "200px", overflowY: "auto" }}>
-              {pendingTxs.map((tx) => (
-                <div
-                  key={tx.txId}
-                  style={{
-                    padding: "0.5rem",
-                    marginBottom: "0.5rem",
-                    background: "#f0f0f0",
-                    borderRadius: "4px",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  <div>
-                    <strong>TxID:</strong> {tx.txId.substring(0, 16)}...
-                  </div>
-                  <div>
-                    <strong>From:</strong> {tx.ownerAddress?.substring(0, 20) || "Unknown"}...
-                  </div>
-                  <div>
-                    <strong>Ops:</strong> {tx.ops.length}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Phase 8: Mining Status with Performance Stats */}
-        {(isMining || miningStats.hashesTried > 0) && (
-          <div className="status-card">
-            <h2>Mining Status</h2>
-            <div className="status-item">
-              <span className="label">Status:</span>
-              <span className="value">
-                {isMining ? "Mining..." : minerClient.getIsMining() ? "Mining..." : "Stopped"}
-              </span>
-            </div>
-            {tip && (
-              <div className="status-item">
-                <span className="label">Current Difficulty:</span>
-                <span className="value">
-                  {tip.header.difficulty} (need {tip.header.difficulty} leading zeros)
-                </span>
-              </div>
-            )}
-            <div className="status-item">
-              <span className="label">Estimated Hashrate:</span>
-              <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
-                {miningStats.hashRate
-                  ? `${(miningStats.hashRate / 1000).toFixed(2)} K hash/s`
-                  : "Calculating..."}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Total Hashes Tried:</span>
-              <span className="value">{miningStats.hashesTried.toLocaleString()}</span>
-            </div>
-            {miningStats.elapsedTime > 0 && (
-              <div className="status-item">
-                <span className="label">Elapsed Time:</span>
-                <span className="value">{miningStats.elapsedTime.toFixed(1)}s</span>
-              </div>
-            )}
-            {isMining && (
-              <>
-                <div className="status-item">
-                  <span className="label">Current Hash:</span>
-                  <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>
-                    {miningHash || "Computing..."}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Current Nonce:</span>
-                  <span className="value">{miningNonce.toLocaleString()}</span>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Latest Block */}
-        {tip && (
-          <div className="status-card">
-            <h2>Latest Block</h2>
-            <div className="status-item">
-              <span className="label">Hash:</span>
-              <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>
-                {tip.hash.substring(0, 32)}...
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Transactions:</span>
-              <span className="value">{tip.txs.length}</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Difficulty:</span>
-              <span className="value">{tip.header.difficulty}</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Nonce:</span>
-              <span className="value">{tip.header.nonce.toLocaleString()}</span>
-            </div>
-            {/* Phase 15: State Commitment */}
-            {tip.header.stateCommitment && (
-              <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                <span className="label">State Commitment:</span>
-                <span className="value" style={{ fontSize: "0.8rem", wordBreak: "break-all", fontFamily: "monospace" }}>
-                  {tip.header.stateCommitment.substring(0, 24)}...
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Phase 19: Global Miner Pool */}
-        {chainContext && isP2PConnected && (
-          <div className="status-card">
-            <h2>🌐 Global Miner Pool (Phase 19)</h2>
-            <div className="status-item">
-              <span className="label">Mode:</span>
-              <span className="value">
-                {globalPoolEnabled ? (
-                  <span style={{ color: "#28a745", fontWeight: "bold" }}>Enabled</span>
-                ) : (
-                  <span style={{ color: "#666" }}>Disabled</span>
-                )}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Role:</span>
-              <span className="value">
-                {isDelegator ? (
-                  <span style={{ color: "#667eea", fontWeight: "bold" }}>Delegator</span>
-                ) : (
-                  <span style={{ color: "#666" }}>Worker Node</span>
-                )}
-              </span>
-            </div>
-            {isDelegator && delegatorStats && (
-              <>
-                <div className="status-item">
-                  <span className="label">Active Ranges:</span>
-                  <span className="value">{delegatorStats.activeRanges}</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Total Nodes:</span>
-                  <span className="value">{delegatorStats.totalNodes}</span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Global Pointer:</span>
-                  <span className="value" style={{ fontSize: "0.85rem", fontFamily: "monospace" }}>
-                    {delegatorStats.globalPointer.toString()}
-                  </span>
-                </div>
-              </>
-            )}
-            {!globalPoolEnabled && (
-              <div style={{ marginTop: "1rem" }}>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setGlobalPoolEnabled(true);
-                    // Detect node capabilities
-                    const nodeId = getOrCreateBrowserNodeId();
-                    const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
-                      ? navigator.hardwareConcurrency || 4
-                      : 4;
-                    const capability: NodeCapability = {
-                      nodeId,
-                      workerCount: clusterWorkerCount,
-                      threads: cores,
-                      hasWebGL: typeof WebGLRenderingContext !== "undefined",
-                      hasWebGPU: typeof (globalThis as any).GPU !== "undefined" && (globalThis as any).GPU !== undefined,
-                      hasSIMD: typeof WebAssembly !== "undefined" && WebAssembly.validate !== undefined,
-                      estimatedHashrate: clusterStats.totalHashRate || 100_000,
-                      lastSeen: Date.now(),
-                    };
-                    // Request nonce range for each worker
-                    for (let i = 0; i < clusterWorkerCount; i++) {
-                      workerNodeManager.requestNonceRange(i, capability);
-                    }
-                  }}
-                >
-                  Enable Global Pool
-                </button>
-              </div>
-            )}
-            {globalPoolEnabled && (
-              <div style={{ marginTop: "1rem" }}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setGlobalPoolEnabled(false);
-                    workerNodeManager.reset();
-                  }}
-                >
-                  Disable Global Pool
-                </button>
-              </div>
-            )}
-            <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-              💡 <strong>Global Pool:</strong> All nodes coordinate nonce ranges to avoid duplicate work.
-              {isDelegator && " You are the delegator for this block."}
-            </div>
-          </div>
-        )}
-
-        {/* Phase 21: Peer Reputation */}
-        {chainContext && chainContext.params.peerScoreEnabled && (
-          <div className="status-card">
-            <h2>🔒 Peer Reputation & Security (Phase 21)</h2>
-            <div className="status-item">
-              <span className="label">Total Peers Tracked:</span>
-              <span className="value">{peerScores.length}</span>
-            </div>
-            <div className="status-item">
-              <span className="label">Trusted:</span>
-              <span className="value" style={{ color: "#28a745" }}>
-                {peerScores.filter(p => p.trustLevel === "trusted").length}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Normal:</span>
-              <span className="value" style={{ color: "#666" }}>
-                {peerScores.filter(p => p.trustLevel === "normal").length}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Low Trust:</span>
-              <span className="value" style={{ color: "#ffc107" }}>
-                {peerScores.filter(p => p.trustLevel === "low").length}
-              </span>
-            </div>
-            <div className="status-item">
-              <span className="label">Banned:</span>
-              <span className="value" style={{ color: "#dc3545" }}>
-                {peerScores.filter(p => p.trustLevel === "banned").length}
-              </span>
-            </div>
-            {peerScores.length > 0 && (
-              <div style={{ marginTop: "1rem" }}>
-                <strong>Peer Details:</strong>
-                <div style={{ maxHeight: "300px", overflowY: "auto", marginTop: "0.5rem" }}>
-                  <table style={{ width: "100%", fontSize: "0.85rem", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ background: "#f0f0f0", position: "sticky", top: 0 }}>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Peer ID</th>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Score</th>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Trust</th>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Blocks</th>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Snapshots</th>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Latency</th>
-                        <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Work</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {peerScores
-                        .sort((a, b) => b.score - a.score)
-                        .map((peer) => {
-                          const trustColor = 
-                            peer.trustLevel === "trusted" ? "#28a745" :
-                            peer.trustLevel === "normal" ? "#666" :
-                            peer.trustLevel === "low" ? "#ffc107" : "#dc3545";
-                          return (
-                            <tr key={peer.peerId} style={{ borderBottom: "1px solid #eee" }}>
-                              <td style={{ padding: "0.5rem" }} title={peer.peerId}>
-                                {peer.peerId.substring(0, 16)}...
-                              </td>
-                              <td style={{ padding: "0.5rem", fontWeight: "bold" }}>
-                                {peer.score.toFixed(1)}
-                              </td>
-                              <td style={{ padding: "0.5rem", color: trustColor }}>
-                                {peer.trustLevel}
-                              </td>
-                              <td style={{ padding: "0.5rem" }}>
-                                {peer.blocksServed} / {peer.blocksInvalid > 0 ? <span style={{ color: "#dc3545" }}>{peer.blocksInvalid}</span> : "0"}
-                              </td>
-                              <td style={{ padding: "0.5rem" }}>
-                                {peer.snapshotsServed} / {peer.snapshotsInvalid > 0 ? <span style={{ color: "#dc3545" }}>{peer.snapshotsInvalid}</span> : "0"}
-                              </td>
-                              <td style={{ padding: "0.5rem" }}>
-                                {peer.avgLatencyMs ? `${peer.avgLatencyMs.toFixed(0)}ms` : "—"}
-                              </td>
-                              <td style={{ padding: "0.5rem" }}>
-                                {peer.workCompleted} / {peer.workFailed > 0 ? <span style={{ color: "#dc3545" }}>{peer.workFailed}</span> : "0"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-            <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-              💡 <strong>Peer Reputation:</strong> Tracks peer behavior to prioritize reliable nodes and penalize misbehaving ones.
-            </div>
-          </div>
-        )}
-
-        {/* Phase 22: Fast Finality Status */}
-        {chainContext && chainContext.params.finalityEnabled && (
-          <div className="status-card">
-            <h2>⚡ Fast Finality Status (Phase 22)</h2>
-            {finalityStats ? (
-              <>
-                <div className="status-item">
-                  <span className="label">Status:</span>
-                  <span className="value">
-                    {finalityStats.committeeSize > 0 ? (
-                      <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
-                    ) : (
-                      <span style={{ color: "#666" }}>Waiting for Committee</span>
-                    )}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Finalized Blocks:</span>
-                  <span className="value" style={{ fontWeight: "bold" }}>
-                    {finalityStats.finalizedCount}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Pending Votes:</span>
-                  <span className="value">
-                    {finalityStats.pendingVotes}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Committee Round:</span>
-                  <span className="value">
-                    {finalityStats.currentRound >= 0 ? finalityStats.currentRound : "—"}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Committee Size:</span>
-                  <span className="value">
-                    {finalityStats.committeeSize} members
-                  </span>
-                </div>
-                {tip && (
-                  <div className="status-item" style={{ marginTop: "0.5rem" }}>
-                    <span className="label">Current Block Finality:</span>
+                    <span className="label">Light Node Window:</span>
                     <span className="value">
-                      {finalizedBlocks.has(tip.hash) ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Finalized</span>
-                      ) : finalityStats.pendingVotes > 0 ? (
-                        <span style={{ color: "#ffc107" }}>⏳ Pending ({finalityStats.pendingVotes} votes)</span>
-                      ) : (
-                        <span style={{ color: "#dc3545" }}>❌ Unconfirmed</span>
+                      {chainContext.params.lightNodeWindow ?? 200} blocks
+                      {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow <= 20 && (
+                        <span style={{ marginLeft: "0.5rem", color: "#28a745", fontSize: "0.85rem" }}>
+                          (Extreme Pruning - Phase 15)
+                        </span>
                       )}
                     </span>
                   </div>
-                )}
-                {finalityManager && (
-                  <div style={{ marginTop: "1rem" }}>
-                    <strong>Current Committee:</strong>
-                    <div style={{ maxHeight: "150px", overflowY: "auto", marginTop: "0.5rem" }}>
-                      {finalityManager.getCurrentCommittee().length > 0 ? (
-                        finalityManager.getCurrentCommittee().map((member: { address: string; score: number }, idx: number) => (
-                          <div
-                            key={idx}
-                            style={{
-                              padding: "0.5rem",
-                              marginBottom: "0.25rem",
-                              background: "#f0f0f0",
-                              borderRadius: "4px",
-                              fontSize: "0.85rem",
-                            }}
-                          >
-                            <div>
-                              <strong>Member #{idx + 1}:</strong> {member.address.substring(0, 20)}...
-                            </div>
-                            <div>
-                              Score: {member.score.toFixed(1)} / 100
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div style={{ padding: "0.5rem", color: "#666", fontSize: "0.85rem" }}>
-                          No committee elected yet
+                  <div className="status-item">
+                    <span className="label">Stored Blocks:</span>
+                    <span className="value">{blockCount}</span>
+                  </div>
+                  {(() => {
+                    const minHeight = chainContext.storage.getMinHeight();
+                    const maxHeight = chainContext.storage.getMaxHeight();
+                    return (
+                      <>
+                        <div className="status-item">
+                          <span className="label">Earliest Block Height:</span>
+                          <span className="value">{minHeight}</span>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div style={{ color: "#666", fontSize: "0.9rem" }}>
-                Finality manager not initialized. Connect to P2P network to enable finality.
-              </div>
-            )}
-            <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-              💡 <strong>Fast Finality:</strong> Blocks reach finality (irreversibility) within 300-800ms through committee voting. 
-              Committee members are elected based on peer reputation scores.
-            </div>
-          </div>
-        )}
-
-        {/* Phase 18: Cluster Mining Control */}
-        {chainContext && (
-          <div className="status-card">
-            <h2>🔥 Cluster Mining (Phase 18)</h2>
-            <div className="status-item">
-              <span className="label">Mode:</span>
-              <span className="value">
-                {clusterMining ? (
-                  <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
-                ) : (
-                  <span style={{ color: "#666" }}>Inactive</span>
-                )}
-              </span>
-            </div>
-            {!clusterMining && (
-              <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <label>
-                    Worker Count:
-                    <input
-                      type="range"
-                      min="1"
-                      max={typeof navigator !== "undefined" && "hardwareConcurrency" in navigator 
-                        ? Math.max(1, (navigator.hardwareConcurrency || 4) * 2)
-                        : 32}
-                      value={clusterWorkerCount}
-                      onChange={(e) => setClusterWorkerCount(parseInt(e.target.value))}
-                      style={{ marginLeft: "0.5rem", width: "200px" }}
-                    />
-                    <span style={{ marginLeft: "0.5rem", fontWeight: "bold" }}>
-                      {clusterWorkerCount}
-                    </span>
-                  </label>
-                </div>
-                <div style={{ fontSize: "0.85rem", color: "#666" }}>
-                  Optimal: {MinerCluster.getOptimalWorkerCount()} workers (CPU cores - 1)
-                </div>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleStartClusterMining}
-                  disabled={!chainContext || clusterMining}
-                >
-                  Start Cluster Mining {pendingTxs.length > 0 ? `(${pendingTxs.length} pending)` : "(coinbase only)"}
-                </button>
-              </div>
-            )}
-            {clusterMining && (
-              <>
-                <div className="status-item">
-                  <span className="label">Total Hashrate:</span>
-                  <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
-                    {clusterStats.totalHashRate
-                      ? `${(clusterStats.totalHashRate / 1000).toFixed(2)} K hash/s`
-                      : "Calculating..."}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Active Workers:</span>
-                  <span className="value">
-                    {clusterStats.activeWorkers} / {clusterStats.totalWorkers}
-                  </span>
-                </div>
-                <div className="status-item">
-                  <span className="label">Total Hashes Tried:</span>
-                  <span className="value">{clusterStats.totalHashesTried.toString()}</span>
-                </div>
-                {clusterStats.workers.length > 0 && (
-                  <div style={{ marginTop: "1rem" }}>
-                    <strong>Worker Details:</strong>
-                    <div style={{ maxHeight: "200px", overflowY: "auto", marginTop: "0.5rem" }}>
-                      {clusterStats.workers.map((worker) => (
-                        <div
-                          key={worker.workerId}
-                          style={{
-                            padding: "0.5rem",
-                            marginBottom: "0.25rem",
-                            background: "#f0f0f0",
-                            borderRadius: "4px",
-                            fontSize: "0.85rem",
-                          }}
-                        >
-                          <div>
-                            <strong>Worker #{worker.workerId}:</strong>{" "}
-                            <span style={{ color: worker.status === "running" ? "#28a745" : "#666" }}>
-                              {worker.status}
+                        <div className="status-item">
+                          <span className="label">Latest Block Height:</span>
+                          <span className="value">{maxHeight}</span>
+                        </div>
+                        {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow > 0 && (
+                          <div className="status-item">
+                            <span className="label">Storage Reduction:</span>
+                            <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
+                              {height > 0
+                                ? `${((1 - blockCount / Math.max(1, height + 1)) * 100).toFixed(1)}%`
+                                : "0%"}
                             </span>
                           </div>
-                          <div>
-                            Hashrate: {worker.hashRate ? `${(worker.hashRate / 1000).toFixed(2)} K hash/s` : "—"}
-                          </div>
-                          <div>
-                            Nonce Range: {worker.currentNonceStart.toString()} -{" "}
-                            {worker.currentNonceEnd ? worker.currentNonceEnd.toString() : "∞"}
-                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                  <div style={{ marginTop: "1rem" }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (!chainContext) return;
+                        const lightNodeWindow = chainContext.params.lightNodeWindow ?? 200;
+                        if (lightNodeWindow > 0) {
+                          const tip = chainContext.storage.getTip();
+                          if (tip) {
+                            const pruneHeight = tip.header.height - lightNodeWindow + 1;
+                            if (pruneHeight > 0) {
+                              chainContext.storage.pruneBlocksBefore(pruneHeight);
+                              setChainContext({ ...chainContext });
+                              setError("Pruned old blocks");
+                              setTimeout(() => setError(""), 2000);
+                            }
+                          }
+                        }
+                      }}
+                      disabled={!chainContext || height === 0}
+                      style={{ background: "#ffc107", color: "#000" }}
+                    >
+                      Clear Pruned Blocks
+                    </button>
+                  </div>
+                </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Advanced Tab */}
+          {activeTab === "advanced" && (
+            <div className="tab-content active">
+              {/* Phase 6: Difficulty Information */}
+              {tip && (
+                <div className="status-card">
+                  <h2>⚙️ Difficulty Status</h2>
+                  <div className="status-item">
+                    <span className="label">Current Difficulty:</span>
+                    <span className="value">{tip.header.difficulty}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Target Block Time:</span>
+                    <span className="value">{chainContext.params.targetBlockTime}s</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Blocks Until Adjustment:</span>
+                    <span className="value">
+                      {getBlocksUntilAdjustment(
+                        height,
+                        chainContext.params.difficultyAdjustmentInterval
+                      )}
+                    </span>
+                  </div>
+                  {(() => {
+                    const allBlocks = chainContext.storage.getAllBlocks();
+                    const recentBlocks = allBlocks.slice(-chainContext.params.difficultyAdjustmentInterval);
+                    const avgTime = getAverageBlockTime(recentBlocks);
+                    if (avgTime !== null) {
+                      return (
+                        <div className="status-item">
+                          <span className="label">Avg Block Time (last {recentBlocks.length}):</span>
+                          <span className="value">{avgTime.toFixed(2)}s</span>
                         </div>
-                      ))}
+                      );
+                    }
+                    return null;
+                  })()}
+                  {(() => {
+                    const allBlocks = chainContext.storage.getAllBlocks();
+                    if (allBlocks.length >= chainContext.params.difficultyAdjustmentInterval) {
+                      const explanation = explainDifficultyChange(allBlocks, chainContext.params);
+                      return (
+                        <div style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#666" }}>
+                          <strong>Next Adjustment:</strong> {explanation.reason}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              )}
+
+              {/* Phase 16: IDC Emission Info */}
+              {chainContext && tip && (() => {
+                const totalMinted = chainContext.indexState.getTotalMinted();
+                const totalMintedIDC = uIDCToIDC(totalMinted);
+                const maxSupplyIDC = uIDCToIDC(IDC_MAX_SUPPLY);
+                const emissionStats = getEmissionStats(tip.header.height);
+                const nextBlockReward = emissionStats.rawRewardIDC;
+                
+                return (
+                  <div className="status-card">
+                    <h2>💰 IDC Emission</h2>
+                    <div className="status-item">
+                      <span className="label">Total Minted:</span>
+                      <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
+                        {totalMintedIDC.toFixed(6)} / {maxSupplyIDC.toFixed(6)} IDC
+                      </span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">Minting Progress:</span>
+                      <span className="value">
+                        {((totalMintedIDC / maxSupplyIDC) * 100).toFixed(4)}%
+                      </span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">Current Era:</span>
+                      <span className="value">
+                        Era {emissionStats.era} / {IDC_ERA_COUNT - 1}
+                      </span>
+                    </div>
+                    <div className="status-item">
+                      <span className="label">Block Reward (next):</span>
+                      <span className="value" style={{ fontWeight: "bold" }}>
+                        {nextBlockReward.toFixed(6)} IDC
+                      </span>
+                    </div>
+                    <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
+                      <span className="label">Blocks in Era:</span>
+                      <span className="value">
+                        {Number(emissionStats.blocksRemainingInEra).toLocaleString()} remaining
+                      </span>
                     </div>
                   </div>
-                )}
-                <div style={{ marginTop: "1rem" }}>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={handleStopClusterMining}
-                  >
-                    Stop Cluster Mining
-                  </button>
+                );
+              })()}
+
+              {/* Phase 21: Peer Reputation */}
+              {chainContext && chainContext.params.peerScoreEnabled && (
+                <div className="status-card">
+                  <h2>🔒 Peer Reputation & Security (Phase 21)</h2>
+                  <div className="status-item">
+                    <span className="label">Total Peers Tracked:</span>
+                    <span className="value">{peerScores.length}</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Trusted:</span>
+                    <span className="value" style={{ color: "#28a745" }}>
+                      {peerScores.filter(p => p.trustLevel === "trusted").length}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Normal:</span>
+                    <span className="value" style={{ color: "#666" }}>
+                      {peerScores.filter(p => p.trustLevel === "normal").length}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Low Trust:</span>
+                    <span className="value" style={{ color: "#ffc107" }}>
+                      {peerScores.filter(p => p.trustLevel === "low").length}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="label">Banned:</span>
+                    <span className="value" style={{ color: "#dc3545" }}>
+                      {peerScores.filter(p => p.trustLevel === "banned").length}
+                    </span>
+                  </div>
+                  {peerScores.length > 0 && (
+                    <div style={{ marginTop: "1rem" }}>
+                      <strong>Peer Details:</strong>
+                      <div style={{ maxHeight: "300px", overflowY: "auto", marginTop: "0.5rem" }}>
+                        <table style={{ width: "100%", fontSize: "0.85rem", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#f0f0f0", position: "sticky", top: 0 }}>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Peer ID</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Score</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Trust</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Blocks</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Snapshots</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Latency</th>
+                              <th style={{ padding: "0.5rem", textAlign: "left", borderBottom: "1px solid #ddd" }}>Work</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {peerScores
+                              .sort((a, b) => b.score - a.score)
+                              .map((peer) => {
+                                const trustColor = 
+                                  peer.trustLevel === "trusted" ? "#28a745" :
+                                  peer.trustLevel === "normal" ? "#666" :
+                                  peer.trustLevel === "low" ? "#ffc107" : "#dc3545";
+                                return (
+                                  <tr key={peer.peerId} style={{ borderBottom: "1px solid #eee" }}>
+                                    <td style={{ padding: "0.5rem" }} title={peer.peerId}>
+                                      {peer.peerId.substring(0, 16)}...
+                                    </td>
+                                    <td style={{ padding: "0.5rem", fontWeight: "bold" }}>
+                                      {peer.score.toFixed(1)}
+                                    </td>
+                                    <td style={{ padding: "0.5rem", color: trustColor }}>
+                                      {peer.trustLevel}
+                                    </td>
+                                    <td style={{ padding: "0.5rem" }}>
+                                      {peer.blocksServed} / {peer.blocksInvalid > 0 ? <span style={{ color: "#dc3545" }}>{peer.blocksInvalid}</span> : "0"}
+                                    </td>
+                                    <td style={{ padding: "0.5rem" }}>
+                                      {peer.snapshotsServed} / {peer.snapshotsInvalid > 0 ? <span style={{ color: "#dc3545" }}>{peer.snapshotsInvalid}</span> : "0"}
+                                    </td>
+                                    <td style={{ padding: "0.5rem" }}>
+                                      {peer.avgLatencyMs ? `${peer.avgLatencyMs.toFixed(0)}ms` : "—"}
+                                    </td>
+                                    <td style={{ padding: "0.5rem" }}>
+                                      {peer.workCompleted} / {peer.workFailed > 0 ? <span style={{ color: "#dc3545" }}>{peer.workFailed}</span> : "0"}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
+                    💡 <strong>Peer Reputation:</strong> Tracks peer behavior to prioritize reliable nodes and penalize misbehaving ones.
+                  </div>
                 </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="actions" style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-          {!clusterMining && !isMining ? (
-            <>
-              <button
-                className="btn btn-primary"
-                onClick={handleStartMining}
-              >
-                Start Mining (Single Worker) {pendingTxs.length > 0 ? `(${pendingTxs.length} pending)` : "(coinbase only)"}
-              </button>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={autoMining}
-                  onChange={(e) => {
-                    setAutoMining(e.target.checked);
-                    if (e.target.checked && chainContext && !isMining && !clusterMining) {
-                      // Start mining immediately if auto-mining is enabled
-                      setTimeout(() => handleStartMining(), 500);
-                    }
-                  }}
-                />
-                <span style={{ fontSize: "0.9rem" }}>Auto Mining</span>
-              </label>
-            </>
-          ) : clusterMining ? (
-            <>
-              <span style={{ fontSize: "0.9rem", color: "#666" }}>
-                Cluster mining active ({clusterStats.activeWorkers} workers)
-              </span>
-            </>
-          ) : (
-            <>
-              <button className="btn btn-secondary" onClick={handleStopMining}>
-                Stop Mining
-              </button>
-              {autoMining && (
-                <span style={{ fontSize: "0.9rem", color: "#666" }}>
-                  (Auto-mining enabled - will restart after block)
-                </span>
               )}
-            </>
-          )}
-        </div>
 
-        {/* Info */}
-        <div className="info">
-          <p>
-            <strong>Phase 15 Complete:</strong> State commitment and extreme pruning implemented. Each block now includes
-            a stateCommitment hash that allows light nodes to verify state integrity even with minimal block storage.
-            Light nodes can now safely prune to just 1-20 recent blocks while maintaining full security through state commitments.
-          </p>
-          <p>
-            <strong>Phase 14:</strong> Remote snapshot sync for fast network joining.
-            <strong>Phase 13:</strong> Snapshot verification and integrity checking with SHA-256 state hashes.
-            <strong>Phase 12:</strong> Incremental snapshots with hybrid full/delta approach (70-95% storage reduction).
-            <strong>Phase 11:</strong> Snapshot compression (60-90% storage reduction).
-            <strong>Phase 10:</strong> Light node mode with automatic pruning.
-            <strong>Phase 9:</strong> Fast sync with state snapshots.
-          </p>
-          <p style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#666" }}>
-            <strong>💡 Tip:</strong> You can set <code>lightNodeWindow</code> to 1-20 in chain params for extreme pruning.
-            With state commitments, even a single block is sufficient for verification!
-          </p>
-          <p>
-            <strong>⚠️ Important:</strong> Before connecting, you must start the signaling server:
-          </p>
-          <div style={{ background: "#f0f0f0", padding: "1rem", borderRadius: "4px", marginTop: "0.5rem" }}>
-            <code style={{ display: "block", marginBottom: "0.5rem" }}>
-              # Install dependencies (if needed)
-            </code>
-            <code style={{ display: "block", marginBottom: "0.5rem" }}>
-              npm install ws
-            </code>
-            <code style={{ display: "block", marginBottom: "0.5rem" }}>
-              # Start the server
-            </code>
-            <code style={{ display: "block" }}>
-              node signaling-server-example.js
-            </code>
-            <p style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
-              Or use: <code>./start-server.sh</code> (Mac/Linux) or <code>start-server.bat</code> (Windows)
-            </p>
-          </div>
+              {/* Phase 22: Fast Finality Status */}
+              {chainContext && chainContext.params.finalityEnabled && (
+                <div className="status-card">
+                  <h2>⚡ Fast Finality Status (Phase 22)</h2>
+                  {finalityStats ? (
+                    <>
+                      <div className="status-item">
+                        <span className="label">Status:</span>
+                        <span className="value">
+                          {finalityStats.committeeSize > 0 ? (
+                            <span style={{ color: "#28a745", fontWeight: "bold" }}>Active</span>
+                          ) : (
+                            <span style={{ color: "#666" }}>Waiting for Committee</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Finalized Blocks:</span>
+                        <span className="value" style={{ fontWeight: "bold" }}>
+                          {finalityStats.finalizedCount}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Pending Votes:</span>
+                        <span className="value">
+                          {finalityStats.pendingVotes}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Committee Round:</span>
+                        <span className="value">
+                          {finalityStats.currentRound >= 0 ? finalityStats.currentRound : "—"}
+                        </span>
+                      </div>
+                      <div className="status-item">
+                        <span className="label">Committee Size:</span>
+                        <span className="value">
+                          {finalityStats.committeeSize} members
+                        </span>
+                      </div>
+                      {tip && (
+                        <div className="status-item" style={{ marginTop: "0.5rem" }}>
+                          <span className="label">Current Block Finality:</span>
+                          <span className="value">
+                            {finalizedBlocks.has(tip.hash) ? (
+                              <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ Finalized</span>
+                            ) : finalityStats.pendingVotes > 0 ? (
+                              <span style={{ color: "#ffc107" }}>⏳ Pending ({finalityStats.pendingVotes} votes)</span>
+                            ) : (
+                              <span style={{ color: "#dc3545" }}>❌ Unconfirmed</span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {finalityManager && (
+                        <div style={{ marginTop: "1rem" }}>
+                          <strong>Current Committee:</strong>
+                          <div style={{ maxHeight: "150px", overflowY: "auto", marginTop: "0.5rem" }}>
+                            {finalityManager.getCurrentCommittee().length > 0 ? (
+                              finalityManager.getCurrentCommittee().map((member: { address: string; score: number }, idx: number) => (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    padding: "0.5rem",
+                                    marginBottom: "0.25rem",
+                                    background: "#f0f0f0",
+                                    borderRadius: "4px",
+                                    fontSize: "0.85rem",
+                                  }}
+                                >
+                                  <div>
+                                    <strong>Member #{idx + 1}:</strong> {member.address.substring(0, 20)}...
+                                  </div>
+                                  <div>
+                                    Score: {member.score.toFixed(1)} / 100
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div style={{ padding: "0.5rem", color: "#666", fontSize: "0.85rem" }}>
+                                No committee elected yet
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ color: "#666", fontSize: "0.9rem" }}>
+                      Finality manager not initialized. Connect to P2P network to enable finality.
+                    </div>
+                  )}
+                  <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
+                    💡 <strong>Fast Finality:</strong> Blocks reach finality (irreversibility) within 300-800ms through committee voting. 
+                    Committee members are elected based on peer reputation scores.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Other tabs placeholder - to be implemented */}
+          {activeTab !== "overview" && activeTab !== "wallet" && activeTab !== "mining" && activeTab !== "transactions" && activeTab !== "network" && activeTab !== "storage" && activeTab !== "advanced" && (
+            <div className="tab-content active">
+              <div className="status-card">
+                <h2>🚧 {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Tab</h2>
+                <p>This section is being organized. Content will be moved here soon.</p>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>

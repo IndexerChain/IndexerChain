@@ -50,9 +50,10 @@ IndexerChain 支持两种模式：
 **A. 主网模式（生产环境）**
 - **作用**：公网可访问的信令服务器，让全球用户加入同一条链
 - **部署位置**：
-  - VPS（DigitalOcean / Vultr / 阿里云等）
-  - 或 Cloudflare Workers（支持 WebSocket）
+  - **VPS**（DigitalOcean / Vultr / 阿里云等）- 传统方案，需要服务器
+  - **Cloudflare Workers**（推荐）- 无服务器方案，全球 CDN，自动扩缩容
 - **URL 示例**：`wss://signal.indexerchain.io`
+- **部署文档**：详见下方「部署根节点」章节
 - **特点**：
   - ✅ **不存储任何区块数据**
   - ✅ **不参与共识**
@@ -153,18 +154,15 @@ npm run dev
 
 ### 运行
 
-#### 方式一：主网模式（推荐）
+#### ⚠️ 重要：信令服务器说明
 
-1. 打开浏览器访问 `http://localhost:5173`
-2. 在 "P2P Network" 部分勾选 "Mainnet Mode"
-3. 点击 "Connect" 连接到主网
-4. 开始挖矿或创建交易
+IndexerChain 需要信令服务器来建立 P2P 连接。默认配置尝试连接 `wss://signal.indexerchain.io`，如果该服务器未部署，连接会失败。
 
-**特点**：无需本地服务器，自动连接全球网络
+**解决方案**：
 
-#### 方式二：本地开发模式
+#### 方式一：本地开发模式（推荐用于测试）
 
-1. **启动信令服务器**：
+1. **启动本地信令服务器**：
    ```bash
    # Mac/Linux
    ./start-server.sh
@@ -178,15 +176,42 @@ npm run dev
    ```
 
 2. 打开浏览器访问 `http://localhost:5173`
-3. 在 "P2P Network" 部分取消勾选 "Mainnet Mode"
-4. 输入信令服务器地址：`ws://localhost:8080`
-5. 点击 "Connect" 连接
+3. 在 "P2P Network" 部分：
+   - **取消勾选 "Mainnet Mode"**
+   - 输入信令服务器地址：`ws://localhost:8080`
+   - 点击 "Connect" 连接
 
-**特点**：适合本地测试、单机挖矿、私有链
+**特点**：适合本地测试、单机挖矿、私有链、开发调试
+
+#### 方式二：主网模式（需要部署信令服务器）
+
+1. **先部署信令服务器**（详见下方「部署根节点」章节）：
+   - 选项 A：使用 Cloudflare Workers（推荐，免费，5 分钟）
+   - 选项 B：使用 VPS 部署（需要服务器）
+
+2. 更新 `src/ui/App.tsx` 中的 `DEFAULT_MAINNET_SIGNALING` 为你的服务器地址
+
+3. 打开浏览器访问 `http://localhost:5173`
+4. 在 "P2P Network" 部分勾选 "Mainnet Mode"
+5. 点击 "Connect" 连接到主网
+
+**特点**：全球用户共享同一条链
+
+> 💡 **快速部署指南**：查看 [DEPLOY_SIGNALING.md](./DEPLOY_SIGNALING.md) 获取详细的信令服务器部署步骤。
 
 ### 部署
 
-#### 构建生产版本
+#### ⚠️ 部署前必读
+
+IndexerChain 的完整部署包括两部分：
+1. **前端应用**：部署到 Cloudflare Pages（用户访问的网页）
+2. **信令服务器**：部署信令服务器（P2P 网络基础设施）
+
+**如果只部署前端，用户将无法连接 P2P 网络！**
+
+> 📖 **详细部署指南**：查看 [DEPLOY_SIGNALING.md](./DEPLOY_SIGNALING.md) 获取信令服务器快速部署步骤。
+
+#### 1. 构建生产版本
 
 ```bash
 npm run build
@@ -194,17 +219,56 @@ npm run build
 
 构建产物在 `dist/` 目录。
 
-#### 部署到 Cloudflare Pages
+#### 2. 部署前端应用到 Cloudflare Pages
+
+**方式一：通过 Cloudflare Dashboard（推荐）**
 
 1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
 2. 进入 "Pages" → "Create a project"
-3. 连接 Git 仓库
+3. 连接 Git 仓库（GitHub/GitLab/Bitbucket）
 4. 构建设置：
-   - Build command: `npm run build`
-   - Build output directory: `dist`
+   - **Build command**: `npm run build`
+   - **Build output directory**: `dist`
+   - **Root directory**: `/`（项目根目录）
 5. 点击 "Save and Deploy"
+6. 等待构建完成，获得 `*.pages.dev` 域名
+
+**方式二：通过 Wrangler CLI**
+
+```bash
+# 安装 Wrangler
+npm install -g wrangler
+
+# 登录 Cloudflare
+wrangler login
+
+# 部署到 Pages
+wrangler pages deploy dist --project-name=indexerchain
+```
+
+**配置自定义域名（可选）**：
+
+1. 在 Cloudflare Pages 项目中进入 "Custom domains"
+2. 添加你的域名（如 `indexerchain.io`）
+3. Cloudflare 会自动配置 DNS 和 SSL 证书
 
 部署完成后，用户可通过 Cloudflare Pages 提供的域名访问应用。
+
+#### 3. 部署信令服务器（必需，用于主网模式）
+
+**快速选择**：
+
+- **方案 A：Cloudflare Workers**（推荐，无需 VPS，全球 CDN）
+  - 适合：快速部署、全球用户、无服务器架构
+  - 成本：免费额度充足，超出后按量付费
+  - 详见下方「部署根节点 → 方案二：Cloudflare Workers」
+
+- **方案 B：VPS 部署**（传统方案，需要服务器）
+  - 适合：完全控制、自定义配置、高并发
+  - 成本：$5-10/月 VPS 费用
+  - 详见下方「部署根节点 → 方案一：VPS 部署」
+
+**注意**：如果只是本地测试，可以跳过信令服务器部署，使用本地开发模式。
 
 #### 部署根节点（Root Node Deployment）
 
@@ -435,19 +499,261 @@ wscat -c wss://signal.indexerchain.io
 # ws.onopen = () => console.log('Connected!');
 ```
 
-**方案二：使用 Cloudflare Workers（未来支持）**
+**方案二：使用 Cloudflare Workers（推荐，无需 VPS）**
 
-Cloudflare Workers 现在支持 WebSocket，可以部署无服务器信令服务（无需 VPS）：
+Cloudflare Workers 支持 WebSocket，可以部署无服务器信令服务，无需 VPS，全球低延迟。
+
+**优势**：
+- ✅ **无需 VPS**：完全无服务器架构
+- ✅ **全球 CDN**：自动边缘部署，低延迟
+- ✅ **自动扩缩容**：根据流量自动调整
+- ✅ **免费额度**：每天 100,000 次请求免费
+- ✅ **自动 SSL**：HTTPS/WSS 自动配置
+
+**部署步骤**：
+
+1. **安装 Wrangler CLI**：
+
+```bash
+npm install -g wrangler
+# 或使用 npx（无需全局安装）
+npx wrangler --version
+```
+
+2. **登录 Cloudflare**：
+
+```bash
+wrangler login
+```
+
+这会打开浏览器，登录你的 Cloudflare 账户。
+
+3. **创建 Worker 项目**：
+
+```bash
+# 创建新项目
+wrangler init indexerchain-signaling
+
+# 或使用现有项目
+cd IndexerChain
+mkdir -p workers
+cd workers
+```
+
+4. **创建信令服务器 Worker**：
+
+创建 `workers/signaling-server.js`：
 
 ```javascript
-// workers/signaling-server.js
+/**
+ * IndexerChain Signaling Server (Cloudflare Worker)
+ * 
+ * WebSocket-based signaling server for IndexerChain P2P networking
+ */
+
+const peers = new Map(); // peerId -> WebSocket
+
 export default {
-  async fetch(request, env) {
-    // WebSocket upgrade handling
-    // ... (实现信令逻辑)
+  async fetch(request, env, ctx) {
+    // 处理 WebSocket 升级请求
+    const upgradeHeader = request.headers.get('Upgrade');
+    if (upgradeHeader !== 'websocket') {
+      return new Response('Expected WebSocket', { status: 426 });
+    }
+
+    // 创建 WebSocket 连接
+    const { 0: client, 1: server } = new WebSocketPair();
+    
+    // 接受 WebSocket 连接
+    server.accept();
+    
+    let nodeId = null;
+
+    // 处理消息
+    server.addEventListener('message', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'join') {
+          // 节点加入
+          nodeId = data.nodeId;
+          peers.set(nodeId, server);
+          console.log(`Node ${nodeId} joined. Total peers: ${peers.size}`);
+
+          // 发送现有节点列表
+          const peerList = Array.from(peers.keys()).filter((id) => id !== nodeId);
+          server.send(JSON.stringify({
+            type: 'peers',
+            peers: peerList,
+          }));
+
+          // 通知其他节点
+          for (const [id, peer] of peers.entries()) {
+            if (id !== nodeId && peer.readyState === WebSocket.READY_STATE_OPEN) {
+              peer.send(JSON.stringify({
+                type: 'new-peer',
+                peerId: nodeId,
+              }));
+            }
+          }
+        } else if (data.type === 'request-peers') {
+          // 请求节点列表
+          const peerList = Array.from(peers.keys()).filter((id) => id !== nodeId);
+          server.send(JSON.stringify({
+            type: 'peers',
+            peers: peerList,
+          }));
+        } else if (
+          data.type === 'offer' ||
+          data.type === 'answer' ||
+          data.type === 'ice-candidate'
+        ) {
+          // 转发 WebRTC 信令消息
+          const target = peers.get(data.to);
+          if (target && target.readyState === WebSocket.READY_STATE_OPEN) {
+            target.send(JSON.stringify({
+              ...data,
+              from: nodeId,
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Error handling message:', error);
+      }
+    });
+
+    // 处理连接关闭
+    server.addEventListener('close', () => {
+      if (nodeId) {
+        peers.delete(nodeId);
+        console.log(`Node ${nodeId} disconnected. Total peers: ${peers.size}`);
+
+        // 通知其他节点
+        for (const [id, peer] of peers.entries()) {
+          if (peer.readyState === WebSocket.READY_STATE_OPEN) {
+            peer.send(JSON.stringify({
+              type: 'peer-left',
+              peerId: nodeId,
+            }));
+          }
+        }
+      }
+    });
+
+    // 返回 WebSocket 响应
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+    });
+  },
+};
+```
+
+5. **配置 Wrangler**：
+
+创建或编辑 `workers/wrangler.toml`：
+
+```toml
+name = "indexerchain-signaling"
+main = "signaling-server.js"
+compatibility_date = "2024-01-01"
+
+# WebSocket 支持
+[triggers]
+[triggers.routes]
+pattern = "signal.yourdomain.com/*"
+```
+
+6. **部署 Worker**：
+
+```bash
+cd workers
+wrangler deploy
+```
+
+部署成功后，你会获得一个 URL，例如：
+- `https://indexerchain-signaling.your-subdomain.workers.dev`
+
+7. **配置自定义域名（可选）**：
+
+```bash
+# 添加自定义域名
+wrangler route add "signal.indexerchain.io/*"
+```
+
+然后在 Cloudflare Dashboard 中：
+1. 进入你的域名 DNS 设置
+2. 添加 CNAME 记录：
+   - 名称：`signal`
+   - 目标：`indexerchain-signaling.your-subdomain.workers.dev`
+   - 代理状态：已代理（橙色云）
+
+8. **更新应用配置**：
+
+在 `src/ui/App.tsx` 中修改：
+
+```typescript
+const DEFAULT_MAINNET_SIGNALING = "wss://signal.indexerchain.io";
+// 或使用 Workers 默认域名
+// const DEFAULT_MAINNET_SIGNALING = "wss://indexerchain-signaling.your-subdomain.workers.dev";
+```
+
+9. **验证部署**：
+
+```bash
+# 查看 Worker 状态
+wrangler tail
+
+# 测试 WebSocket 连接（浏览器控制台）
+const ws = new WebSocket('wss://signal.indexerchain.io');
+ws.onopen = () => console.log('Connected!');
+ws.onerror = (e) => console.error('Error:', e);
+```
+
+**注意事项**：
+
+- ⚠️ **Durable Objects（推荐）**：对于生产环境，建议使用 Cloudflare Durable Objects 来持久化节点连接状态，避免 Worker 重启导致连接丢失
+- ⚠️ **免费额度限制**：每天 100,000 次请求免费，超出后按量付费
+- ⚠️ **WebSocket 连接数**：每个 Worker 实例最多支持约 30,000 个并发 WebSocket 连接
+- ✅ **自动扩缩容**：Cloudflare 会根据流量自动创建多个 Worker 实例
+
+**使用 Durable Objects（生产环境推荐）**：
+
+对于高可用性需求，可以使用 Durable Objects 来管理节点状态：
+
+```javascript
+// workers/signaling-server.js (使用 Durable Objects)
+export class SignalingRoom {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    this.peers = new Map();
+  }
+
+  async fetch(request) {
+    // WebSocket 处理逻辑
+    // ...
   }
 }
+
+export default {
+  async fetch(request, env) {
+    const id = env.SIGNALING_ROOM.idFromName('main');
+    const room = env.SIGNALING_ROOM.get(id);
+    return room.fetch(request);
+  },
+};
 ```
+
+在 `wrangler.toml` 中配置：
+
+```toml
+[[durable_objects.bindings]]
+name = "SIGNALING_ROOM"
+class_name = "SignalingRoom"
+```
+
+这样可以确保节点连接状态在 Worker 重启后仍然保持。
 
 ---
 

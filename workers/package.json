@@ -1,0 +1,24 @@
+{
+  "name": "indexerchain-signaling-worker",
+  "version": "1.0.0",
+  "description": "IndexerChain Signaling Server (Cloudflare Worker)",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "indexerchain",
+    "signaling",
+    "websocket",
+    "p2p",
+    "cloudflare-workers"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
+

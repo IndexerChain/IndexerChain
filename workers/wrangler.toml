@@ -1,0 +1,32 @@
+# Cloudflare Workers configuration for IndexerChain Signaling Server
+# 
+# This file configures the Cloudflare Worker that handles WebSocket signaling
+# for IndexerChain P2P networking.
+
+name = "indexerchain-signaling"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# WebSocket support is enabled by default in Cloudflare Workers
+# No additional configuration needed for WebSocket support
+
+# Custom domain configuration
+routes = [
+  { pattern = "signal.indexerchain.com/*", zone_name = "indexerchain.com" }
+]
+
+# Optional: Environment variables
+# [vars]
+# ENVIRONMENT = "production"
+
+# Optional: Durable Objects (for production with state persistence)
+# Uncomment and configure if you need persistent peer state across worker restarts
+# [[durable_objects.bindings]]
+# name = "SIGNALING_ROOM"
+# class_name = "SignalingRoom"
+# script_name = "indexerchain-signaling"
+
+# Limits (Cloudflare defaults)
+# [limits]
+# cpu_ms = 50  # CPU time limit per request
+
