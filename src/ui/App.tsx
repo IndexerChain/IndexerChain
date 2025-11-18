@@ -61,6 +61,7 @@ import { RuntimeManager } from "../core/runtimeManager.js";
 import { useI18n } from "../i18n/useI18n.js";
 import { getLocalInstanceCoordinator, type LocalInstanceRole, type LeaderInfo } from "../core/localInstance.js";
 import { getLocalStateCoordinator } from "../core/localStateCoordinator.js";
+import { NetworkHealthPanel } from "./network/NetworkHealthPanel.js";
 import "./index.css";
 
 /**
@@ -781,6 +782,56 @@ function App() {
     progress: 0,
   });
 
+  // Phase 36: Initialize state commit gossip, lock manager, drift detector, and repair manager
+  useEffect(() => {
+    if (!chainContext || !chainContext.p2p) return;
+
+    const p2p = chainContext.p2p;
+    
+    // Initialize Phase 36 modules
+    (async () => {
+      const { getStateCommitGossip } = await import("../core/stateCommitGossip.js");
+      const { getStateLockManager } = await import("../core/stateLockManager.js");
+      const { getStateDriftDetector } = await import("../core/stateDriftDetector.js");
+      const { getStateRepairManager } = await import("../core/stateRepair.js");
+      
+      const gossip = getStateCommitGossip();
+      const lockManager = getStateLockManager();
+      const driftDetector = getStateDriftDetector();
+      const repairManager = getStateRepairManager();
+      
+      gossip.initialize(chainContext, p2p);
+      lockManager.initialize(chainContext, p2p);
+      driftDetector.initialize(chainContext, p2p);
+      repairManager.initialize(chainContext, p2p);
+      
+      // Check for drift periodically and trigger repair if needed
+      const driftCheckInterval = setInterval(() => {
+        const driftCheck = driftDetector.checkDrift();
+        if (driftCheck.hasDrift && driftCheck.severity === "critical" && !repairManager.isRepairing()) {
+          console.warn("[Phase 36] Critical drift detected, starting repair...");
+          repairManager.startRepair(
+            driftCheck,
+            () => {
+              console.log("[Phase 36] State repair completed successfully");
+            },
+            (error) => {
+              console.error("[Phase 36] State repair failed:", error);
+            }
+          );
+        }
+      }, 10000); // Check every 10 seconds
+      
+      return () => {
+        clearInterval(driftCheckInterval);
+        gossip.destroy();
+        lockManager.destroy();
+        driftDetector.destroy();
+        repairManager.destroy();
+      };
+    })();
+  }, [chainContext]);
+
   // Setup P2P message handlers
   useEffect(() => {
     if (!chainContext || !chainContext.p2p) return;
@@ -1145,6 +1196,24 @@ function App() {
       }
     });
 
+    // Phase 36: Handle STATE_COMMIT_GOSSIP
+    p2p.onMessage("STATE_COMMIT_GOSSIP", async (data: any, sender: string) => {
+      if (!chainContext) return;
+      
+      const { getStateCommitGossip } = await import("../core/stateCommitGossip.js");
+      const gossip = getStateCommitGossip();
+      
+      // Handle state commit from peer
+      gossip.handleStateCommit({
+        peerId: sender,
+        height: data.height,
+        stateCommitment: data.stateCommitment,
+        tipHash: data.tipHash,
+        timestamp: data.timestamp || Date.now(),
+        ipHash: data.ipHash,
+      });
+    });
+
     // Phase 30: Handle GLOBAL_VIEW_RESPONSE
     let lastKnownNetworkHeight = -1; // Track network height for auto-sync
     p2p.onMessage("GLOBAL_VIEW_RESPONSE", async (payload: any, sender: string) => {
@@ -1490,15 +1559,22 @@ function App() {
           bootstrapComplete // Phase 32: Pass bootstrap status
         );
         setMiningGuardResult(result);
+        
+        // Don't set error state for mining guard results - these are informational
+        // Only set error if user explicitly tries to mine and guard blocks it
+        // The mining guard result is used to disable/enable mining buttons, not to show errors
       } catch (e) {
         console.warn("[Phase 30] Failed to check mining readiness:", e);
       }
     };
 
-    checkMiningReady();
-    const interval = setInterval(checkMiningReady, 5000);
-    return () => clearInterval(interval);
-  }, [chainContext, chainContext?.p2p, finalityManager, localCoordinator, nodeAddress]);
+    // Only check if P2P is connected and we have a chain context
+    if (isP2PConnected) {
+      checkMiningReady();
+      const interval = setInterval(checkMiningReady, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [chainContext, chainContext?.p2p, finalityManager, localCoordinator, nodeAddress, isP2PConnected, bootstrapComplete]);
 
   // Phase 30: Update mining effectiveness stats periodically
   useEffect(() => {
@@ -2123,6 +2199,17 @@ function App() {
     if (!guardResult.ok) {
       const { MiningGuard: Guard } = await import("../core/miningGuard.js");
       const message = Guard.getStatusMessage(guardResult, locale);
+      
+      // Don't show error for NOT_SYNCED if we're at height 0 (new chain) or bootstrap is not complete
+      // These are normal states during initial sync, not errors
+      const localTip = chainContext.storage.getTip();
+      if (guardResult.code === "NOT_SYNCED" && (localTip?.header.height === 0 || !bootstrapComplete)) {
+        console.log(`[Mining] Not ready to mine yet: ${message} (this is normal during initial sync)`);
+        // Don't set error - this is informational, not an error
+        // The mining button will be disabled based on miningGuardResult
+        return;
+      }
+      
       setError(message);
       return;
     }
@@ -2326,6 +2413,17 @@ function App() {
     if (!guardResult.ok) {
       const { MiningGuard: Guard } = await import("../core/miningGuard.js");
       const message = Guard.getStatusMessage(guardResult, locale);
+      
+      // Don't show error for NOT_SYNCED if we're at height 0 (new chain) or bootstrap is not complete
+      // These are normal states during initial sync, not errors
+      const localTip = chainContext.storage.getTip();
+      if (guardResult.code === "NOT_SYNCED" && (localTip?.header.height === 0 || !bootstrapComplete)) {
+        console.log(`[Mining] Not ready to mine yet: ${message} (this is normal during initial sync)`);
+        // Don't set error - this is informational, not an error
+        // The mining button will be disabled based on miningGuardResult
+        return;
+      }
+      
       setError(message);
       return;
     }
@@ -2779,6 +2877,66 @@ function App() {
                   ⚠️ <strong>Warning:</strong> This will permanently delete all chain data and snapshots, then start fresh from genesis block.
                 </p>
               </div>
+            ) : error.includes("本机已有一个挖矿实例") || error.includes("already has a mining instance") ? (
+              <div style={{ 
+                marginTop: "1.5rem", 
+                paddingTop: "1.5rem", 
+                borderTop: "3px solid rgba(255,255,255,0.5)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: "1rem"
+              }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    // Force clear leader info (even if not timed out)
+                    localCoordinator.clearStaleLeader(true);
+                    setError("");
+                    // Wait a bit for election to complete
+                    setTimeout(() => {
+                      const newRole = localCoordinator.getRole();
+                      const leaderInfo = localCoordinator.getLeaderInfo();
+                      if (newRole === "LEADER") {
+                        setError("✅ 已清理旧的实例信息，当前实例现在是 LEADER，可以开始挖矿");
+                        setTimeout(() => setError(""), 3000);
+                      } else if (leaderInfo) {
+                        // Still have a leader, might be another active instance
+                        setError(`⚠️ 检测到另一个活跃实例：${leaderInfo.instanceId}。如果确定没有其他标签页/窗口打开，请刷新页面后再试。`);
+                      } else {
+                        setError("⚠️ 清理完成，但选举未成功。请刷新页面重试。");
+                      }
+                    }, 1500);
+                  }}
+                  style={{ 
+                    padding: "1rem 2rem",
+                    fontSize: "1rem",
+                    fontWeight: "bold",
+                    backgroundColor: "#007bff",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    display: "inline-block",
+                    minWidth: "250px",
+                    boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
+                    transition: "all 0.2s"
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = "#0056b3";
+                    e.currentTarget.style.transform = "scale(1.05)";
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = "#007bff";
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  🔄 清理旧的实例信息
+                </button>
+                <p style={{ marginTop: "0.5rem", fontSize: "0.95rem", opacity: 0.95, maxWidth: "600px", lineHeight: "1.5" }}>
+                  💡 <strong>说明：</strong>如果其他标签页/窗口已经关闭，点击此按钮可以清理旧的 LEADER 信息，让当前实例成为 LEADER。
+                </p>
+              </div>
             ) : (
               <div style={{ marginTop: "1rem", padding: "0.75rem", background: "rgba(255,255,255,0.2)", borderRadius: "4px" }}>
                 Debug: needsReset is false (button should not show)
@@ -2948,6 +3106,19 @@ function App() {
                   locale={locale}
                 />
               )}
+              
+              {/* Phase 34: Network Health Dashboard */}
+              {chainContext && (
+                <NetworkHealthPanel
+                  chainContext={chainContext}
+                  p2pNode={chainContext?.p2p || null}
+                  finalityManager={finalityManager}
+                  localRole={localCoordinator.getRole()}
+                  bootstrapComplete={bootstrapComplete}
+                  locale={locale}
+                />
+              )}
+
               {/* Quick Start Guide - Only show when not fully set up */}
               {(!isP2PConnected || !nodeAddress || (!isMining && !clusterMining)) && (
                 <div className="status-card" style={{ 
@@ -3427,66 +3598,133 @@ function App() {
                               : "As long as this shows ✅ Healthy & On Mainnet, your current mining is effective."}
                           </div>
                         )}
-                        {/* Phase 30: Mining Ready Status */}
-                        {miningGuardResult && (
-                          <div style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
-                            <span className="label">{locale === "zh" ? "挖矿就绪:" : "Mining Ready:"}</span>
-                            <span className="value" style={{ 
-                              color: miningGuardResult.ok ? "#28a745" : miningGuardResult.code === "NOT_FINALIZED" ? "#ffc107" : "#dc3545",
-                              fontWeight: "bold",
-                              marginLeft: "0.5rem"
-                            }}>
-                              {miningGuardResult.ok 
-                                ? (locale === "zh" ? "✅ 安全" : "✅ SAFE")
-                                : miningGuardResult.code === "NOT_FINALIZED"
-                                ? (locale === "zh" ? "⚠️ 降级" : "⚠️ DEGRADED")
-                                : (locale === "zh" ? "🚫 已阻止" : "🚫 BLOCKED")
-                              }
-                            </span>
-                            {!miningGuardResult.ok && miningGuardResult.reason && (
-                              <div style={{ 
-                                marginTop: "0.25rem", 
-                                fontSize: "0.75rem", 
-                                color: "#666",
-                                paddingLeft: "0.5rem"
-                              }}>
-                                {miningGuardResult.reason}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Health Status Indicator */}
-                        <div style={{ 
-                          marginTop: "1rem", 
-                          padding: "0.75rem", 
-                          background: miningGuardResult?.ok 
-                            ? "rgba(40, 167, 69, 0.1)" 
-                            : miningGuardResult?.code === "NOT_FINALIZED"
-                            ? "rgba(255, 193, 7, 0.1)"
-                            : "rgba(220, 53, 69, 0.1)",
-                          borderRadius: "6px",
-                          border: `1px solid ${miningGuardResult?.ok 
-                            ? "#28a745" 
-                            : miningGuardResult?.code === "NOT_FINALIZED"
-                            ? "#ffc107"
-                            : "#dc3545"}`,
-                          fontSize: "0.9rem"
-                        }}>
-                          <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
-                            {miningGuardResult?.ok 
-                              ? (locale === "zh" ? "✅ 健康 & 主网" : "✅ Healthy & On Mainnet")
-                              : miningGuardResult?.code === "NOT_FINALIZED"
-                              ? (locale === "zh" ? "⚠️ 降级模式" : "⚠️ Degraded Mode")
-                              : (locale === "zh" ? "🚫 已阻止" : "🚫 Blocked")
+                        {/* Phase 33: Mining Ready Status with Mode */}
+                        {miningGuardResult && (() => {
+                          // Import MiningGuard synchronously for UI rendering
+                          let modeColor = "#dc3545";
+                          let modeDescription = "";
+                          let statusMessage = "";
+                          
+                          // Use dynamic import result if available, otherwise compute inline
+                          if (miningGuardResult.mode) {
+                            // Determine color based on mode
+                            switch (miningGuardResult.mode) {
+                              case "SAFE":
+                                modeColor = "#28a745";
+                                modeDescription = locale === "zh" 
+                                  ? "网络健康，可安全挖矿。区块将被主网接受。"
+                                  : "Network healthy, safe to mine. Blocks will be accepted by mainnet.";
+                                break;
+                              case "GUARDED":
+                                modeColor = "#ffc107";
+                                modeDescription = locale === "zh"
+                                  ? "低连接模式，风险挖矿。区块可能不会被主网接受。"
+                                  : "Low connectivity mode, guarded mining. Blocks may not be accepted by mainnet.";
+                                break;
+                              case "LOCAL_ONLY":
+                                modeColor = "#17a2b8";
+                                modeDescription = locale === "zh"
+                                  ? "本地训练模式，完全本地挖矿，不参与网络共识。"
+                                  : "Local training mode, completely local mining, not participating in network consensus.";
+                                break;
+                              default:
+                                modeColor = "#dc3545";
+                                modeDescription = locale === "zh"
+                                  ? "无法挖矿：不满足最低要求。"
+                                  : "Cannot mine: Minimum requirements not met.";
                             }
-                          </div>
-                          <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.25rem" }}>
-                            {locale === "zh" 
-                              ? "只要这里显示 ✅ 健康 & 主网，你当前的挖矿就是有效的。"
-                              : "As long as this shows ✅ Healthy & On Mainnet, your current mining is effective."}
-                          </div>
-                        </div>
+                            
+                            // Get status message
+                            if (miningGuardResult.ok) {
+                              switch (miningGuardResult.mode) {
+                                case "SAFE":
+                                  statusMessage = locale === "zh" 
+                                    ? "✅ 挖矿就绪：安全模式（网络健康）" 
+                                    : "✅ Mining Ready: SAFE (Network Healthy)";
+                                  break;
+                                case "GUARDED":
+                                  statusMessage = locale === "zh"
+                                    ? `🟡 挖矿就绪：保护模式（对等节点不足：${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3}）`
+                                    : `🟡 Mining Ready: GUARDED (Insufficient peers: ${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3})`;
+                                  break;
+                                case "LOCAL_ONLY":
+                                  statusMessage = locale === "zh" 
+                                    ? "🔵 挖矿就绪：本地训练模式" 
+                                    : "🔵 Mining Ready: LOCAL-ONLY (Training Mode)";
+                                  break;
+                              }
+                            }
+                          }
+                          
+                          return (
+                            <>
+                              <div style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
+                                <span className="label">{locale === "zh" ? "挖矿就绪:" : "Mining Ready:"}</span>
+                                <span className="value" style={{ 
+                                  color: modeColor,
+                                  fontWeight: "bold",
+                                  marginLeft: "0.5rem"
+                                }}>
+                                  {statusMessage || (miningGuardResult.ok 
+                                    ? (locale === "zh" ? "✅ 安全" : "✅ SAFE")
+                                    : (locale === "zh" ? "🚫 已阻止" : "🚫 BLOCKED"))}
+                                </span>
+                                {miningGuardResult.ok && miningGuardResult.mode && (
+                                  <div style={{ 
+                                    marginTop: "0.25rem", 
+                                    fontSize: "0.75rem", 
+                                    color: "#666",
+                                    paddingLeft: "0.5rem"
+                                  }}>
+                                    {modeDescription}
+                                  </div>
+                                )}
+                                {!miningGuardResult.ok && miningGuardResult.reason && (
+                                  <div style={{ 
+                                    marginTop: "0.25rem", 
+                                    fontSize: "0.75rem", 
+                                    color: "#666",
+                                    paddingLeft: "0.5rem"
+                                  }}>
+                                    {miningGuardResult.reason}
+                                  </div>
+                                )}
+                              </div>
+                              
+                              {/* Health Status Indicator */}
+                              <div style={{ 
+                                marginTop: "1rem", 
+                                padding: "0.75rem", 
+                                background: miningGuardResult.ok 
+                                  ? (miningGuardResult.mode === "SAFE" 
+                                      ? "rgba(40, 167, 69, 0.1)" 
+                                      : miningGuardResult.mode === "GUARDED"
+                                      ? "rgba(255, 193, 7, 0.1)"
+                                      : "rgba(23, 162, 184, 0.1)")
+                                  : "rgba(220, 53, 69, 0.1)",
+                                borderRadius: "6px",
+                                border: `1px solid ${modeColor}`,
+                                fontSize: "0.9rem"
+                              }}>
+                                <div style={{ fontWeight: "bold", marginBottom: "0.25rem", color: modeColor }}>
+                                  {miningGuardResult.ok 
+                                    ? (miningGuardResult.mode === "SAFE"
+                                        ? (locale === "zh" ? "✅ 安全模式（网络健康）" : "✅ SAFE Mode (Network Healthy)")
+                                        : miningGuardResult.mode === "GUARDED"
+                                        ? (locale === "zh" ? "🟡 保护模式（低连接）" : "🟡 GUARDED Mode (Low Connectivity)")
+                                        : (locale === "zh" ? "🔵 本地训练模式" : "🔵 LOCAL-ONLY Mode"))
+                                    : (locale === "zh" ? "🚫 已阻止" : "🚫 BLOCKED")
+                                  }
+                                </div>
+                                {miningGuardResult.ok && (
+                                  <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.25rem" }}>
+                                    {modeDescription}
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
@@ -3839,12 +4077,12 @@ function App() {
                           <button
                             className="btn btn-primary"
                             onClick={handleStartMining}
-                            disabled={!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok)}
+                            disabled={!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.mode === "BLOCKED")}
                             style={{ 
                               fontSize: "1rem", 
                               padding: "0.75rem 1.5rem",
-                              opacity: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok)) ? 0.5 : 1,
-                              cursor: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok)) ? "not-allowed" : "pointer"
+                              opacity: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.mode === "BLOCKED")) ? 0.5 : 1,
+                              cursor: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.mode === "BLOCKED")) ? "not-allowed" : "pointer"
                             }}
                             title={
                               !localCoordinator.canMine() 

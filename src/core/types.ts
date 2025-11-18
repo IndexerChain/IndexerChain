@@ -157,6 +157,26 @@ export interface ChainParams {
   globalDriftMinorBlocks?: number; // Minor drift threshold in blocks, default 3
   globalMinPeersForAssessment?: number; // Minimum peers required for assessment, default 3
   globalMinReputationForVoting?: number; // Minimum reputation score for voting, default 0
+  
+  // Phase 33: Mining Permission Levels
+  minPeersRequired?: number; // Minimum peers required for safe mining, default 3
+  allowGuardedMining?: boolean; // Allow mining with < minPeers in dev/testnet mode, default false (auto-enabled for dev/testnet)
+  allowLocalMining?: boolean; // Allow local-only mining (not broadcast to network), default false
+  // Phase 34: Quorum Debug Mode
+  quorumDebugOverride?: boolean; // Debug mode: allow mining with lower quorum requirements (dev/testnet only), default false
+  // Phase 35: Mainnet Mining Admission Rules
+  mainnetQuorumThresholds?: {
+    coldStart: number; // Cold start phase threshold, default 80
+    earlyGrowth: number; // Early growth phase threshold, default 150
+    mature: number; // Mature phase threshold, default 250
+    secure: number; // High security mode threshold, default 400
+  };
+  mainnetMinIndependentPeers?: {
+    coldStart: number; // Minimum independent peers for cold start, default 1
+    earlyGrowth: number; // Minimum independent peers for early growth, default 2
+    mature: number; // Minimum independent peers for mature, default 3
+    secure: number; // Minimum independent peers for secure mode, default 5
+  };
 }
 
 /**

@@ -60,6 +60,23 @@ export const MAINNET_PARAMS: ChainParams = {
   globalDriftMinorBlocks: 3,
   globalMinPeersForAssessment: 3,
   globalMinReputationForVoting: 0,
+  // Phase 33: Mining Permission Levels (Mainnet: Strict)
+  minPeersRequired: 3, // Mainnet requires 3 peers for safe mining
+  allowGuardedMining: false, // Mainnet: Disable guarded mining for security
+  allowLocalMining: false, // Mainnet: Disable local-only mining
+  // Phase 35: Mainnet Mining Admission Rules
+  mainnetQuorumThresholds: {
+    coldStart: 80, // Cold start phase: allow 1-2 nodes
+    earlyGrowth: 150, // Early growth: require 2+ quality nodes
+    mature: 250, // Mature phase: require 3+ quality nodes
+    secure: 400, // High security mode: require 5+ quality nodes
+  },
+  mainnetMinIndependentPeers: {
+    coldStart: 1, // Cold start: minimum 1 independent peer
+    earlyGrowth: 2, // Early growth: minimum 2 independent peers
+    mature: 3, // Mature: minimum 3 independent peers
+    secure: 5, // Secure mode: minimum 5 independent peers
+  },
 };
 
 /**

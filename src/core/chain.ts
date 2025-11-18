@@ -410,6 +410,25 @@ export async function getDefaultChainParams(): Promise<ChainParams> {
     globalDriftMinorBlocks: 3, // Minor drift: 3 blocks
     globalMinPeersForAssessment: 3, // Minimum 3 peers for assessment
     globalMinReputationForVoting: 0, // All peers can vote (reputation >= 0)
+    // Phase 33: Mining Permission Levels
+    minPeersRequired: 3, // Minimum peers required for safe mining
+    allowGuardedMining: true, // Auto-enable guarded mining for dev/testnet
+    allowLocalMining: false, // Local-only mining disabled by default
+    // Phase 34: Quorum Debug Mode
+    quorumDebugOverride: false, // Debug mode disabled by default (can be enabled for testing)
+    // Phase 35: Mainnet Mining Admission Rules
+    mainnetQuorumThresholds: {
+      coldStart: 80,
+      earlyGrowth: 150,
+      mature: 250,
+      secure: 400,
+    },
+    mainnetMinIndependentPeers: {
+      coldStart: 1,
+      earlyGrowth: 2,
+      mature: 3,
+      secure: 5,
+    },
   };
 }
 

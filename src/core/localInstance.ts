@@ -134,12 +134,41 @@ export class LocalInstanceCoordinator {
         // Check if leader is still valid (not timed out)
         const age = Date.now() - this.leaderInfo.lastSeenAt;
         if (age > LEADER_TIMEOUT_MS) {
+          // Leader timed out, clear it
+          console.log(`[LocalInstance] Leader ${this.leaderInfo.instanceId} timed out (age: ${age}ms), clearing`);
           this.leaderInfo = null;
           localStorage.removeItem(STORAGE_KEY_LEADER);
+        } else {
+          console.log(`[LocalInstance] Loaded leader ${this.leaderInfo.instanceId} (age: ${age}ms)`);
         }
       } catch {
         this.leaderInfo = null;
       }
+    }
+  }
+  
+  /**
+   * Clear stale leader info (public method for manual cleanup)
+   * If force is true, clears even if not timed out
+   */
+  clearStaleLeader(force: boolean = false): void {
+    if (this.leaderInfo) {
+      const age = Date.now() - this.leaderInfo.lastSeenAt;
+      if (force || age > LEADER_TIMEOUT_MS) {
+        console.log(`[LocalInstance] ${force ? 'Force' : 'Manually'} clearing ${force && age <= LEADER_TIMEOUT_MS ? 'active' : 'stale'} leader ${this.leaderInfo.instanceId} (age: ${age}ms)`);
+        this.leaderInfo = null;
+        if (typeof localStorage !== "undefined") {
+          localStorage.removeItem(STORAGE_KEY_LEADER);
+        }
+        // Trigger election to become leader
+        this.performElection();
+      } else {
+        console.log(`[LocalInstance] Leader ${this.leaderInfo.instanceId} is still active (age: ${age}ms), not clearing. Use force=true to override.`);
+      }
+    } else {
+      console.log(`[LocalInstance] No leader info to clear`);
+      // Even if no leader info, try to become leader
+      this.performElection();
     }
   }
 

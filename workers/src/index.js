@@ -75,21 +75,39 @@ export default {
           nodeId = data.nodeId;
           peers.set(nodeId, server);
           
-          console.log(`[Signaling] Node ${nodeId.substring(0, 16)}... joined. Total peers: ${peers.size}`);
+          // Phase 33: Generate IP hash for quorum scoring (privacy-preserving)
+          // Get client IP from request headers (Cloudflare provides CF-Connecting-IP)
+          const clientIP = request.headers.get('CF-Connecting-IP') || 
+                          request.headers.get('X-Forwarded-For')?.split(',')[0] || 
+                          'unknown';
+          
+          // Create privacy-preserving IP hash (simple hash, not cryptographic)
+          // In production, use a proper hash function
+          let ipHash = '';
+          for (let i = 0; i < clientIP.length; i++) {
+            ipHash += String.fromCharCode((clientIP.charCodeAt(i) * 7 + 13) % 256);
+          }
+          ipHash = btoa(ipHash).substring(0, 16); // Base64 encode and take first 16 chars
+          
+          console.log(`[Signaling] Node ${nodeId.substring(0, 16)}... joined. Total peers: ${peers.size}. IP hash: ${ipHash}`);
 
-          // Send list of existing peers to the new node
+          // Send list of existing peers to the new node (with IP hashes for quorum)
           const peerList = Array.from(peers.keys()).filter((id) => id !== nodeId);
           server.send(JSON.stringify({
             type: 'peers',
             peers: peerList,
+            // Phase 33: Include IP hash for quorum scoring
+            ipHash: ipHash,
           }));
 
-          // Notify other peers about the new node
+          // Notify other peers about the new node (with IP hash)
           for (const [id, peer] of peers.entries()) {
             if (id !== nodeId && peer.readyState === WebSocket.READY_STATE_OPEN) {
               peer.send(JSON.stringify({
                 type: 'new-peer',
                 peerId: nodeId,
+                // Phase 33: Include IP hash for quorum scoring
+                ipHash: ipHash,
               }));
             }
           }

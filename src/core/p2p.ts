@@ -60,7 +60,9 @@ export type P2PMessageType =
   // Phase 32: Bootstrap Sync Protocol
   | "REQUEST_BOOTSTRAP" // Request bootstrap data (latest height, header, snapshot meta)
   | "BOOTSTRAP_RESPONSE" // Response with bootstrap data
-  | "ROOT_TIP_UPDATE"; // Root node broadcasts latest tip update
+  | "ROOT_TIP_UPDATE" // Root node broadcasts latest tip update
+  // Phase 36: State Commit Gossip
+  | "STATE_COMMIT_GOSSIP";
 
 /**
  * P2P message structure
@@ -87,6 +89,8 @@ export interface PeerInfo {
   networkId?: string;
   genesisHash?: string;
   chainParamsHash?: string;
+  // Phase 33: IP hash for quorum scoring (privacy-preserving)
+  ipHash?: string;
 }
 
 /**
@@ -365,6 +369,32 @@ export class BrowserP2PNode implements P2PNode {
   private handleSignalingMessage(message: any): void {
     switch (message.type) {
       case "peers":
+        // Phase 33: Handle IP hash from signal server
+        if (message.ipHash) {
+          // Set our own IP hash
+          // Note: This is set when we receive the 'peers' response
+          // We'll store it and use it for quorum scoring
+          if (typeof window !== "undefined") {
+            const { getQuorumManager } = require("./quorumManager.js");
+            const quorumManager = getQuorumManager();
+            quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
+          }
+        }
+        
+        // Phase 33: Handle IP hashes for peer list
+        if (message.peerIPHashes) {
+          // Signal server may send IP hashes for all peers
+          const peerIPHashes = message.peerIPHashes;
+          if (typeof window !== "undefined") {
+            const { getQuorumManager } = require("./quorumManager.js");
+            const quorumManager = getQuorumManager();
+            for (const [peerId, ipHash] of Object.entries(peerIPHashes)) {
+              quorumManager.setPeerIPHash(peerId, ipHash as string);
+            }
+          }
+        }
+        
+        // Original peer list handling
         // Received list of peers, initiate WebRTC connections
         const peerIds: string[] = message.peers || [];
         for (const peerId of peerIds) {
