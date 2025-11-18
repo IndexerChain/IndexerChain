@@ -1078,8 +1078,12 @@ function App() {
           }, 100);
         }
         
+        // Calculate max received height once
+        const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
+        
         // Update sync status
         setSyncStatus(prev => {
+          // If we have networkHeight, update progress
           if (prev.networkHeight > 0) {
             const behindBy = prev.networkHeight - newHeight;
             return {
@@ -1090,11 +1094,27 @@ function App() {
               progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / prev.networkHeight) * 100)) : 0,
             };
           }
+          // If we don't have networkHeight yet, but we received blocks, 
+          // try to infer networkHeight from the highest received block
+          // This helps when blocks arrive before GLOBAL_VIEW_RESPONSE
+          if (maxReceivedHeight > newHeight) {
+            // We received blocks up to maxReceivedHeight, so network is at least that high
+            const inferredNetworkHeight = maxReceivedHeight;
+            const behindBy = inferredNetworkHeight - newHeight;
+            return {
+              ...prev,
+              localHeight: newHeight,
+              networkHeight: inferredNetworkHeight,
+              behindBy,
+              isSyncing: behindBy > 0,
+              progress: inferredNetworkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / inferredNetworkHeight) * 100)) : 0,
+            };
+          }
+          // Just update localHeight if we can't infer networkHeight
           return { ...prev, localHeight: newHeight };
         });
         
         // If we appended blocks, check if there are more to request
-        const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
         
         // If the highest received block is higher than what we have, request more
         if (maxReceivedHeight > newHeight) {
@@ -1305,24 +1325,17 @@ function App() {
         
         // Update sync status (always update if we have a valid network height)
         setSyncStatus(prev => {
-          // Only update if this is a higher network height, or if we don't have one yet
-          if (networkHeight > prev.networkHeight || prev.networkHeight === 0) {
-            return {
-              isSyncing: behindBy > 0,
-              localHeight,
-              networkHeight,
-              behindBy,
-              progress: networkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / networkHeight) * 100)) : 0,
-            };
-          }
-          // Otherwise, just update local height and recalculate progress
-          const newBehindBy = prev.networkHeight - localHeight;
+          // Always update networkHeight if we receive a valid response
+          // Use the higher of the two network heights (in case of multiple responses)
+          const finalNetworkHeight = Math.max(networkHeight, prev.networkHeight);
+          const finalBehindBy = finalNetworkHeight - localHeight;
+          
           return {
-            ...prev,
+            isSyncing: finalBehindBy > 0,
             localHeight,
-            behindBy: newBehindBy,
-            isSyncing: newBehindBy > 0,
-            progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / prev.networkHeight) * 100)) : 0,
+            networkHeight: finalNetworkHeight,
+            behindBy: finalBehindBy,
+            progress: finalNetworkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / finalNetworkHeight) * 100)) : 0,
           };
         });
         
@@ -4220,13 +4233,13 @@ function App() {
               </div>
 
               {/* Latest Block - Compact View */}
-              {tip && (
+              {tip && tip.header && (
                 <div className="status-card">
                   <h2>📦 {t("chain.latestBlock")}</h2>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem" }}>
                     <div className="status-item">
                       <span className="label">{t("chain.height")}:</span>
-                      <span className="value" style={{ fontWeight: "bold" }}>{tip.header.height}</span>
+                      <span className="value" style={{ fontWeight: "bold" }}>{tip.header?.height ?? 0}</span>
                     </div>
                     <div className="status-item">
                       <span className="label">{t("chain.transactions")}:</span>
@@ -4506,10 +4519,10 @@ function App() {
                   />
 
                   {/* Phase 38: Live Stats Card */}
-                  {(isMining || clusterMining) && tip && (
+                  {(isMining || clusterMining) && tip && tip.header && (
                     <MiningLiveStatsCard
                       miningMode={miningMode}
-                      currentHeight={tip.header.height}
+                      currentHeight={tip.header?.height ?? 0}
                       tipHash={tip.hash}
                       totalHashRate={clusterMining ? (clusterStats.totalHashRate || 0) : (miningStats.hashRate || 0)}
                       blocksMined={_miningEffectiveness?.totalBlocksMined || 0}
