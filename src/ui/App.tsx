@@ -763,6 +763,24 @@ function App() {
     window.location.reload();
   };
 
+  // Phase 32: Bootstrap sync status
+  const [bootstrapComplete, setBootstrapComplete] = useState<boolean>(false);
+  
+  // Sync status tracking
+  const [syncStatus, setSyncStatus] = useState<{
+    isSyncing: boolean;
+    localHeight: number;
+    networkHeight: number;
+    behindBy: number;
+    progress: number; // 0-100
+  }>({
+    isSyncing: false,
+    localHeight: 0,
+    networkHeight: 0,
+    behindBy: 0,
+    progress: 0,
+  });
+
   // Setup P2P message handlers
   useEffect(() => {
     if (!chainContext || !chainContext.p2p) return;
@@ -884,16 +902,24 @@ function App() {
 
     // Handle REQUEST_BLOCKS messages
     p2p.onMessage("REQUEST_BLOCKS", async (request: { fromHeight: number; toHeight: number }, sender: string) => {
-      console.log("[Sync] Received REQUEST_BLOCKS from", sender.substring(0, 16) + "...", `height ${request.fromHeight}-${request.toHeight}`);
+      const localTip = chainContext.storage.getTip();
+      const localHeight = localTip?.header.height ?? -1;
+      console.log(`[Sync] Received REQUEST_BLOCKS from ${sender.substring(0, 16)}... for height ${request.fromHeight}-${request.toHeight} (local height: ${localHeight})`);
+      
       const blocks: Block[] = [];
       
       // Phase 10: Check if requested blocks are available (light node mode)
       const minHeight = chainContext.storage.getMinHeight();
       const actualFromHeight = Math.max(request.fromHeight, minHeight);
-      const actualToHeight = Math.min(request.toHeight, chainContext.storage.getTip()?.header.height || request.toHeight);
+      const actualToHeight = Math.min(request.toHeight, localHeight);
       
       if (actualFromHeight > request.fromHeight) {
         console.log(`[Sync] Requested blocks ${request.fromHeight}-${actualFromHeight - 1} are pruned (min: ${minHeight}), starting from ${actualFromHeight}`);
+      }
+      
+      if (actualFromHeight > actualToHeight) {
+        console.log(`[Sync] ⚠️ No blocks available: requested ${request.fromHeight}-${request.toHeight}, but we only have up to ${localHeight}`);
+        return;
       }
       
       for (let h = actualFromHeight; h <= actualToHeight; h++) {
@@ -904,30 +930,70 @@ function App() {
       }
       
       if (blocks.length > 0) {
-        console.log(`[Sync] Sending ${blocks.length} blocks to ${sender.substring(0, 16)}...`);
-        // Send blocks via broadcast (will reach all peers including the requester)
-        p2p.broadcast("BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
+        console.log(`[Sync] ✅ Sending ${blocks.length} blocks (height ${actualFromHeight}-${actualToHeight}) to ${sender.substring(0, 16)}...`);
+        // Send blocks directly to the requesting peer if sendToPeer is available
+        if (p2p.sendToPeer) {
+          p2p.sendToPeer(sender, "BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
+        } else {
+          // Fallback to broadcast
+          p2p.broadcast("BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
+        }
       } else {
-        console.log(`[Sync] No blocks available for height ${request.fromHeight}-${request.toHeight}`);
+        console.log(`[Sync] ⚠️ No blocks available for height ${request.fromHeight}-${request.toHeight} (local height: ${localHeight})`);
       }
     });
 
     // Handle BLOCKS messages (chain sync)
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("BLOCKS", async (data: { blocks: Block[] }, sender: string) => {
-      console.log("[Sync] Received BLOCKS from", sender.substring(0, 16) + "...", "count:", data.blocks.length);
+      const localTip = chainContext.storage.getTip();
+      const localHeight = localTip?.header.height ?? -1;
+      console.log(`[Sync] Received BLOCKS from ${sender.substring(0, 16)}...`, {
+        count: data.blocks.length,
+        heights: data.blocks.length > 0 ? `${data.blocks[0].header.height}-${data.blocks[data.blocks.length - 1].header.height}` : "none",
+        localHeight
+      });
+      
       if (data.blocks.length === 0) {
+        console.warn("[Sync] Received empty BLOCKS message");
         return;
       }
       
       const result = await handleReceivedBlocks(data.blocks, chainContext, sender);
       if (result.success && result.appended > 0) {
-        console.log(`[Sync] Successfully appended ${result.appended} blocks. New height: ${chainContext.storage.getTip()?.header.height ?? 0}`);
+        const newTip = chainContext.storage.getTip();
+        const newHeight = newTip?.header.height ?? 0;
+        console.log(`[Sync] ✅ Successfully appended ${result.appended} blocks. New height: ${newHeight}`);
         setChainContext({ ...chainContext }); // Trigger re-render
         
+        // Phase 32: Auto-scroll console to bottom when new blocks arrive
+        if (typeof window !== "undefined") {
+          // Scroll browser console to bottom (if possible)
+          // Note: Browser console scrolling is limited, but we can try
+          setTimeout(() => {
+            // Try to scroll console if it's available
+            if ((window as any).console && (window as any).console.scroll) {
+              (window as any).console.scroll();
+            }
+          }, 100);
+        }
+        
+        // Update sync status
+        setSyncStatus(prev => {
+          if (prev.networkHeight > 0) {
+            const behindBy = prev.networkHeight - newHeight;
+            return {
+              ...prev,
+              localHeight: newHeight,
+              behindBy,
+              isSyncing: behindBy > 0,
+              progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / prev.networkHeight) * 100)) : 0,
+            };
+          }
+          return { ...prev, localHeight: newHeight };
+        });
+        
         // If we appended blocks, check if there are more to request
-        const newTip = chainContext.storage.getTip();
-        const newHeight = newTip?.header.height ?? -1;
         const maxReceivedHeight = Math.max(...data.blocks.map(b => b.header.height));
         
         // If the highest received block is higher than what we have, request more
@@ -937,9 +1003,18 @@ function App() {
             fromHeight: newHeight + 1,
             toHeight: maxReceivedHeight,
           });
+        } else if (maxReceivedHeight === newHeight) {
+          // We're caught up with what we received, but check if we need more
+          const peerCount = p2p.getPeerCount();
+          if (peerCount > 0) {
+            // Query network height to see if there are more blocks
+            p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
+          }
         }
       } else if (!result.success) {
-        console.warn("[Sync] Failed to append blocks:", result.error);
+        console.error("[Sync] ❌ Failed to append blocks:", result.error);
+      } else if (result.appended === 0) {
+        console.warn("[Sync] ⚠️ No blocks appended (may already have them)");
       }
     });
 
@@ -957,31 +1032,70 @@ function App() {
     // Phase 28: Auto-sync check - periodically check if we're behind and request blocks
     // This helps keep nodes in sync automatically
     const autoSyncInterval = setInterval(() => {
-      if (!p2p.isConnected || p2p.getPeerCount() === 0) {
+      if (!chainContext || !p2p.isConnected) {
         return; // Not connected, skip
       }
 
+      const peerCount = p2p.getPeerCount();
       const localTip = chainContext.storage.getTip();
       const localHeight = localTip?.header.height ?? -1;
+      const now = Date.now();
       
-      // If we're at height 0 or very low, request more aggressively for initial sync
-      if (localHeight === 0 || localHeight < 10) {
-        // Request a larger range for initial sync
-        const requestRange = 200;
-        console.log(`[Auto-Sync] Local height is ${localHeight}, requesting blocks from ${localHeight + 1} to ${localHeight + requestRange}`);
-        p2p.broadcast("REQUEST_BLOCKS", {
-          fromHeight: localHeight + 1,
-          toHeight: localHeight + requestRange,
-        });
-      } else {
-        // For ongoing sync, request a smaller range periodically
-        const requestRange = 50;
-        p2p.broadcast("REQUEST_BLOCKS", {
-          fromHeight: localHeight + 1,
-          toHeight: localHeight + requestRange,
-        });
+      // Query network height periodically (every ~10 seconds) if we have peers
+      if (peerCount > 0 && now % 10000 < 3000) {
+        console.log(`[Auto-Sync] Querying network height from ${peerCount} peer(s)...`);
+        p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
       }
-    }, 5000); // Check every 5 seconds for faster initial sync
+      
+      // Request blocks if we have peers
+      if (peerCount > 0) {
+        // Check if we have a pending block request from when we had no peers
+        if (typeof window !== "undefined" && (window as any).pendingBlockRequest) {
+          const pending = (window as any).pendingBlockRequest;
+          console.log(`[Auto-Sync] Executing pending block request: ${pending.fromHeight}-${pending.toHeight}`);
+          p2p.broadcast("REQUEST_BLOCKS", pending);
+          delete (window as any).pendingBlockRequest;
+        }
+        
+        // If we're at height 0 or very low, request more aggressively for initial sync
+        if (localHeight === 0 || localHeight < 100) {
+          // Request a larger range for initial sync
+          const requestRange = 500; // Increased for faster initial sync
+          console.log(`[Auto-Sync] Local height is ${localHeight}, requesting blocks from ${localHeight + 1} to ${localHeight + requestRange}`);
+          p2p.broadcast("REQUEST_BLOCKS", {
+            fromHeight: localHeight + 1,
+            toHeight: localHeight + requestRange,
+          });
+        } else {
+          // For ongoing sync, request a smaller range periodically
+          const requestRange = 100; // Increased from 50
+          p2p.broadcast("REQUEST_BLOCKS", {
+            fromHeight: localHeight + 1,
+            toHeight: localHeight + requestRange,
+          });
+        }
+      } else {
+        // No peers - try to request peers and bootstrap again periodically
+        // Request more frequently when we have no peers (every 2 seconds)
+        if (now % 2000 < 500) {
+          // Request peers first (if method exists)
+          if (typeof (p2p as any).requestPeers === 'function') {
+            (p2p as any).requestPeers();
+          }
+          
+          // Also try bootstrap again (in case Worker state was updated)
+          if (typeof (p2p as any).sendToSignalServer === 'function') {
+            console.log(`[Auto-Sync] No peers, requesting peers and bootstrap data again...`);
+            (p2p as any).sendToSignalServer("REQUEST_BOOTSTRAP", {
+              requestId: `${Date.now()}_${Math.random()}`,
+              wantSnapshotMeta: true,
+              wantHeaders: true,
+              headerCount: 200,
+            });
+          }
+        }
+      }
+    }, 2000); // Check every 2 seconds for faster sync (reduced from 3 seconds)
 
     // Phase 30: Handle GLOBAL_VIEW_REQUEST
     p2p.onMessage("GLOBAL_VIEW_REQUEST", async (_data: any, sender: string) => {
@@ -1032,9 +1146,210 @@ function App() {
     });
 
     // Phase 30: Handle GLOBAL_VIEW_RESPONSE
+    let lastKnownNetworkHeight = -1; // Track network height for auto-sync
     p2p.onMessage("GLOBAL_VIEW_RESPONSE", async (payload: any, sender: string) => {
+      console.log(`[Sync] Received GLOBAL_VIEW_RESPONSE from ${sender.substring(0, 16)}...`, payload);
+      
       if (globalSentinel) {
         globalSentinel.onGlobalViewResponse(sender, payload);
+      }
+      
+      // Use network height to trigger sync if we're behind
+      if (payload && typeof payload.height === 'number' && payload.height > 0) {
+        const networkHeight = payload.height;
+        lastKnownNetworkHeight = Math.max(lastKnownNetworkHeight, networkHeight); // Track highest known height
+        
+        const localTip = chainContext.storage.getTip();
+        const localHeight = localTip?.header.height ?? -1;
+        const behindBy = networkHeight - localHeight;
+        
+        console.log(`[Sync] Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy}`);
+        
+        // Update sync status (always update if we have a valid network height)
+        setSyncStatus(prev => {
+          // Only update if this is a higher network height, or if we don't have one yet
+          if (networkHeight > prev.networkHeight || prev.networkHeight === 0) {
+            return {
+              isSyncing: behindBy > 0,
+              localHeight,
+              networkHeight,
+              behindBy,
+              progress: networkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / networkHeight) * 100)) : 0,
+            };
+          }
+          // Otherwise, just update local height and recalculate progress
+          const newBehindBy = prev.networkHeight - localHeight;
+          return {
+            ...prev,
+            localHeight,
+            behindBy: newBehindBy,
+            isSyncing: newBehindBy > 0,
+            progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / prev.networkHeight) * 100)) : 0,
+          };
+        });
+        
+        if (networkHeight > localHeight) {
+          const requestRange = Math.min(behindBy, 500); // Request up to 500 blocks at a time
+          console.log(`[Sync] Requesting ${requestRange} blocks to catch up (from ${localHeight + 1} to ${localHeight + requestRange})`);
+          p2p.broadcast("REQUEST_BLOCKS", {
+            fromHeight: localHeight + 1,
+            toHeight: localHeight + requestRange,
+          });
+        } else if (networkHeight === localHeight) {
+          console.log(`[Sync] ✅ Already synced to network height ${networkHeight}`);
+          setSyncStatus(prev => ({ ...prev, isSyncing: false, behindBy: 0, progress: 100 }));
+        } else if (localHeight > networkHeight) {
+          // We're ahead of the network (shouldn't happen, but log it)
+          console.log(`[Sync] ⚠️ Local height (${localHeight}) is ahead of network height (${networkHeight})`);
+        }
+      }
+    });
+
+    // Phase 32: Handle BOOTSTRAP_RESPONSE from signal server
+    p2p.onMessage("BOOTSTRAP_RESPONSE", async (payload: any, sender: string) => {
+      console.log(`[Phase 32] Received BOOTSTRAP_RESPONSE from ${sender}`, {
+        latestHeight: payload.latestHeight,
+        latestHeaderHash: payload.latestHeaderHash?.substring(0, 16) + "...",
+        hasHeader: !!payload.latestHeader,
+        hasSnapshotMeta: !!payload.latestSnapshotMeta,
+        recentHeadersCount: payload.recentHeaders?.length || 0
+      });
+      
+      if (!chainContext) {
+        console.warn(`[Phase 32] No chainContext available, ignoring BOOTSTRAP_RESPONSE`);
+        return;
+      }
+      
+      const localTip = chainContext.storage.getTip();
+      const localHeight = localTip?.header.height ?? -1;
+      const networkHeight = payload.latestHeight || 0;
+      
+      // Phase 32: If bootstrap state is empty (latestHeight: 0), fall back to P2P query
+      if (networkHeight === 0 || !payload.latestHeader) {
+        console.log(`[Phase 32] Bootstrap state is empty (height: ${networkHeight}), falling back to P2P network query`);
+        
+        // Mark bootstrap as complete (even though we don't have valid data)
+        // This allows mining guard to proceed, but we'll rely on P2P for sync
+        setBootstrapComplete(true);
+        
+        // Query network height via P2P (if we have peers)
+        const peerCount = p2p.getPeerCount();
+        if (peerCount > 0) {
+          console.log(`[Phase 32] Querying network height from ${peerCount} peer(s) via GLOBAL_VIEW_REQUEST`);
+          p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
+        } else {
+          console.log(`[Phase 32] No peers available yet, requesting peers more aggressively...`);
+          // Request peers more frequently when we don't have any
+          p2p.requestPeers();
+          
+          // Also try to request peers via signaling server
+          if (typeof (p2p as any).sendToSignalServer === 'function') {
+            (p2p as any).sendToSignalServer("request-peers", {});
+          }
+        }
+        
+        // Also request blocks aggressively if we're at a low height
+        // Even without peers, we'll request so that when peers connect, they can respond
+        if (localHeight < 100) {
+          console.log(`[Phase 32] Requesting blocks aggressively for initial sync (local height: ${localHeight})`);
+          if (peerCount > 0) {
+            p2p.broadcast("REQUEST_BLOCKS", {
+              fromHeight: localHeight + 1,
+              toHeight: localHeight + 500,
+            });
+          } else {
+            // Store request for when peers connect
+            console.log(`[Phase 32] Storing block request for when peers connect`);
+            if (typeof window !== "undefined") {
+              (window as any).pendingBlockRequest = {
+                fromHeight: localHeight + 1,
+                toHeight: localHeight + 500,
+              };
+            }
+          }
+        }
+        
+        return; // Don't process empty bootstrap response
+      }
+      
+      try {
+        const { getBootstrapSyncManager } = await import("../core/bootstrapSync.js");
+        const bootstrapManager = getBootstrapSyncManager(chainContext);
+        
+        const result = await bootstrapManager.processBootstrapResponse(payload);
+        
+        if (result.success) {
+          console.log(`[Phase 32] Bootstrap sync ${result.synced ? 'completed' : 'skipped (already up to date)'}`, result.actions);
+          setBootstrapComplete(bootstrapManager.isBootstrapComplete());
+          
+          // Only update if we got a valid network height
+          if (networkHeight > 0) {
+            const behindBy = networkHeight - localHeight;
+            
+            setSyncStatus({
+              isSyncing: behindBy > 0,
+              localHeight,
+              networkHeight,
+              behindBy,
+              progress: networkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / networkHeight) * 100)) : 0,
+            });
+            
+            console.log(`[Phase 32] Updated sync status: behindBy=${behindBy}, progress=${Math.round((localHeight / networkHeight) * 100)}%`);
+          } else {
+            console.warn(`[Phase 32] Bootstrap response has invalid network height (${networkHeight}), not updating sync status`);
+          }
+          
+          // If we need to sync, trigger block requests
+          if (result.synced && result.newHeight) {
+            const heightDiff = result.newHeight - localHeight;
+            
+            if (heightDiff > 0) {
+              console.log(`[Phase 32] Requesting ${heightDiff} blocks to sync to height ${result.newHeight}`);
+              p2p.broadcast("REQUEST_BLOCKS", {
+                fromHeight: localHeight + 1,
+                toHeight: result.newHeight,
+              });
+            }
+          }
+          
+          // If snapshot meta is provided and we're far behind, trigger snapshot sync
+          if (payload.latestSnapshotMeta && typeof window !== "undefined") {
+            const localTip = chainContext.storage.getTip();
+            const localHeight = localTip?.header.height ?? -1;
+            const heightDiff = payload.latestHeight - localHeight;
+            const snapshotInterval = chainContext.params.snapshotInterval || 1000;
+            
+            if (heightDiff >= snapshotInterval) {
+              console.log(`[Phase 32] Large height difference (${heightDiff}), triggering snapshot sync`);
+              (window as any).pendingBootstrapSnapshot = payload.latestSnapshotMeta;
+            }
+          }
+        } else {
+          console.error(`[Phase 32] Bootstrap sync failed:`, result.error);
+        }
+      } catch (error) {
+        console.error(`[Phase 32] Error processing bootstrap response:`, error);
+      }
+    });
+
+    // Phase 32: Handle ROOT_TIP_UPDATE from signal server
+    p2p.onMessage("ROOT_TIP_UPDATE", async (payload: any, _sender: string) => {
+      if (!chainContext) return;
+      
+      const localTip = chainContext.storage.getTip();
+      const localHeight = localTip?.header.height ?? -1;
+      const rootHeight = payload.latestHeight || 0;
+      
+      console.log(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}`);
+      
+      // If we're behind, trigger sync
+      if (rootHeight > localHeight) {
+        const heightDiff = rootHeight - localHeight;
+        console.log(`[Phase 32] Root tip update: behind by ${heightDiff} blocks, requesting sync`);
+        p2p.broadcast("REQUEST_BLOCKS", {
+          fromHeight: localHeight + 1,
+          toHeight: rootHeight,
+        });
       }
     });
 
@@ -1171,7 +1486,8 @@ function App() {
           chainContext.p2p || null,
           finalityManager,
           localCoordinator.getRole(),
-          minerAddr
+          minerAddr,
+          bootstrapComplete // Phase 32: Pass bootstrap status
         );
         setMiningGuardResult(result);
       } catch (e) {
@@ -1540,22 +1856,112 @@ function App() {
       setIsP2PConnected(true);
       setError(""); // Clear any previous errors
       
-      // Immediately request blocks to sync with network
+      // Phase 32: Immediately request bootstrap data from signal server
       if (chainContext) {
         const localTip = chainContext.storage.getTip();
         const localHeight = localTip?.header.height ?? -1;
+        const peerCount = p2pNode.getPeerCount();
         
-        // Request blocks from current height + 1 to catch up
-        // Request a reasonable range (e.g., 200 blocks) to sync quickly
-        const requestRange = 200;
-        console.log(`[Sync] Connected to P2P network, requesting blocks from height ${localHeight + 1} to ${localHeight + requestRange}`);
-        p2pNode.broadcast("REQUEST_BLOCKS", {
-          fromHeight: localHeight + 1,
-          toHeight: localHeight + requestRange,
-        });
+        console.log(`[Phase 32] Connected to P2P network. Local height: ${localHeight}, Connected peers: ${peerCount}`);
+        
+        // Phase 32: Request bootstrap data from signal server
+        console.log(`[Phase 32] Requesting bootstrap data from signal server...`);
+        const requestId = `${Date.now()}_${Math.random()}`;
+        
+        // Check if sendToSignalServer method exists
+        if (typeof (p2pNode as any).sendToSignalServer === 'function') {
+          console.log(`[Phase 32] Sending REQUEST_BOOTSTRAP via sendToSignalServer`);
+          (p2pNode as any).sendToSignalServer("REQUEST_BOOTSTRAP", {
+            requestId,
+            wantSnapshotMeta: true,
+            wantHeaders: true,
+            headerCount: 200,
+          });
+        } else {
+          console.warn(`[Phase 32] sendToSignalServer method not available, trying alternative method`);
+          // Fallback: try to send via WebSocket directly
+          if ((p2pNode as any).ws && (p2pNode as any).ws.readyState === WebSocket.OPEN) {
+            (p2pNode as any).ws.send(JSON.stringify({
+              type: "REQUEST_BOOTSTRAP",
+              requestId,
+              wantSnapshotMeta: true,
+              wantHeaders: true,
+              headerCount: 200,
+            }));
+            console.log(`[Phase 32] Sent REQUEST_BOOTSTRAP via WebSocket directly`);
+          } else {
+            console.error(`[Phase 32] Cannot send REQUEST_BOOTSTRAP: WebSocket not available or not open`);
+          }
+        }
+        
+        // Also query network height using GLOBAL_VIEW_REQUEST (fallback)
+        // This will work once we have peer connections
+        console.log(`[Sync] Querying network height from ${peerCount} peer(s)...`);
+        if (peerCount > 0) {
+          p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
+        } else {
+          // If no peers yet, set up a periodic query
+          console.log(`[Sync] No peers yet, will query network height once peers connect`);
+          // The GLOBAL_VIEW_REQUEST will be sent automatically once peers connect
+        }
+        
+        // Also request blocks immediately (will be refined once we know network height)
+        // Request a larger range for initial sync (height 14 is still very low)
+        // But only if we have peers
+        if (peerCount > 0) {
+          const requestRange = 500; // Increased for better initial sync
+          console.log(`[Sync] Requesting blocks from height ${localHeight + 1} to ${localHeight + requestRange}`);
+          p2pNode.broadcast("REQUEST_BLOCKS", {
+            fromHeight: localHeight + 1,
+            toHeight: localHeight + requestRange,
+          });
+        } else {
+          console.log(`[Sync] No peers yet, will request blocks once peers connect`);
+        }
         
         // Also request peers to get more connections
         p2pNode.requestPeers();
+        
+        // Log peer IDs for debugging
+        if (peerCount > 0) {
+          const peerIds = Array.from(p2pNode.peers.keys());
+          console.log(`[Sync] Connected peer IDs:`, peerIds.map(id => id.substring(0, 16) + "..."));
+        } else {
+          console.warn(`[Sync] No peers connected yet. Waiting for peer connections...`);
+        }
+        
+        // Phase 32: Listen for peer connection events to execute pending block requests
+        const handlePeerConnected = (event: CustomEvent) => {
+          const { peerId, peerCount: newPeerCount } = event.detail;
+          console.log(`[Phase 32] Peer connected: ${peerId.substring(0, 16)}... (total: ${newPeerCount})`);
+          
+          // Execute pending block request if we have one
+          if (typeof window !== "undefined" && (window as any).pendingBlockRequest) {
+            const pending = (window as any).pendingBlockRequest;
+            console.log(`[Phase 32] Executing pending block request now that peer is connected: ${pending.fromHeight}-${pending.toHeight}`);
+            p2pNode.broadcast("REQUEST_BLOCKS", pending);
+            delete (window as any).pendingBlockRequest;
+          }
+          
+          // Also query network height from the new peer
+          if (newPeerCount > 0) {
+            console.log(`[Phase 32] Querying network height from ${newPeerCount} peer(s)...`);
+            p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
+          }
+        };
+        
+        // Add event listener for peer connections
+        if (typeof window !== "undefined") {
+          window.addEventListener('peer-connected', handlePeerConnected as EventListener);
+          
+          // Store cleanup function
+          if (!(p2pNode as any).cleanupFunctions) {
+            (p2pNode as any).cleanupFunctions = [];
+          }
+          (p2pNode as any).cleanupFunctions.push(() => {
+            window.removeEventListener('peer-connected', handlePeerConnected as EventListener);
+          });
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to connect to P2P network";
@@ -1710,7 +2116,8 @@ function App() {
       chainContext.p2p || null,
       finalityManager,
       localCoordinator.getRole(),
-      minerAddr
+      minerAddr,
+      bootstrapComplete // Phase 32: Pass bootstrap status
     );
     
     if (!guardResult.ok) {
@@ -1912,7 +2319,8 @@ function App() {
       chainContext.p2p || null,
       finalityManager,
       localCoordinator.getRole(),
-      minerAddr
+      minerAddr,
+      bootstrapComplete // Phase 32: Pass bootstrap status
     );
     
     if (!guardResult.ok) {
@@ -2487,7 +2895,7 @@ function App() {
                 setActiveTab("privacy");
               }}
             >
-              {locale === "zh" ? "🔒 隐私" : "🔒 Privacy"}
+              {t("tabs.privacy")}
             </button>
             <button
               className={`tab-button ${activeTab === "tools" ? "active" : ""}`}
@@ -2496,7 +2904,7 @@ function App() {
                 setActiveTab("tools");
               }}
             >
-              {locale === "zh" ? "🔧 工具" : "🔧 Tools"}
+              {t("tabs.tools")}
             </button>
           </div>
 
@@ -2680,28 +3088,28 @@ function App() {
                   border: localRole === "LEADER" ? "2px solid #667eea" : "2px solid #ffc107",
                   marginBottom: "1.5rem"
                 }}>
-                  <h2>🖥️ {locale === "zh" ? "本地实例状态" : "Local Instance Status"}</h2>
+                  <h2>🖥️ {t("overview.localInstanceStatus")}</h2>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "角色" : "Role"}:</span>
+                    <span className="label">{t("overview.role")}:</span>
                     <span className="value" style={{ 
                       fontWeight: "bold",
                       color: localRole === "LEADER" ? "#667eea" : "#ffc107"
                     }}>
                       {localRole === "LEADER" 
-                        ? (locale === "zh" ? "主节点 (LEADER)" : "Leader")
-                        : (locale === "zh" ? "跟随节点 (FOLLOWER)" : "Follower")}
+                        ? t("overview.leader")
+                        : t("overview.follower")}
                     </span>
                   </div>
                   {leaderInfo && (
                     <>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "Leader 实例" : "Leader Instance"}:</span>
+                        <span className="label">{t("overview.leaderInstance")}:</span>
                         <span className="value" style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>
                           {leaderInfo.instanceId.substring(0, 20)}...
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "Leader 高度" : "Leader Height"}:</span>
+                        <span className="label">{t("tools.leaderHeight")}:</span>
                         <span className="value">{leaderInfo.height}</span>
                       </div>
                     </>
@@ -2715,9 +3123,7 @@ function App() {
                       fontSize: "0.85rem",
                       color: "#856404"
                     }}>
-                      {locale === "zh" 
-                        ? "⚠️ 当前实例为只读模式。如需挖矿，请先在其他实例中关闭挖矿或关闭页面。"
-                        : "⚠️ Current instance is read-only. To mine, please stop mining on other instances or close their pages."}
+                      {t("tools.followerReadOnly")}
                     </div>
                   )}
                   {localConflictDetected && (
@@ -2754,6 +3160,21 @@ function App() {
                         )}
                       </span>
                     </div>
+                    {localStateSyncInfo.syncStatus === "syncing" && (
+                      <div style={{ 
+                        marginTop: "0.5rem", 
+                        padding: "0.5rem", 
+                        background: "#fff3cd", 
+                        borderRadius: "4px", 
+                        border: "1px solid #ffc107",
+                        fontSize: "0.85rem",
+                        color: "#856404"
+                      }}>
+                        {locale === "zh" 
+                          ? "⚠️ 节点正在从快照同步，挖矿已禁用直到完全同步完成。"
+                          : "⚠️ Node is resyncing from snapshot, mining is disabled until fully synced."}
+                      </div>
+                    )}
                     {localStateSyncInfo.lastSyncEpoch > 0 && (
                       <>
                         <div className="status-item">
@@ -2815,9 +3236,101 @@ function App() {
                       {height}
                     </span>
                   </div>
+                  {syncStatus.networkHeight > 0 ? (
+                    <>
+                      <div className="status-item">
+                        <span className="label">{locale === "zh" ? "网络高度" : "Network Height"}:</span>
+                        <span className="value" style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#28a745" }}>
+                          {syncStatus.networkHeight}
+                        </span>
+                      </div>
+                      {syncStatus.behindBy > 0 && (
+                        <div className="status-item" style={{ marginTop: "0.75rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
+                            <span className="label" style={{ fontSize: "0.9rem" }}>
+                              {locale === "zh" ? "同步进度" : "Sync Progress"}
+                            </span>
+                            <span style={{ fontSize: "0.85rem", color: "#666" }}>
+                              {syncStatus.localHeight} / {syncStatus.networkHeight} ({syncStatus.behindBy} {locale === "zh" ? "落后" : "behind"})
+                            </span>
+                          </div>
+                          <div style={{ 
+                            width: "100%", 
+                            height: "20px", 
+                            background: "#e9ecef", 
+                            borderRadius: "10px",
+                            overflow: "hidden",
+                            position: "relative"
+                          }}>
+                            <div style={{
+                              width: `${syncStatus.progress}%`,
+                              height: "100%",
+                              background: syncStatus.isSyncing ? "linear-gradient(90deg, #667eea, #764ba2)" : "#28a745",
+                              transition: "width 0.3s ease",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "white",
+                              fontSize: "0.7rem",
+                              fontWeight: "bold"
+                            }}>
+                              {syncStatus.progress > 10 ? `${Math.round(syncStatus.progress)}%` : ""}
+                            </div>
+                          </div>
+                          {syncStatus.isSyncing && (
+                            <div style={{ 
+                              marginTop: "0.5rem", 
+                              fontSize: "0.85rem", 
+                              color: "#667eea",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.5rem"
+                            }}>
+                              <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
+                              {locale === "zh" ? "正在同步中..." : "Syncing..."}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {syncStatus.behindBy === 0 && syncStatus.networkHeight > 0 && (
+                        <div style={{ 
+                          marginTop: "0.5rem", 
+                          padding: "0.5rem", 
+                          background: "#d4edda", 
+                          borderRadius: "4px", 
+                          border: "1px solid #28a745",
+                          fontSize: "0.85rem",
+                          color: "#155724"
+                        }}>
+                          ✓ {t("overview.syncedToLatest")}
+                        </div>
+                      )}
+                    </>
+                  ) : isP2PConnected ? (
+                    <div style={{ 
+                      marginTop: "0.5rem", 
+                      padding: "0.75rem", 
+                      background: "#fff3cd", 
+                      borderRadius: "4px", 
+                      border: "1px solid #ffc107",
+                      fontSize: "0.85rem",
+                      color: "#856404"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                        <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
+                        <strong>{t("overview.waitingForPeerConnections")}</strong>
+                      </div>
+                      <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.25rem" }}>
+                        {t("overview.waitingForPeerConnectionsDesc", { count: peerCount })}
+                      </div>
+                      <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid rgba(0,0,0,0.1)" }}>
+                        {t("overview.waitingForPeerConnectionsTip")}
+                      </div>
+                    </div>
+                  ) : null}
                   {finalityStats && (
                     <div className="status-item">
-                      <span className="label">{locale === "zh" ? "已最终确认高度" : "Finalized Height"}:</span>
+                      <span className="label">{t("network.finalizedBlocks")}:</span>
                       <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
                         {finalityStats.finalizedCount}
                       </span>
@@ -2870,59 +3383,110 @@ function App() {
                       )}
                     </span>
                   </div>
-                  {/* Phase 30: Mining Ready Status */}
-                  {miningGuardResult && (() => {
-                    // Use static import at top of file or handle async
-                    // For now, we'll compute message directly
-                    const isOk = miningGuardResult.ok;
-                    let message = "";
-                    if (isOk) {
-                      message = locale === "zh" ? "✅ 挖矿就绪：安全" : "✅ Mining Ready: SAFE";
-                    } else {
-                      switch (miningGuardResult.code) {
-                        case "NOT_SYNCED":
-                          message = locale === "zh" 
-                            ? `🚫 挖矿就绪：已阻止 - 节点未同步（本地高度: ${miningGuardResult.details?.localHeight || 0}）`
-                            : `🚫 Mining Ready: BLOCKED - Node not synced (local height: ${miningGuardResult.details?.localHeight || 0})`;
-                          break;
-                        case "INSUFFICIENT_PEERS":
-                          message = locale === "zh"
-                            ? `🚫 挖矿就绪：已阻止 - 对等节点不足（${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3}）`
-                            : `🚫 Mining Ready: BLOCKED - Insufficient peers (${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3})`;
-                          break;
-                        case "NOT_FINALIZED":
-                          message = locale === "zh"
-                            ? `⚠️ 挖矿就绪：降级 - 未最终确认的区块过多`
-                            : `⚠️ Mining Ready: DEGRADED - Too many unfinalized blocks`;
-                          break;
-                        case "NETWORK_MISMATCH":
-                          message = locale === "zh"
-                            ? `🚫 挖矿就绪：已阻止 - 网络参数不匹配`
-                            : `🚫 Mining Ready: BLOCKED - Network parameters mismatch`;
-                          break;
-                        case "NO_VALID_WALLET":
-                          message = locale === "zh"
-                            ? `🚫 挖矿就绪：已阻止 - 未选择有效的挖矿钱包`
-                            : `🚫 Mining Ready: BLOCKED - No valid mining wallet selected`;
-                          break;
-                        case "FOLLOWER_MODE":
-                          message = locale === "zh"
-                            ? `🚫 挖矿就绪：已阻止 - 本窗口为只读模式（Follower）`
-                            : `🚫 Mining Ready: BLOCKED - This window is read-only (Follower)`;
-                          break;
-                        default:
-                          message = miningGuardResult.reason || (locale === "zh" ? "🚫 挖矿就绪：已阻止" : "🚫 Mining Ready: BLOCKED");
-                      }
-                    }
+                  {/* Phase 30: Network Health Status */}
+                  {(() => {
+                    const isHealthy = isMainnetMode && 
+                      isP2PConnected && 
+                      peerCount >= 3 && 
+                      miningGuardResult?.ok === true;
+                    const isDegraded = isMainnetMode && 
+                      isP2PConnected && 
+                      (peerCount < 3 || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code === "NOT_FINALIZED"));
+                    
                     return (
-                      <div className="status-item" style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #e9ecef" }}>
-                        <span className="label">{locale === "zh" ? "挖矿就绪:" : "Mining Ready:"}</span>
-                        <span className="value" style={{ 
-                          color: isOk ? "#28a745" : miningGuardResult.code === "NOT_FINALIZED" ? "#ffc107" : "#dc3545",
-                          fontWeight: "bold"
+                      <div className="status-item" style={{ 
+                        marginTop: "0.75rem", 
+                        paddingTop: "0.75rem", 
+                        borderTop: "1px solid #e9ecef",
+                        padding: "0.75rem",
+                        background: isHealthy ? "#d4edda" : isDegraded ? "#fff3cd" : "#f8d7da",
+                        borderRadius: "6px",
+                        border: `2px solid ${isHealthy ? "#28a745" : isDegraded ? "#ffc107" : "#dc3545"}`
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                          <span className="label" style={{ fontWeight: "bold" }}>
+                            {locale === "zh" ? "网络健康状态:" : "Network Health:"}
+                          </span>
+                          <span className="value" style={{ 
+                            color: isHealthy ? "#28a745" : isDegraded ? "#ffc107" : "#dc3545",
+                            fontWeight: "bold",
+                            fontSize: "1rem"
+                          }}>
+                            {isHealthy 
+                              ? (locale === "zh" ? "✅ 健康 & 主网" : "✅ Healthy & On Mainnet")
+                              : isDegraded
+                              ? (locale === "zh" ? "⚠️ 降级" : "⚠️ Degraded")
+                              : (locale === "zh" ? "🚫 已阻止" : "🚫 Blocked")
+                            }
+                          </span>
+                        </div>
+                        {isHealthy && (
+                          <div style={{ fontSize: "0.85rem", color: "#155724", marginTop: "0.25rem" }}>
+                            {locale === "zh" 
+                              ? "只要这里显示 ✅ 健康 & 主网，你当前的挖矿就是有效的。"
+                              : "As long as this shows ✅ Healthy & On Mainnet, your current mining is effective."}
+                          </div>
+                        )}
+                        {/* Phase 30: Mining Ready Status */}
+                        {miningGuardResult && (
+                          <div style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
+                            <span className="label">{locale === "zh" ? "挖矿就绪:" : "Mining Ready:"}</span>
+                            <span className="value" style={{ 
+                              color: miningGuardResult.ok ? "#28a745" : miningGuardResult.code === "NOT_FINALIZED" ? "#ffc107" : "#dc3545",
+                              fontWeight: "bold",
+                              marginLeft: "0.5rem"
+                            }}>
+                              {miningGuardResult.ok 
+                                ? (locale === "zh" ? "✅ 安全" : "✅ SAFE")
+                                : miningGuardResult.code === "NOT_FINALIZED"
+                                ? (locale === "zh" ? "⚠️ 降级" : "⚠️ DEGRADED")
+                                : (locale === "zh" ? "🚫 已阻止" : "🚫 BLOCKED")
+                              }
+                            </span>
+                            {!miningGuardResult.ok && miningGuardResult.reason && (
+                              <div style={{ 
+                                marginTop: "0.25rem", 
+                                fontSize: "0.75rem", 
+                                color: "#666",
+                                paddingLeft: "0.5rem"
+                              }}>
+                                {miningGuardResult.reason}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* Health Status Indicator */}
+                        <div style={{ 
+                          marginTop: "1rem", 
+                          padding: "0.75rem", 
+                          background: miningGuardResult?.ok 
+                            ? "rgba(40, 167, 69, 0.1)" 
+                            : miningGuardResult?.code === "NOT_FINALIZED"
+                            ? "rgba(255, 193, 7, 0.1)"
+                            : "rgba(220, 53, 69, 0.1)",
+                          borderRadius: "6px",
+                          border: `1px solid ${miningGuardResult?.ok 
+                            ? "#28a745" 
+                            : miningGuardResult?.code === "NOT_FINALIZED"
+                            ? "#ffc107"
+                            : "#dc3545"}`,
+                          fontSize: "0.9rem"
                         }}>
-                          {message}
-                        </span>
+                          <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+                            {miningGuardResult?.ok 
+                              ? (locale === "zh" ? "✅ 健康 & 主网" : "✅ Healthy & On Mainnet")
+                              : miningGuardResult?.code === "NOT_FINALIZED"
+                              ? (locale === "zh" ? "⚠️ 降级模式" : "⚠️ Degraded Mode")
+                              : (locale === "zh" ? "🚫 已阻止" : "🚫 Blocked")
+                            }
+                          </div>
+                          <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.25rem" }}>
+                            {locale === "zh" 
+                              ? "只要这里显示 ✅ 健康 & 主网，你当前的挖矿就是有效的。"
+                              : "As long as this shows ✅ Healthy & On Mainnet, your current mining is effective."}
+                          </div>
+                        </div>
                       </div>
                     );
                   })()}
@@ -3275,18 +3839,24 @@ function App() {
                           <button
                             className="btn btn-primary"
                             onClick={handleStartMining}
-                            disabled={!nodeAddress || !localCoordinator.canMine()}
+                            disabled={!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok)}
                             style={{ 
                               fontSize: "1rem", 
                               padding: "0.75rem 1.5rem",
-                              opacity: (!nodeAddress || !localCoordinator.canMine()) ? 0.5 : 1,
-                              cursor: (!nodeAddress || !localCoordinator.canMine()) ? "not-allowed" : "pointer"
+                              opacity: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok)) ? 0.5 : 1,
+                              cursor: (!nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok)) ? "not-allowed" : "pointer"
                             }}
-                            title={!localCoordinator.canMine() 
-                              ? (locale === "zh" 
-                                  ? "本机已有一个挖矿实例，当前实例为只读模式"
-                                  : "This machine already has a mining instance, current instance is read-only")
-                              : ""}
+                            title={
+                              !localCoordinator.canMine() 
+                                ? (locale === "zh" 
+                                    ? "🚫 无法挖矿：本实例为 FOLLOWER，请在 LEADER 页面挖矿"
+                                    : "🚫 Cannot mine: This instance is FOLLOWER, please mine on LEADER page")
+                                : miningGuardResult && !miningGuardResult.ok
+                                ? (miningGuardResult.reason || (locale === "zh" ? "挖矿条件未满足" : "Mining conditions not met"))
+                                : !nodeAddress
+                                ? (locale === "zh" ? "请先创建钱包地址" : "Please create wallet address first")
+                                : ""
+                            }
                           >
                             {t("mining.startMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
                             {!localCoordinator.canMine() && (
@@ -3295,6 +3865,36 @@ function App() {
                               </span>
                             )}
                           </button>
+                          {/* Show mining guard reason if blocked */}
+                          {miningGuardResult && !miningGuardResult.ok && (
+                            <div style={{ 
+                              fontSize: "0.85rem", 
+                              color: "#dc3545",
+                              padding: "0.5rem",
+                              background: "rgba(220, 53, 69, 0.1)",
+                              borderRadius: "4px",
+                              marginTop: "0.5rem",
+                              width: "100%"
+                            }}>
+                              <strong>🚫 {locale === "zh" ? "无法挖矿：" : "Cannot mine:"}</strong> {
+                                miningGuardResult.code === "NOT_SYNCED"
+                                  ? (locale === "zh" ? "当前高度落后网络多数，请先同步" : "Current height is behind network majority, please sync first")
+                                  : miningGuardResult.code === "INSUFFICIENT_PEERS"
+                                  ? (locale === "zh" 
+                                      ? `对等节点数量不足（当前 ${miningGuardResult.details?.peerCount || 0} / 需要 ≥${miningGuardResult.details?.requiredPeers || 3}）`
+                                      : `Insufficient peers (current ${miningGuardResult.details?.peerCount || 0} / need ≥${miningGuardResult.details?.requiredPeers || 3})`)
+                                  : miningGuardResult.code === "FOLLOWER_MODE"
+                                  ? (locale === "zh" ? "本实例为 FOLLOWER，请在 LEADER 页面挖矿" : "This instance is FOLLOWER, please mine on LEADER page")
+                                  : miningGuardResult.code === "NETWORK_MISMATCH" || miningGuardResult.code === "PARAMS_MISMATCH"
+                                  ? (locale === "zh" ? "主网参数与信令节点不一致" : "Mainnet parameters do not match signaling node")
+                                  : miningGuardResult.code === "NOT_FINALIZED"
+                                  ? (locale === "zh" ? "Finality 未就绪" : "Finality not ready")
+                                  : miningGuardResult.code === "NO_VALID_WALLET"
+                                  ? (locale === "zh" ? "没有有效的挖矿钱包" : "No valid mining wallet")
+                                  : miningGuardResult.reason || (locale === "zh" ? "挖矿条件未满足" : "Mining conditions not met")
+                              }
+                            </div>
+                          )}
                           <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
                             <input
                               type="checkbox"
@@ -3377,21 +3977,81 @@ function App() {
                           <div style={{ fontSize: "0.85rem", color: "#666" }}>
                             {t("mining.optimalWorkers", { count: MinerCluster.getOptimalWorkerCount() })}
                           </div>
+                          {/* Mining Guard Status for Cluster Mining */}
+                          {miningGuardResult && !miningGuardResult.ok && (
+                            <div style={{
+                              padding: "0.75rem",
+                              background: miningGuardResult.code === "NOT_FINALIZED" ? "#fff3cd" : "#f8d7da",
+                              border: `1px solid ${miningGuardResult.code === "NOT_FINALIZED" ? "#ffc107" : "#dc3545"}`,
+                              borderRadius: "6px",
+                              fontSize: "0.9rem",
+                              color: miningGuardResult.code === "NOT_FINALIZED" ? "#856404" : "#721c24"
+                            }}>
+                              {(() => {
+                                let message = "";
+                                switch (miningGuardResult.code) {
+                                  case "NOT_SYNCED":
+                                    message = locale === "zh"
+                                      ? `🚫 无法挖矿：当前高度落后网络多数，请先同步`
+                                      : `🚫 Cannot mine: Node height is behind network majority, please sync first`;
+                                    break;
+                                  case "INSUFFICIENT_PEERS":
+                                    message = locale === "zh"
+                                      ? `🚫 无法挖矿：对等节点不足（当前 ${miningGuardResult.details?.peerCount || 0} / 需要 ≥${miningGuardResult.details?.requiredPeers || 3}）`
+                                      : `🚫 Cannot mine: Insufficient peers (current ${miningGuardResult.details?.peerCount || 0} / need ≥${miningGuardResult.details?.requiredPeers || 3})`;
+                                    break;
+                                  case "NOT_FINALIZED":
+                                    message = locale === "zh"
+                                      ? `⚠️ 挖矿降级：未最终确认的区块过多，挖矿可能无效`
+                                      : `⚠️ Mining degraded: Too many unfinalized blocks, mining may be ineffective`;
+                                    break;
+                                  case "NETWORK_MISMATCH":
+                                  case "PARAMS_MISMATCH":
+                                    message = locale === "zh"
+                                      ? `🚫 无法挖矿：主网参数与信令节点不一致`
+                                      : `🚫 Cannot mine: Network parameters mismatch with signaling server`;
+                                    break;
+                                  case "NO_VALID_WALLET":
+                                    message = locale === "zh"
+                                      ? `🚫 无法挖矿：未选择有效的挖矿钱包`
+                                      : `🚫 Cannot mine: No valid mining wallet selected`;
+                                    break;
+                                  case "FOLLOWER_MODE":
+                                    message = locale === "zh"
+                                      ? `🚫 无法挖矿：本窗口为只读模式（Follower），请在 Leader 页面挖矿`
+                                      : `🚫 Cannot mine: This window is read-only (Follower), please mine on Leader page`;
+                                    break;
+                                  default:
+                                    message = miningGuardResult.reason || (locale === "zh" ? "🚫 无法挖矿" : "🚫 Cannot mine");
+                                }
+                                return message;
+                              })()}
+                            </div>
+                          )}
                           <button
                             className="btn btn-primary"
                             onClick={handleStartClusterMining}
-                            disabled={!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine()}
+                            disabled={!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED")}
                             style={{ 
                               fontSize: "1rem", 
                               padding: "0.75rem 1.5rem",
-                              opacity: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine()) ? 0.5 : 1,
-                              cursor: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine()) ? "not-allowed" : "pointer"
+                              opacity: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED")) ? 0.5 : 1,
+                              cursor: (!chainContext || clusterMining || !nodeAddress || !localCoordinator.canMine() || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED")) ? "not-allowed" : "pointer"
                             }}
-                            title={!localCoordinator.canMine() 
-                              ? (locale === "zh" 
+                            title={(() => {
+                              if (!nodeAddress) {
+                                return locale === "zh" ? "请先创建或选择钱包" : "Please create or select a wallet first";
+                              }
+                              if (!localCoordinator.canMine()) {
+                                return locale === "zh" 
                                   ? "本机已有一个挖矿实例，当前实例为只读模式"
-                                  : "This machine already has a mining instance, current instance is read-only")
-                              : ""}
+                                  : "This machine already has a mining instance, current instance is read-only";
+                              }
+                              if (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code !== "NOT_FINALIZED") {
+                                return miningGuardResult.reason || (locale === "zh" ? "挖矿条件不满足" : "Mining conditions not met");
+                              }
+                              return "";
+                            })()}
                           >
                             {t("mining.startClusterMining")} {pendingTxs.length > 0 ? `(${t("mining.pendingTxs", { count: pendingTxs.length })})` : `(${t("mining.coinbaseOnly")})`}
                             {!localCoordinator.canMine() && (
@@ -3454,10 +4114,10 @@ function App() {
                     <span className="label">{t("mining.hashesTried")}</span>
                     <span className="value">{miningStats.hashesTried.toLocaleString()}</span>
                   </div>
-                  {miningStats.elapsedTime > 0 && (
+                    {miningStats.elapsedTime > 0 && (
                     <div className="status-item">
                       <span className="label">{t("mining.elapsedTime")}</span>
-                      <span className="value">{miningStats.elapsedTime.toFixed(1)} {locale === "zh" ? "秒" : "s"}</span>
+                      <span className="value">{miningStats.elapsedTime.toFixed(1)} {t("commonExpanded.seconds")}</span>
                     </div>
                   )}
                   {isMining && (
@@ -3544,33 +4204,33 @@ function App() {
                 <div className="status-card">
                   <h2>🌐 {t("network.globalPool")}</h2>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "模式" : "Mode"}:</span>
+                    <span className="label">{t("networkExpanded.mode")}</span>
                     <span className="value">
                       {globalPoolEnabled ? (
-                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{locale === "zh" ? "已启用" : "Enabled"}</span>
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("networkExpanded.enabled")}</span>
                       ) : (
-                        <span style={{ color: "#666" }}>{locale === "zh" ? "已禁用" : "Disabled"}</span>
+                        <span style={{ color: "#666" }}>{t("networkExpanded.disabled")}</span>
                       )}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "角色" : "Role"}:</span>
+                    <span className="label">{t("networkExpanded.role")}</span>
                     <span className="value">
                       {isDelegator ? (
-                        <span style={{ color: "#667eea", fontWeight: "bold" }}>{locale === "zh" ? "委托者" : "Delegator"}</span>
+                        <span style={{ color: "#667eea", fontWeight: "bold" }}>{t("networkExpanded.delegator")}</span>
                       ) : (
-                        <span style={{ color: "#666" }}>{locale === "zh" ? "工作节点" : "Worker Node"}</span>
+                        <span style={{ color: "#666" }}>{t("networkExpanded.workerNode")}</span>
                       )}
                     </span>
                   </div>
                   {isDelegator && delegatorStats && (
                     <>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "活跃范围" : "Active Ranges"}:</span>
+                        <span className="label">{t("networkExpanded.activeRanges")}:</span>
                         <span className="value">{delegatorStats.activeRanges}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "总节点数" : "Total Nodes"}:</span>
+                        <span className="label">{t("networkExpanded.totalNodes")}:</span>
                         <span className="value">{delegatorStats.totalNodes}</span>
                       </div>
                       <div className="status-item">
@@ -3650,14 +4310,14 @@ function App() {
                   }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span style={{ fontWeight: "bold", color: "#333" }}>
-                        {locale === "zh" ? "当前余额" : "Current Balance"}:
+                        {t("transactionsExpanded.currentBalance")}:
                       </span>
                       <span style={{ fontSize: "1.3rem", fontWeight: "bold", color: "#667eea" }}>
                         {chainContext.indexState.getBalance(nodeAddress as any).toFixed(6)} IDC
                       </span>
                     </div>
                     <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.25rem" }}>
-                      {locale === "zh" ? "地址" : "Address"}: {nodeAddress.substring(0, 20)}...
+                      {t("transactionsExpanded.address")}: {nodeAddress.substring(0, 20)}...
                     </div>
                   </div>
                 )}
@@ -3690,7 +4350,7 @@ function App() {
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                   <div>
                     <label style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.9rem", fontWeight: "500" }}>
-                      {locale === "zh" ? "收款地址" : "Recipient Address"}
+                      {t("transactionsExpanded.recipientAddress")}
                     </label>
                     <input
                       type="text"
@@ -3706,7 +4366,7 @@ function App() {
                   </div>
                   <div>
                     <label style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.9rem", fontWeight: "500" }}>
-                      {locale === "zh" ? "转账金额" : "Transfer Amount"} (IDC)
+                      {t("transactionsExpanded.transferAmount")} (IDC)
                     </label>
                     <input
                       type="number"
@@ -3723,7 +4383,7 @@ function App() {
                     />
                     {transferAmount && chainContext && nodeAddress && (
                       <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.25rem" }}>
-                        {locale === "zh" ? "转账后余额" : "Balance after transfer"}:{" "}
+                        {t("transactionsExpanded.balanceAfterTransfer")}:{" "}
                         <span style={{ 
                           fontWeight: "bold",
                           color: parseFloat(transferAmount) > chainContext.indexState.getBalance(nodeAddress as any) ? "#dc3545" : "#28a745"
@@ -3732,7 +4392,7 @@ function App() {
                         </span>
                         {parseFloat(transferAmount) > chainContext.indexState.getBalance(nodeAddress as any) && (
                           <span style={{ color: "#dc3545", marginLeft: "0.5rem" }}>
-                            ⚠️ {locale === "zh" ? "余额不足" : "Insufficient balance"}
+                            ⚠️ {t("transactionsExpanded.insufficientBalance")}
                           </span>
                         )}
                       </div>
@@ -3742,13 +4402,13 @@ function App() {
                     className="btn btn-primary"
                     onClick={async () => {
                       if (!chainContext || !transferTo || !transferAmount) {
-                        setError(locale === "zh" ? "请输入收款地址和金额" : "Please enter recipient address and amount");
+                        setError(t("transactionsExpanded.pleaseEnterRecipient"));
                         setSuccessMessage("");
                         return;
                       }
                       const amount = parseFloat(transferAmount);
                       if (isNaN(amount) || amount <= 0) {
-                        setError(locale === "zh" ? "金额必须是正数" : "Amount must be a positive number");
+                        setError(t("transactionsExpanded.amountMustBePositive"));
                         setSuccessMessage("");
                         return;
                       }
@@ -3756,9 +4416,10 @@ function App() {
                       if (nodeAddress && chainContext) {
                         const currentBalance = chainContext.indexState.getBalance(nodeAddress as any);
                         if (amount > currentBalance) {
-                          setError(locale === "zh" 
-                            ? `余额不足。当前余额: ${currentBalance.toFixed(6)} IDC，转账金额: ${amount.toFixed(6)} IDC`
-                            : `Insufficient balance. Current: ${currentBalance.toFixed(6)} IDC, Transfer: ${amount.toFixed(6)} IDC`);
+                          setError(t("transactionsExpanded.insufficientBalanceError", { 
+                            current: currentBalance.toFixed(6), 
+                            amount: amount.toFixed(6) 
+                          }));
                           setSuccessMessage("");
                           return;
                         }
@@ -3770,7 +4431,7 @@ function App() {
                         const tx = await createTransferTx(transferTo as any, amount);
                         const added = await mempool.addTx(tx);
                         if (!added) {
-                          setError(locale === "zh" ? "添加转账交易失败（可能是重复交易或无效交易）" : "Failed to add transfer transaction (may be duplicate or invalid)");
+                          setError(t("transactionsExpanded.transferFailed"));
                           setSuccessMessage("");
                           setIsSigning(false);
                           return;
@@ -3781,15 +4442,16 @@ function App() {
                         setChainContext({ ...chainContext });
                         setIsSigning(false);
                         // Show success message
-                        setSuccessMessage(locale === "zh" 
-                          ? `转账交易已创建并广播！金额: ${amount.toFixed(6)} IDC，接收者: ${transferTo.substring(0, 20)}...`
-                          : `Transfer transaction created and broadcast! Amount: ${amount.toFixed(6)} IDC, Recipient: ${transferTo.substring(0, 20)}...`);
+                        setSuccessMessage(t("transactionsExpanded.transferSuccess", { 
+                          amount: amount.toFixed(6), 
+                          recipient: transferTo.substring(0, 20) 
+                        }));
                         // Clear success message after 5 seconds
                         setTimeout(() => {
                           setSuccessMessage("");
                         }, 5000);
                       } catch (err) {
-                        setError(err instanceof Error ? err.message : (locale === "zh" ? "创建转账失败" : "Failed to create transfer"));
+                        setError(err instanceof Error ? err.message : t("transactions.transfer"));
                         setSuccessMessage("");
                         setIsSigning(false);
                       }
@@ -3800,7 +4462,7 @@ function App() {
                   </button>
                   {isSigning && (
                     <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "0.5rem" }}>
-                      {locale === "zh" ? "正在使用私钥签名交易..." : "Signing transaction with your private key..."}
+                      {t("transactionsExpanded.signingTransaction")}
                     </p>
                   )}
                 </div>
@@ -3864,7 +4526,7 @@ function App() {
                   </button>
                   {isSigning && (
                     <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "0.5rem" }}>
-                      {locale === "zh" ? "正在使用私钥签名交易..." : "Signing transaction with your private key..."}
+                      {t("transactionsExpanded.signingTransaction")}
                     </p>
                   )}
                 </div>
@@ -3873,7 +4535,7 @@ function App() {
               {/* Pending Transactions */}
               {pendingTxs.length > 0 && (
                 <div className="status-card">
-                  <h2>⏳ {t("transactions.pending")} ({pendingTxs.length})</h2>
+                  <h2>{t("transactionsExpanded.pendingTransactions")} ({pendingTxs.length})</h2>
                   <div style={{ maxHeight: "200px", overflowY: "auto" }}>
                     {pendingTxs.map((tx) => (
                       <div
@@ -3887,13 +4549,13 @@ function App() {
                         }}
                       >
                         <div>
-                          <strong>TxID:</strong> {tx.txId.substring(0, 16)}...
+                          <strong>{t("transactionsExpanded.txId")}</strong> {tx.txId.substring(0, 16)}...
                         </div>
                         <div>
-                          <strong>From:</strong> {tx.ownerAddress?.substring(0, 20) || "Unknown"}...
+                          <strong>{t("transactionsExpanded.from")}</strong> {tx.ownerAddress?.substring(0, 20) || t("commonExpanded.unknown")}...
                         </div>
                         <div>
-                          <strong>Ops:</strong> {tx.ops.length}
+                          <strong>{t("transactionsExpanded.ops")}</strong> {tx.ops.length}
                         </div>
                       </div>
                     ))}
@@ -3908,23 +4570,23 @@ function App() {
             <div className="tab-content active">
               {/* P2P Network Section */}
               <div className="status-card">
-                <h2>🌐 P2P Network</h2>
+                <h2>{t("networkExpanded.p2pNetwork")}</h2>
                 <div className="status-item">
-                  <span className="label">Mode:</span>
+                  <span className="label">{t("networkExpanded.mode")}</span>
                   <span className="value">
                     {isMainnetMode ? (
-                      <span style={{ color: "#28a745", fontWeight: "bold" }}>🌐 Mainnet</span>
+                      <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("network.mainnet")}</span>
                     ) : (
-                      <span style={{ color: "#ffc107", fontWeight: "bold" }}>🔧 Dev Mode</span>
+                      <span style={{ color: "#ffc107", fontWeight: "bold" }}>{t("network.dev")}</span>
                     )}
                   </span>
                 </div>
                 <div className="status-item">
-                  <span className="label">Status:</span>
-                  <span className="value">{isP2PConnected ? "Connected" : "Disconnected"}</span>
+                  <span className="label">{t("networkExpanded.status")}</span>
+                  <span className="value">{isP2PConnected ? t("networkExpanded.connected") : t("networkExpanded.disconnected")}</span>
                 </div>
                 <div className="status-item">
-                  <span className="label">Peers:</span>
+                  <span className="label">{t("networkExpanded.peers")}</span>
                   <span className="value">{peerCount}</span>
                 </div>
                 {!isP2PConnected ? (
@@ -3952,8 +4614,8 @@ function App() {
                       <input
                         type="text"
                         placeholder={isMainnetMode 
-                          ? (locale === "zh" ? "主网信令服务器 (wss://...)" : "Mainnet Signaling Server (wss://...)")
-                          : (locale === "zh" ? "本地信令服务器 (ws://localhost:8080)" : "Local Signaling Server (ws://localhost:8080)")}
+                          ? t("networkExpanded.mainnetSignalingServer")
+                          : t("networkExpanded.localSignalingServer")}
                         value={bootstrapUrl}
                         onChange={(e) => setBootstrapUrl(e.target.value)}
                         style={{ flex: 1, padding: "0.5rem" }}
@@ -4429,7 +5091,7 @@ function App() {
                 disabled={!chainContext || !latestSnapshot}
                 style={{ background: "#6c757d", color: "white" }}
               >
-                Verify Latest Snapshot
+                {t("storageExpanded.verifyLatestSnapshot")}
               </button>
               {/* Phase 14: Fetch remote snapshot */}
               <button
@@ -4438,12 +5100,12 @@ function App() {
                   if (!chainContext) return;
                   
                   if (!chainContext.params.remoteSnapshotEnabled || !chainContext.params.remoteSnapshotEndpoints || chainContext.params.remoteSnapshotEndpoints.length === 0) {
-                    setError("Remote snapshot sync is not enabled. Please configure remoteSnapshotEndpoints in chain params.");
+                    setError(t("storageExpanded.remoteSnapshotNotEnabled"));
                     return;
                   }
                   
                   try {
-                    setError("Fetching remote snapshot...");
+                    setError(t("storageExpanded.fetchingRemoteSnapshot"));
                     const { syncFromRemoteSnapshot } = await import("../core/remoteSnapshot.js");
                     const remoteMeta = await syncFromRemoteSnapshot(chainContext.params, chainContext.storage);
                     
@@ -4463,47 +5125,47 @@ function App() {
                         setSnapshotSizeInfo(info);
                       }
                       
-                      setError(`✅ Remote snapshot synced successfully from height ${remoteMeta.height}!`);
+                      setError(t("storageExpanded.remoteSnapshotSynced", { height: remoteMeta.height }));
                       setTimeout(() => setError(""), 5000);
                       
                       // Reload page to apply the new snapshot
                       setTimeout(() => {
-                        if (window.confirm("Remote snapshot downloaded. Reload page to apply it?")) {
+                        if (window.confirm(t("storageExpanded.reloadToApply"))) {
                           window.location.reload();
                         }
                       }, 2000);
                     } else {
-                      setError("❌ Failed to fetch remote snapshot from any configured source.");
+                      setError(t("storageExpanded.failedToFetchRemoteSnapshot"));
                       setTimeout(() => setError(""), 5000);
                     }
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to fetch remote snapshot");
+                    setError(err instanceof Error ? err.message : t("storageExpanded.failedToFetchRemoteSnapshot"));
                   }
                 }}
                 disabled={!chainContext || !chainContext.params.remoteSnapshotEnabled || !chainContext.params.remoteSnapshotEndpoints || chainContext.params.remoteSnapshotEndpoints.length === 0}
                 style={{ background: "#28a745", color: "white" }}
               >
-                      Fetch Remote Snapshot
-                    </button>
+                {t("storageExpanded.fetchRemoteSnapshot")}
+              </button>
                   </div>
                 </div>
 
                 {/* Phase 10: Light Node Status */}
                 <div className="status-card">
-                  <h2>💡 Light Node Status</h2>
+                  <h2>{t("storageExpanded.lightNodeStatus")}</h2>
                   <div className="status-item">
-                    <span className="label">Light Node Window:</span>
+                    <span className="label">{t("storageExpanded.lightNodeWindow")}</span>
                     <span className="value">
-                      {chainContext.params.lightNodeWindow ?? 200} blocks
+                      {chainContext.params.lightNodeWindow ?? 200} {t("storageExpanded.blocks")}
                       {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow <= 20 && (
                         <span style={{ marginLeft: "0.5rem", color: "#28a745", fontSize: "0.85rem" }}>
-                          (Extreme Pruning - Phase 15)
+                          {t("storageExpanded.extremePruning")}
                         </span>
                       )}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Stored Blocks:</span>
+                    <span className="label">{t("storageExpanded.storedBlocks")}</span>
                     <span className="value">{blockCount}</span>
                   </div>
                   {(() => {
@@ -4512,16 +5174,16 @@ function App() {
                     return (
                       <>
                         <div className="status-item">
-                          <span className="label">Earliest Block Height:</span>
+                          <span className="label">{t("storageExpanded.earliestBlockHeight")}</span>
                           <span className="value">{minHeight}</span>
                         </div>
                         <div className="status-item">
-                          <span className="label">Latest Block Height:</span>
+                          <span className="label">{t("storageExpanded.latestBlockHeight")}</span>
                           <span className="value">{maxHeight}</span>
                         </div>
                         {chainContext.params.lightNodeWindow && chainContext.params.lightNodeWindow > 0 && (
                           <div className="status-item">
-                            <span className="label">Storage Reduction:</span>
+                            <span className="label">{t("storageExpanded.storageReduction")}</span>
                             <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
                               {height > 0
                                 ? `${((1 - blockCount / Math.max(1, height + 1)) * 100).toFixed(1)}%`
@@ -4545,7 +5207,7 @@ function App() {
                             if (pruneHeight > 0) {
                               chainContext.storage.pruneBlocksBefore(pruneHeight);
                               setChainContext({ ...chainContext });
-                              setError("Pruned old blocks");
+                              setError(t("tools.prunedOldBlocks"));
                               setTimeout(() => setError(""), 2000);
                             }
                           }
@@ -4554,7 +5216,7 @@ function App() {
                       disabled={!chainContext || height === 0}
                       style={{ background: "#ffc107", color: "#000" }}
                     >
-                      Clear Pruned Blocks
+                      {t("storageExpanded.clearPrunedBlocks")}
                     </button>
                   </div>
                 </div>
@@ -4593,17 +5255,17 @@ function App() {
               {/* Phase 6: Difficulty Information */}
               {tip && (
                 <div className="status-card">
-                  <h2>⚙️ Difficulty Status</h2>
+                  <h2>{t("advancedExpanded.difficultyStatus")}</h2>
                   <div className="status-item">
-                    <span className="label">Current Difficulty:</span>
+                    <span className="label">{t("advancedExpanded.currentDifficulty")}</span>
                     <span className="value">{tip.header.difficulty}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Target Block Time:</span>
-                    <span className="value">{chainContext.params.targetBlockTime}s</span>
+                    <span className="label">{t("advancedExpanded.targetBlockTime")}</span>
+                    <span className="value">{chainContext.params.targetBlockTime}{t("commonExpanded.seconds")}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">Blocks Until Adjustment:</span>
+                    <span className="label">{t("advancedExpanded.blocksUntilAdjustment")}</span>
                     <span className="value">
                       {getBlocksUntilAdjustment(
                         height,
@@ -4618,8 +5280,8 @@ function App() {
                     if (avgTime !== null) {
                       return (
                         <div className="status-item">
-                          <span className="label">Avg Block Time (last {recentBlocks.length}):</span>
-                          <span className="value">{avgTime.toFixed(2)}s</span>
+                          <span className="label">{t("advancedExpanded.averageBlockTime")} (last {recentBlocks.length}):</span>
+                          <span className="value">{avgTime.toFixed(2)}{t("commonExpanded.seconds")}</span>
                         </div>
                       );
                     }
@@ -4631,7 +5293,7 @@ function App() {
                       const explanation = explainDifficultyChange(allBlocks, chainContext.params);
                       return (
                         <div style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#666" }}>
-                          <strong>Next Adjustment:</strong> {explanation.reason}
+                          <strong>{t("advancedExpanded.difficultyChange")}:</strong> {explanation.reason}
                         </div>
                       );
                     }
@@ -5114,17 +5776,15 @@ function App() {
           {activeTab === "tools" && (
             <div className="tab-content active">
               <div className="status-card">
-                <h2>{locale === "zh" ? "🔧 工具" : "🔧 Tools"}</h2>
+                <h2>{t("tools.title")}</h2>
                 <p style={{ marginBottom: "1.5rem", color: "#666" }}>
-                  {locale === "zh" 
-                    ? "用于处理本地存储引起的问题和链数据管理" 
-                    : "Tools for handling local storage issues and chain data management"}
+                  {t("tools.description")}
                 </p>
 
                 {/* Storage Information */}
                 <div style={{ marginBottom: "2rem" }}>
                   <h3 style={{ marginBottom: "1rem" }}>
-                    {locale === "zh" ? "📊 存储信息" : "📊 Storage Information"}
+                    {t("tools.storageInformation")}
                   </h3>
                   <div style={{ 
                     background: "#f8f9fa", 
@@ -5173,15 +5833,15 @@ function App() {
                       return (
                         <div style={{ display: "grid", gap: "0.75rem" }}>
                           <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span>{locale === "zh" ? "链区块数据:" : "Chain Blocks:"}</span>
+                            <span>{t("tools.chainBlocks")}</span>
                             <strong>{formatSize(chainBlocksSize)}</strong>
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span>{locale === "zh" ? "快照元数据:" : "Snapshots Metadata:"}</span>
+                            <span>{t("tools.snapshotsMetadata")}</span>
                             <strong>{formatSize(snapshotsMetaSize)}</strong>
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span>{locale === "zh" ? `快照数据 (${snapshotKeys.length}):` : `Snapshots (${snapshotKeys.length}):`}</span>
+                            <span>{t("tools.snapshots", { count: snapshotKeys.length })}</span>
                             <strong>{formatSize(snapshotsSize)}</strong>
                           </div>
                           <div style={{ 
@@ -5192,7 +5852,7 @@ function App() {
                             marginTop: "0.5rem"
                           }}>
                             <span style={{ fontWeight: "bold" }}>
-                              {locale === "zh" ? "总计:" : "Total:"}
+                              {t("tools.total")}
                             </span>
                             <strong style={{ fontSize: "1.1rem", color: "#667eea" }}>
                               {formatSize(totalSize)}
@@ -5207,7 +5867,7 @@ function App() {
                 {/* Chain Data Management */}
                 <div style={{ marginBottom: "2rem" }}>
                   <h3 style={{ marginBottom: "1rem" }}>
-                    {locale === "zh" ? "⛓️ 链数据管理" : "⛓️ Chain Data Management"}
+                    {t("tools.chainDataManagement")}
                   </h3>
                   <div style={{ display: "grid", gap: "1rem" }}>
                     <div style={{ 
@@ -5217,12 +5877,10 @@ function App() {
                       border: "1px solid #ffc107"
                     }}>
                       <h4 style={{ marginBottom: "0.5rem" }}>
-                        {locale === "zh" ? "重置链" : "Reset Chain"}
+                        {t("tools.resetChain")}
                       </h4>
                       <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#856404" }}>
-                        {locale === "zh" 
-                          ? "清除所有链数据和快照，然后从创世区块重新开始。用于修复链状态损坏或数据不一致问题。" 
-                          : "Clear all chain data and snapshots, then start fresh from genesis block. Use this to fix chain state corruption or data inconsistency issues."}
+                        {t("tools.resetChainDesc")}
                       </p>
                       <button
                         className="btn btn-secondary"
@@ -5237,7 +5895,7 @@ function App() {
                           fontWeight: "bold"
                         }}
                       >
-                        {locale === "zh" ? "🔄 重置链" : "🔄 Reset Chain"}
+                        {t("tools.resetChainButton")}
                       </button>
                     </div>
 
@@ -5248,27 +5906,17 @@ function App() {
                       border: "1px solid #bee5eb"
                     }}>
                       <h4 style={{ marginBottom: "0.5rem" }}>
-                        {locale === "zh" ? "清除快照" : "Clear Snapshots"}
+                        {t("tools.clearSnapshots")}
                       </h4>
                       <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#0c5460" }}>
-                        {locale === "zh" 
-                          ? "仅清除快照数据，保留链区块数据。下次启动时会从创世区块重建状态。" 
-                          : "Clear only snapshot data, keeping chain blocks. State will be rebuilt from genesis on next startup."}
+                        {t("tools.clearSnapshotsDesc")}
                       </p>
                       <button
                         className="btn btn-secondary"
                         onClick={async () => {
-                          if (window.confirm(
-                            locale === "zh" 
-                              ? "确定要清除所有快照吗？下次启动时会从创世区块重建状态。" 
-                              : "Clear all snapshots? Next startup will rebuild from genesis."
-                          )) {
+                          if (window.confirm(t("tools.clearSnapshotsConfirm"))) {
                             clearAllSnapshots();
-                            setError(
-                              locale === "zh" 
-                                ? "✅ 所有快照已清除。下次启动时会从创世区块重建状态。" 
-                                : "✅ All snapshots cleared. Next startup will rebuild from genesis."
-                            );
+                            setError(t("tools.clearSnapshotsSuccess"));
                             setTimeout(() => setError(""), 3000);
                             window.location.reload();
                           }
@@ -5283,7 +5931,7 @@ function App() {
                           fontWeight: "bold"
                         }}
                       >
-                        {locale === "zh" ? "🗑️ 清除快照" : "🗑️ Clear Snapshots"}
+                        {t("tools.clearSnapshotsButton")}
                       </button>
                     </div>
                   </div>
@@ -5292,7 +5940,7 @@ function App() {
                 {/* Common Issues & Fixes */}
                 <div style={{ marginBottom: "2rem" }}>
                   <h3 style={{ marginBottom: "1rem" }}>
-                    {locale === "zh" ? "🔍 常见问题修复" : "🔍 Common Issues & Fixes"}
+                    {t("tools.commonIssues")}
                   </h3>
                   <div style={{ display: "grid", gap: "1rem" }}>
                     <div style={{ 
@@ -5302,31 +5950,21 @@ function App() {
                       border: "1px solid #f5c6cb"
                     }}>
                       <h4 style={{ marginBottom: "0.5rem" }}>
-                        {locale === "zh" ? "余额不足错误" : "Insufficient Balance Error"}
+                        {t("tools.insufficientBalanceError")}
                       </h4>
                       <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#721c24" }}>
-                        {locale === "zh" 
-                          ? "如果遇到 'Insufficient balance' 错误，通常表示链状态损坏或快照不一致。点击下面的按钮清除所有数据并重新开始。" 
-                          : "If you encounter 'Insufficient balance' errors, it usually means chain state corruption or snapshot inconsistency. Click the button below to clear all data and start fresh."}
+                        {t("tools.insufficientBalanceErrorDesc")}
                       </p>
                       <button
                         className="btn btn-secondary"
                         onClick={() => {
-                          if (window.confirm(
-                            locale === "zh" 
-                              ? "这将清除所有链数据和快照。确定继续吗？" 
-                              : "This will clear all chain data and snapshots. Continue?"
-                          )) {
+                          if (window.confirm(t("tools.clearAllDataConfirm"))) {
                             localStorage.removeItem("indexerchain_blocks_v1");
                             localStorage.removeItem("indexerchain_snapshots_meta");
                             Object.keys(localStorage)
                               .filter(k => k.startsWith("indexerchain_snapshot_"))
                               .forEach(k => localStorage.removeItem(k));
-                            setError(
-                              locale === "zh" 
-                                ? "✅ 已清除所有数据。正在重新加载..." 
-                                : "✅ All data cleared. Reloading..."
-                            );
+                            setError(t("tools.clearAllDataSuccess"));
                             setTimeout(() => window.location.reload(), 1000);
                           }
                         }}
@@ -5340,7 +5978,7 @@ function App() {
                           fontWeight: "bold"
                         }}
                       >
-                        {locale === "zh" ? "🔧 修复余额错误" : "🔧 Fix Balance Error"}
+                        {t("tools.fixBalanceError")}
                       </button>
                     </div>
 
@@ -5351,12 +5989,10 @@ function App() {
                       border: "1px solid #ffc107"
                     }}>
                       <h4 style={{ marginBottom: "0.5rem" }}>
-                        {locale === "zh" ? "链初始化失败" : "Chain Initialization Failed"}
+                        {t("tools.initializationError")}
                       </h4>
                       <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#856404" }}>
-                        {locale === "zh" 
-                          ? "如果链初始化失败，可能是数据损坏。尝试清除所有数据并重新开始。" 
-                          : "If chain initialization fails, it may be due to data corruption. Try clearing all data and starting fresh."}
+                        {t("tools.initializationErrorDesc")}
                       </p>
                       <button
                         className="btn btn-secondary"
@@ -5371,7 +6007,7 @@ function App() {
                           fontWeight: "bold"
                         }}
                       >
-                        {locale === "zh" ? "🔧 修复初始化错误" : "🔧 Fix Initialization Error"}
+                        {t("tools.fixInitializationError")}
                       </button>
                     </div>
                   </div>

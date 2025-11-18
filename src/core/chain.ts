@@ -541,6 +541,7 @@ export async function appendMinedBlock(
     }
 
     // Phase 17: Fast block relay - broadcast header first, then body
+    // Phase 32: Update root tip on signal server
     if (context.p2p && context.p2p.isConnected) {
       // Get miner address from coinbase transaction
       let minerAddress = "idc_unknown";
@@ -560,6 +561,19 @@ export async function appendMinedBlock(
       // Also broadcast full block for backward compatibility
       // Nodes that haven't upgraded to Phase 17 will still receive full blocks
       context.p2p.broadcast("NEW_BLOCK", block);
+      
+      // Phase 32: Update root tip on signal server (if this is a LEADER instance)
+      if (typeof window !== "undefined") {
+        const { getLocalInstanceCoordinator } = await import("./localInstance.js");
+        const coordinator = getLocalInstanceCoordinator();
+        if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
+          (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", {
+            header: block.header,
+            headerHash: block.hash,
+          });
+          console.log(`[Phase 32] Updated root tip on signal server: height=${block.header.height}`);
+        }
+      }
     }
 
     return { success: true };

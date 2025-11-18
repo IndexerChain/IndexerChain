@@ -50,8 +50,19 @@ export class MiningGuard {
     p2pNode: P2PNode | null,
     finalityManager?: any,
     localInstanceRole?: "LEADER" | "FOLLOWER",
-    miningWalletAddress?: string
+    miningWalletAddress?: string,
+    bootstrapComplete?: boolean // Phase 32: Bootstrap sync status
   ): Promise<MiningGuardResult> {
+    // Phase 32: Check bootstrap sync status
+    if (bootstrapComplete === false) {
+      return {
+        ok: false,
+        code: "NOT_SYNCED",
+        reason: "Waiting for bootstrap sync...",
+        details: {},
+      };
+    }
+    
     // Check 1: P2P connection
     if (!p2pNode || !p2pNode.isConnected) {
       return {

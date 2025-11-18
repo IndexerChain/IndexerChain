@@ -308,6 +308,8 @@ export interface Translations {
       storage: string;
       advanced: string;
       token: string;
+      privacy: string;
+      tools: string;
     };
 
   // Banner
@@ -378,6 +380,142 @@ export interface Translations {
       nodeIdentity: string;
       connectedPeers: string;
       connectedTo: string;
+      localInstanceStatus: string;
+      role: string;
+      leader: string;
+      follower: string;
+      leaderInstance: string;
+      waitingForPeerConnections: string;
+      waitingForPeerConnectionsDesc: string;
+      waitingForPeerConnectionsTip: string;
+      leaderHeight: string;
+      followerReadOnly: string;
+      syncedToLatest: string;
+    };
+
+    // Tools
+    tools: {
+      title: string;
+      description: string;
+      storageInformation: string;
+      chainBlocks: string;
+      snapshotsMetadata: string;
+      snapshots: string;
+      total: string;
+      chainDataManagement: string;
+      resetChain: string;
+      resetChainDesc: string;
+      resetChainButton: string;
+      clearSnapshots: string;
+      clearSnapshotsDesc: string;
+      clearSnapshotsConfirm: string;
+      clearSnapshotsButton: string;
+      clearSnapshotsSuccess: string;
+      commonIssues: string;
+      insufficientBalanceError: string;
+      insufficientBalanceErrorDesc: string;
+      fixBalanceError: string;
+      initializationError: string;
+      initializationErrorDesc: string;
+      fixInitializationError: string;
+      storageCleanup: string;
+      clearAllData: string;
+      clearAllDataDesc: string;
+      clearAllDataConfirm: string;
+      clearAllDataButton: string;
+      clearAllDataSuccess: string;
+      cleanUnusedStorage: string;
+      cleanUnusedStorageDesc: string;
+      noUnusedStorage: string;
+      foundUnusedStorage: string;
+      clearedUnusedStorage: string;
+      warning: string;
+      warningDesc: string;
+      prunedOldBlocks: string;
+      leaderHeight: string;
+      followerReadOnly: string;
+    };
+
+    // Privacy
+    privacy: {
+      title: string;
+    };
+
+    // Transactions (expanded)
+    transactionsExpanded: {
+      currentBalance: string;
+      address: string;
+      recipientAddress: string;
+      transferAmount: string;
+      balanceAfterTransfer: string;
+      insufficientBalance: string;
+      pleaseEnterRecipient: string;
+      amountMustBePositive: string;
+      insufficientBalanceError: string;
+      transferFailed: string;
+      signingTransaction: string;
+      transferSuccess: string;
+      pendingTransactions: string;
+      txId: string;
+      from: string;
+      ops: string;
+    };
+
+    // Network (expanded)
+    networkExpanded: {
+      p2pNetwork: string;
+      mode: string;
+      status: string;
+      peers: string;
+      connected: string;
+      disconnected: string;
+      mainnetSignalingServer: string;
+      localSignalingServer: string;
+      seconds: string;
+      enabled: string;
+      disabled: string;
+      role: string;
+      delegator: string;
+      workerNode: string;
+      activeRanges: string;
+      totalNodes: string;
+    };
+
+    // Storage (expanded)
+    storageExpanded: {
+      lightNodeStatus: string;
+      lightNodeWindow: string;
+      storedBlocks: string;
+      earliestBlockHeight: string;
+      latestBlockHeight: string;
+      storageReduction: string;
+      clearPrunedBlocks: string;
+      verifyLatestSnapshot: string;
+      fetchRemoteSnapshot: string;
+      remoteSnapshotNotEnabled: string;
+      fetchingRemoteSnapshot: string;
+      remoteSnapshotSynced: string;
+      reloadToApply: string;
+      failedToFetchRemoteSnapshot: string;
+      blocks: string;
+      extremePruning: string;
+    };
+
+    // Advanced (expanded)
+    advancedExpanded: {
+      difficultyStatus: string;
+      currentDifficulty: string;
+      targetBlockTime: string;
+      blocksUntilAdjustment: string;
+      averageBlockTime: string;
+      difficultyChange: string;
+      difficultyExplanation: string;
+    };
+
+    // Common (expanded)
+    commonExpanded: {
+      seconds: string;
+      unknown: string;
     };
 
 
@@ -667,6 +805,8 @@ export const translations: Record<Locale, Translations> = {
       storage: "💾 存储",
       advanced: "⚙️ 高级",
       token: "🪙 代币",
+      privacy: "🔒 隐私",
+      tools: "🔧 工具",
     },
     banner: {
       systemReady: "系统就绪，可以开始挖矿",
@@ -729,6 +869,128 @@ export const translations: Record<Locale, Translations> = {
       nodeIdentity: "节点身份",
       connectedPeers: "已连接节点",
       connectedTo: "已连接到",
+      localInstanceStatus: "本地实例状态",
+      role: "角色",
+      leader: "主节点 (LEADER)",
+      follower: "跟随节点 (FOLLOWER)",
+      leaderInstance: "Leader 实例",
+      waitingForPeerConnections: "等待对等节点连接",
+      waitingForPeerConnectionsDesc: "当前已连接到信令服务器，但还没有对等节点连接（{count} 个对等节点）。系统正在自动请求对等节点...",
+      waitingForPeerConnectionsTip: "💡 提示：如果有其他节点在线，它们会自动连接。如果没有其他节点，您可以开始挖矿，您的节点将成为网络的一部分。",
+      leaderHeight: "Leader 高度",
+      followerReadOnly: "⚠️ 当前实例为只读模式。如需挖矿，请先在其他实例中关闭挖矿或关闭页面。",
+      syncedToLatest: "已同步到最新高度",
+    },
+    tools: {
+      title: "🔧 工具",
+      description: "用于处理本地存储引起的问题和链数据管理",
+      storageInformation: "📊 存储信息",
+      chainBlocks: "链区块数据:",
+      snapshotsMetadata: "快照元数据:",
+      snapshots: "快照数据 ({count}):",
+      total: "总计:",
+      chainDataManagement: "⛓️ 链数据管理",
+      resetChain: "重置链",
+      resetChainDesc: "清除所有链数据和快照，然后从创世区块重新开始。用于修复链状态损坏或数据不一致问题。",
+      resetChainButton: "🔄 重置链",
+      clearSnapshots: "清除快照",
+      clearSnapshotsDesc: "仅清除快照数据，保留链区块数据。下次启动时会从创世区块重建状态。",
+      clearSnapshotsConfirm: "确定要清除所有快照吗？下次启动时会从创世区块重建状态。",
+      clearSnapshotsButton: "🗑️ 清除快照",
+      clearSnapshotsSuccess: "✅ 所有快照已清除。下次启动时会从创世区块重建状态。",
+      commonIssues: "🔍 常见问题修复",
+      insufficientBalanceError: "余额不足错误",
+      insufficientBalanceErrorDesc: "如果遇到 'Insufficient balance' 错误，通常表示链状态损坏或快照不一致。点击下面的按钮清除所有数据并重新开始。",
+      fixBalanceError: "修复余额错误",
+      initializationError: "初始化错误",
+      initializationErrorDesc: "如果遇到链初始化错误，通常表示链数据损坏。点击下面的按钮清除所有数据并重新开始。",
+      fixInitializationError: "修复初始化错误",
+      storageCleanup: "🗑️ 存储清理",
+      clearAllData: "清除所有数据",
+      clearAllDataDesc: "清除所有链数据、快照和应用状态。这将完全重置应用，所有数据将丢失。",
+      clearAllDataConfirm: "确定要清除所有数据吗？这将完全重置应用，所有数据将丢失。此操作不可逆！",
+      clearAllDataButton: "🗑️ 清除所有数据",
+      clearAllDataSuccess: "✅ 所有数据已清除。页面将重新加载。",
+      cleanUnusedStorage: "🧹 清理未使用的存储",
+      cleanUnusedStorageDesc: "检查并清理未使用的本地存储数据。这不会影响链数据。",
+      noUnusedStorage: "没有发现未使用的存储数据。",
+      foundUnusedStorage: "发现 {count} 个非链相关的存储项。是否清除？",
+      clearedUnusedStorage: "✅ 已清除 {count} 个存储项。",
+      warning: "警告",
+      warningDesc: "这些操作会永久删除数据。请确保您了解操作的后果。建议在执行前备份重要数据。",
+      prunedOldBlocks: "已清除旧区块",
+      leaderHeight: "Leader 高度",
+      followerReadOnly: "⚠️ 当前实例为只读模式。如需挖矿，请先在其他实例中关闭挖矿或关闭页面。",
+    },
+    privacy: {
+      title: "🔒 隐私",
+    },
+    transactionsExpanded: {
+      currentBalance: "当前余额",
+      address: "地址",
+      recipientAddress: "收款地址",
+      transferAmount: "转账金额",
+      balanceAfterTransfer: "转账后余额",
+      insufficientBalance: "余额不足",
+      pleaseEnterRecipient: "请输入收款地址和金额",
+      amountMustBePositive: "金额必须是正数",
+      insufficientBalanceError: "余额不足。当前余额: {current} IDC，转账金额: {amount} IDC",
+      transferFailed: "添加转账交易失败（可能是重复交易或无效交易）",
+      signingTransaction: "正在使用私钥签名交易...",
+      transferSuccess: "转账交易已创建并广播！金额: {amount} IDC，接收者: {recipient}...",
+      pendingTransactions: "⏳ 待处理交易",
+      txId: "TxID:",
+      from: "From:",
+      ops: "Ops:",
+    },
+    networkExpanded: {
+      p2pNetwork: "🌐 P2P Network",
+      mode: "Mode:",
+      status: "Status:",
+      peers: "Peers:",
+      connected: "Connected",
+      disconnected: "Disconnected",
+      mainnetSignalingServer: "主网信令服务器 (wss://...)",
+      localSignalingServer: "本地信令服务器 (ws://localhost:8080)",
+      seconds: "秒",
+      enabled: "已启用",
+      disabled: "已禁用",
+      role: "角色",
+      delegator: "委托者",
+      workerNode: "工作节点",
+      activeRanges: "活跃范围",
+      totalNodes: "总节点数",
+    },
+    storageExpanded: {
+      lightNodeStatus: "💡 Light Node Status",
+      lightNodeWindow: "Light Node Window:",
+      storedBlocks: "Stored Blocks:",
+      earliestBlockHeight: "Earliest Block Height:",
+      latestBlockHeight: "Latest Block Height:",
+      storageReduction: "Storage Reduction:",
+      clearPrunedBlocks: "Clear Pruned Blocks",
+      verifyLatestSnapshot: "Verify Latest Snapshot",
+      fetchRemoteSnapshot: "Fetch Remote Snapshot",
+      remoteSnapshotNotEnabled: "Remote snapshot sync is not enabled. Please configure remoteSnapshotEndpoints in chain params.",
+      fetchingRemoteSnapshot: "Fetching remote snapshot...",
+      remoteSnapshotSynced: "✅ Remote snapshot synced successfully from height {height}!",
+      reloadToApply: "Remote snapshot downloaded. Reload page to apply it?",
+      failedToFetchRemoteSnapshot: "❌ Failed to fetch remote snapshot from any configured source.",
+      blocks: "blocks",
+      extremePruning: "(Extreme Pruning - Phase 15)",
+    },
+    advancedExpanded: {
+      difficultyStatus: "⚙️ Difficulty Status",
+      currentDifficulty: "Current Difficulty:",
+      targetBlockTime: "Target Block Time:",
+      blocksUntilAdjustment: "Blocks Until Adjustment:",
+      averageBlockTime: "Average Block Time:",
+      difficultyChange: "Difficulty Change:",
+      difficultyExplanation: "Difficulty Explanation:",
+    },
+    commonExpanded: {
+      seconds: "秒",
+      unknown: "Unknown",
     },
   },
   en: {
@@ -1014,6 +1276,8 @@ export const translations: Record<Locale, Translations> = {
       storage: "💾 Storage",
       advanced: "⚙️ Advanced",
       token: "🪙 Token",
+      privacy: "🔒 Privacy",
+      tools: "🔧 Tools",
     },
     banner: {
       systemReady: "System ready, can start mining",
@@ -1076,6 +1340,128 @@ export const translations: Record<Locale, Translations> = {
       nodeIdentity: "Node Identity",
       connectedPeers: "Connected Peers",
       connectedTo: "Connected to",
+      localInstanceStatus: "Local Instance Status",
+      role: "Role",
+      leader: "Leader",
+      follower: "Follower",
+      leaderInstance: "Leader Instance",
+      waitingForPeerConnections: "Waiting for peer connections",
+      waitingForPeerConnectionsDesc: "Connected to signaling server, but no peers yet ({count} peer(s)). System is automatically requesting peers...",
+      waitingForPeerConnectionsTip: "💡 Tip: If other nodes are online, they will connect automatically. If no other nodes exist, you can start mining and your node will become part of the network.",
+      leaderHeight: "Leader Height",
+      followerReadOnly: "⚠️ Current instance is read-only. To mine, please stop mining on other instances or close their pages.",
+      syncedToLatest: "Synced to latest height",
+    },
+    tools: {
+      title: "🔧 Tools",
+      description: "Tools for handling local storage issues and chain data management",
+      storageInformation: "📊 Storage Information",
+      chainBlocks: "Chain Blocks:",
+      snapshotsMetadata: "Snapshots Metadata:",
+      snapshots: "Snapshots ({count}):",
+      total: "Total:",
+      chainDataManagement: "⛓️ Chain Data Management",
+      resetChain: "Reset Chain",
+      resetChainDesc: "Clear all chain data and snapshots, then start fresh from genesis block. Use this to fix chain state corruption or data inconsistency issues.",
+      resetChainButton: "🔄 Reset Chain",
+      clearSnapshots: "Clear Snapshots",
+      clearSnapshotsDesc: "Clear only snapshot data, keeping chain blocks. State will be rebuilt from genesis on next startup.",
+      clearSnapshotsConfirm: "Clear all snapshots? Next startup will rebuild from genesis.",
+      clearSnapshotsButton: "🗑️ Clear Snapshots",
+      clearSnapshotsSuccess: "✅ All snapshots cleared. Next startup will rebuild from genesis.",
+      commonIssues: "🔍 Common Issues & Fixes",
+      insufficientBalanceError: "Insufficient Balance Error",
+      insufficientBalanceErrorDesc: "If you encounter 'Insufficient balance' errors, it usually means chain state corruption or snapshot inconsistency. Click the button below to clear all data and start fresh.",
+      fixBalanceError: "Fix Balance Error",
+      initializationError: "Initialization Error",
+      initializationErrorDesc: "If you encounter chain initialization errors, it usually means chain data corruption. Click the button below to clear all data and start fresh.",
+      fixInitializationError: "Fix Initialization Error",
+      storageCleanup: "🗑️ Storage Cleanup",
+      clearAllData: "Clear All Data",
+      clearAllDataDesc: "Clear all chain data, snapshots, and application state. This will completely reset the application and all data will be lost.",
+      clearAllDataConfirm: "Clear all data? This will completely reset the application and all data will be lost. This action is irreversible!",
+      clearAllDataButton: "🗑️ Clear All Data",
+      clearAllDataSuccess: "✅ All data cleared. Page will reload.",
+      cleanUnusedStorage: "🧹 Clean Unused Storage",
+      cleanUnusedStorageDesc: "Check and clean up unused local storage data. This won't affect chain data.",
+      noUnusedStorage: "No unused storage data found.",
+      foundUnusedStorage: "Found {count} non-chain storage items. Clear them?",
+      clearedUnusedStorage: "✅ Cleared {count} storage items.",
+      warning: "Warning",
+      warningDesc: "These operations will permanently delete data. Make sure you understand the consequences. It's recommended to backup important data before proceeding.",
+      prunedOldBlocks: "Pruned old blocks",
+      leaderHeight: "Leader Height",
+      followerReadOnly: "⚠️ Current instance is read-only. To mine, please stop mining on other instances or close their pages.",
+    },
+    privacy: {
+      title: "🔒 Privacy",
+    },
+    transactionsExpanded: {
+      currentBalance: "Current Balance",
+      address: "Address",
+      recipientAddress: "Recipient Address",
+      transferAmount: "Transfer Amount",
+      balanceAfterTransfer: "Balance after transfer",
+      insufficientBalance: "Insufficient balance",
+      pleaseEnterRecipient: "Please enter recipient address and amount",
+      amountMustBePositive: "Amount must be a positive number",
+      insufficientBalanceError: "Insufficient balance. Current: {current} IDC, Transfer: {amount} IDC",
+      transferFailed: "Failed to add transfer transaction (may be duplicate or invalid)",
+      signingTransaction: "Signing transaction with your private key...",
+      transferSuccess: "Transfer transaction created and broadcast! Amount: {amount} IDC, Recipient: {recipient}...",
+      pendingTransactions: "⏳ Pending Transactions",
+      txId: "TxID:",
+      from: "From:",
+      ops: "Ops:",
+    },
+    networkExpanded: {
+      p2pNetwork: "🌐 P2P Network",
+      mode: "Mode:",
+      status: "Status:",
+      peers: "Peers:",
+      connected: "Connected",
+      disconnected: "Disconnected",
+      mainnetSignalingServer: "Mainnet Signaling Server (wss://...)",
+      localSignalingServer: "Local Signaling Server (ws://localhost:8080)",
+      seconds: "s",
+      enabled: "Enabled",
+      disabled: "Disabled",
+      role: "Role",
+      delegator: "Delegator",
+      workerNode: "Worker Node",
+      activeRanges: "Active Ranges",
+      totalNodes: "Total Nodes",
+    },
+    storageExpanded: {
+      lightNodeStatus: "💡 Light Node Status",
+      lightNodeWindow: "Light Node Window:",
+      storedBlocks: "Stored Blocks:",
+      earliestBlockHeight: "Earliest Block Height:",
+      latestBlockHeight: "Latest Block Height:",
+      storageReduction: "Storage Reduction:",
+      clearPrunedBlocks: "Clear Pruned Blocks",
+      verifyLatestSnapshot: "Verify Latest Snapshot",
+      fetchRemoteSnapshot: "Fetch Remote Snapshot",
+      remoteSnapshotNotEnabled: "Remote snapshot sync is not enabled. Please configure remoteSnapshotEndpoints in chain params.",
+      fetchingRemoteSnapshot: "Fetching remote snapshot...",
+      remoteSnapshotSynced: "✅ Remote snapshot synced successfully from height {height}!",
+      reloadToApply: "Remote snapshot downloaded. Reload page to apply it?",
+      failedToFetchRemoteSnapshot: "❌ Failed to fetch remote snapshot from any configured source.",
+      blocks: "blocks",
+      extremePruning: "(Extreme Pruning - Phase 15)",
+    },
+    advancedExpanded: {
+      difficultyStatus: "⚙️ Difficulty Status",
+      currentDifficulty: "Current Difficulty:",
+      targetBlockTime: "Target Block Time:",
+      blocksUntilAdjustment: "Blocks Until Adjustment:",
+      averageBlockTime: "Average Block Time:",
+      difficultyChange: "Difficulty Change:",
+      difficultyExplanation: "Difficulty Explanation:",
+    },
+    commonExpanded: {
+      seconds: "s",
+      unknown: "Unknown",
     },
   },
 };

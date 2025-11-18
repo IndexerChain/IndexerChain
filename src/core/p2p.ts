@@ -56,7 +56,11 @@ export type P2PMessageType =
   // Phase 31: Mainnet Stability - Long-range detection and height consensus
   | "CHECKPOINT_REQUEST" // Request checkpoint state commitment at specific height
   | "CHECKPOINT_RESPONSE" // Response with checkpoint state commitment
-  | "HEIGHT_VOTE"; // Broadcast height vote for consensus
+  | "HEIGHT_VOTE" // Broadcast height vote for consensus
+  // Phase 32: Bootstrap Sync Protocol
+  | "REQUEST_BOOTSTRAP" // Request bootstrap data (latest height, header, snapshot meta)
+  | "BOOTSTRAP_RESPONSE" // Response with bootstrap data
+  | "ROOT_TIP_UPDATE"; // Root node broadcasts latest tip update
 
 /**
  * P2P message structure
@@ -169,7 +173,15 @@ export class BrowserP2PNode implements P2PNode {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            this.handleSignalingMessage(message);
+            console.log(`[P2P] Received signaling message:`, message.type, message);
+            
+            // Phase 32: Check if this is a BOOTSTRAP_RESPONSE and handle it directly
+            if (message.type === 'BOOTSTRAP_RESPONSE') {
+              console.log(`[Phase 32] Direct handling of BOOTSTRAP_RESPONSE from WebSocket`);
+              this.handleSignalingMessage(message);
+            } else {
+              this.handleSignalingMessage(message);
+            }
           } catch (error) {
             console.error("Failed to parse signaling message:", error);
           }
@@ -329,8 +341,21 @@ export class BrowserP2PNode implements P2PNode {
    */
   private sendSignalingMessage(message: any): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log(`[P2P] Sending signaling message:`, message.type, message);
       this.ws.send(JSON.stringify(message));
+    } else {
+      console.warn(`[P2P] Cannot send signaling message: WebSocket not open (readyState: ${this.ws?.readyState})`);
     }
+  }
+
+  /**
+   * Phase 32: Send message to signaling server (for bootstrap requests)
+   */
+  sendToSignalServer(type: string, payload: any): void {
+    this.sendSignalingMessage({
+      type,
+      ...payload,
+    });
   }
 
   /**
@@ -361,6 +386,37 @@ export class BrowserP2PNode implements P2PNode {
       case "ice-candidate":
         // Received ICE candidate
         this.handleIceCandidate(message.from, message.candidate);
+        break;
+
+      // Phase 32: Handle bootstrap response from signal server
+      case "BOOTSTRAP_RESPONSE":
+        console.log(`[Phase 32] Received BOOTSTRAP_RESPONSE from signal server:`, {
+          latestHeight: message.latestHeight,
+          hasHeader: !!message.latestHeader,
+          hasSnapshotMeta: !!message.latestSnapshotMeta,
+          recentHeadersCount: message.recentHeaders?.length || 0
+        });
+        // Forward to message handlers
+        const handlers = this.messageHandlers.get("BOOTSTRAP_RESPONSE");
+        if (handlers && handlers.size > 0) {
+          console.log(`[Phase 32] Forwarding BOOTSTRAP_RESPONSE to ${handlers.size} handler(s)`);
+          for (const handler of handlers) {
+            handler(message, "signal-server");
+          }
+        } else {
+          console.warn(`[Phase 32] No handlers registered for BOOTSTRAP_RESPONSE`);
+        }
+        break;
+
+      // Phase 32: Handle root tip update from signal server
+      case "ROOT_TIP_UPDATE":
+        // Forward to message handlers
+        const tipHandlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
+        if (tipHandlers) {
+          for (const handler of tipHandlers) {
+            handler(message, "signal-server");
+          }
+        }
         break;
 
       default:
@@ -521,6 +577,14 @@ export class BrowserP2PNode implements P2PNode {
       
       // Phase 30: Send network handshake when data channel opens
       // This will be handled by App.tsx after P2P connection is established
+      
+      // Phase 32: Notify that a peer connected (for executing pending block requests)
+      if (typeof window !== "undefined") {
+        // Dispatch a custom event to notify App.tsx that a peer connected
+        window.dispatchEvent(new CustomEvent('peer-connected', { 
+          detail: { peerId: peerInfo.id, peerCount: this.getPeerCount() }
+        }));
+      }
     };
 
     dataChannel.onmessage = (event) => {
