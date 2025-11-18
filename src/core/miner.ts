@@ -58,12 +58,14 @@ export async function mineBlock(
   const allBlocks = chainContext.storage.getAllBlocks();
 
   // Phase 7: Build candidate block (with coinbase and dynamic difficulty)
+  // Phase 15: Pass current IndexState for stateCommitment calculation
   const block = await buildCandidateBlock(
     pendingTxs,
     prevBlock,
     allBlocks,
     chainContext.params,
-    minerAddress as any
+    minerAddress as any,
+    chainContext.indexState
   );
 
   // Phase 6: Use dynamic difficulty from block header
@@ -135,12 +137,14 @@ export async function mineBlockWithCancel(
   const allBlocks = chainContext.storage.getAllBlocks();
 
   // Phase 7: Build candidate block (with coinbase and dynamic difficulty)
+  // Phase 15: Pass current IndexState for stateCommitment calculation
   const block = await buildCandidateBlock(
     pendingTxs,
     prevBlock,
     allBlocks,
     chainContext.params,
-    minerAddress as any
+    minerAddress as any,
+    chainContext.indexState
   );
 
   // Phase 6: Use dynamic difficulty from block header

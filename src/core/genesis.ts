@@ -7,6 +7,8 @@
 import type { Block, BlockHeader, ChainParams, Tx } from "./types.js";
 import { hashBlockHeader } from "./crypto.js";
 import { calcMerkleRoot } from "./merkle.js";
+import { IndexState } from "./indexState.js";
+import { computeSnapshotStateHash } from "./snapshotVerify.js";
 
 /**
  * Create the genesis block
@@ -26,6 +28,17 @@ export async function createGenesisBlock(
   const txIds: string[] = [];
   const merkleRoot = await calcMerkleRoot(txIds);
 
+  // Phase 15: Compute stateCommitment for genesis (empty state)
+  let stateCommitment: string | undefined;
+  try {
+    const emptyState = IndexState.createEmpty();
+    const emptySnapshot = emptyState.toSnapshot();
+    stateCommitment = await computeSnapshotStateHash(emptySnapshot);
+  } catch (error) {
+    console.error(`[Phase 15] Failed to compute genesis stateCommitment:`, error);
+    // Continue without stateCommitment for backward compatibility
+  }
+
   const header: BlockHeader = {
     version: params.version,
     height: 0,
@@ -34,6 +47,7 @@ export async function createGenesisBlock(
     timestamp: params.genesisTimestamp,
     difficulty: params.initialDifficulty,
     nonce: 0,
+    stateCommitment, // Phase 15: State commitment for empty state
   };
 
   // Calculate block hash

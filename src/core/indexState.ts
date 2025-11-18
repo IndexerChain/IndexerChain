@@ -102,6 +102,39 @@ export class IndexState {
   }
 
   /**
+   * Phase 16: Get total minted IDC (in uIDC)
+   * Stored in "system" namespace, key "total_minted"
+   */
+  getTotalMinted(): bigint {
+    const totalMintedStr = this.get("system", "total_minted");
+    if (!totalMintedStr) return 0n;
+    try {
+      return BigInt(totalMintedStr);
+    } catch {
+      return 0n;
+    }
+  }
+
+  /**
+   * Phase 16: Set total minted IDC (in uIDC)
+   * Stored in "system" namespace, key "total_minted"
+   */
+  setTotalMinted(amount: bigint): void {
+    const nsMap = this.state.get("system") || new Map<string, string>();
+    nsMap.set("total_minted", amount.toString());
+    this.state.set("system", nsMap);
+  }
+
+  /**
+   * Phase 16: Increment total minted IDC
+   * Used when minting new coins (coinbase reward)
+   */
+  incrementTotalMinted(amount: bigint): void {
+    const current = this.getTotalMinted();
+    this.setTotalMinted(current + amount);
+  }
+
+  /**
    * Get all keys in a namespace
    */
   getNamespaceKeys(namespace: string): string[] {
@@ -208,24 +241,30 @@ export class IndexState {
   /**
    * Apply a transfer operation
    * Phase 7: Transfer IDC from one address to another
+   * Phase 15: System address (idc_system) can transfer without balance check (for coinbase rewards)
    * 
    * @param from Sender address
    * @param to Recipient address
    * @param amount Amount to transfer in IDC
-   * @throws Error if insufficient balance
+   * @throws Error if insufficient balance (except for system address)
    */
   private applyTransfer(from: Address, to: Address, amount: number): void {
     if (amount <= 0) {
       throw new Error("Transfer amount must be positive");
     }
 
-    const fromBalance = this.getBalance(from);
-    if (fromBalance < amount) {
-      throw new Error(`Insufficient balance: ${fromBalance} < ${amount}`);
+    // Phase 15: System address can transfer without balance check (coinbase rewards)
+    const isSystemAddress = from === "idc_system";
+    
+    if (!isSystemAddress) {
+      const fromBalance = this.getBalance(from);
+      if (fromBalance < amount) {
+        throw new Error(`Insufficient balance: ${fromBalance} < ${amount}`);
+      }
+      // Deduct from sender (only for non-system addresses)
+      this.setBalance(from, fromBalance - amount);
     }
-
-    // Deduct from sender
-    this.setBalance(from, fromBalance - amount);
+    // For system address, we don't deduct (it's a reward, not a transfer from existing balance)
 
     // Add to recipient
     const toBalance = this.getBalance(to);

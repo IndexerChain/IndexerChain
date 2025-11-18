@@ -15,6 +15,7 @@ import {
   estimateUncompressedSize,
 } from "./snapshotCompress.js";
 import { computeDelta, applyDelta } from "./snapshotDelta.js";
+import { computeSnapshotStateHash } from "./snapshotVerify.js";
 
 // Storage keys
 const SNAPSHOTS_META_KEY = "indexerchain_snapshots_meta_v1";
@@ -50,7 +51,7 @@ export function loadAllSnapshotMeta(): SnapshotMeta[] {
 /**
  * Save snapshot metadata list to localStorage
  */
-function saveAllSnapshotMeta(metas: SnapshotMeta[]): void {
+export function saveAllSnapshotMeta(metas: SnapshotMeta[]): void {
   if (typeof localStorage === "undefined") {
     return;
   }
@@ -102,7 +103,10 @@ export async function loadSnapshotByHeight(height: number): Promise<SnapshotData
           full: true,
         };
       } catch (error) {
-        console.error(`Failed to decompress snapshot at height ${height}:`, error);
+        console.error(`[Phase 13] Failed to decompress snapshot at height ${height}:`, error);
+        // Phase 13: Auto-repair corrupted snapshot
+        console.warn(`[Phase 13] Snapshot at height ${height} is corrupted (decompression failed), deleting...`);
+        deleteSnapshotByHeight(height);
         return null;
       }
     }
@@ -118,7 +122,10 @@ export async function loadSnapshotByHeight(height: number): Promise<SnapshotData
           full: true, // Legacy compressed snapshots are treated as full
         };
       } catch (error) {
-        console.error(`Failed to decompress snapshot at height ${height}:`, error);
+        console.error(`[Phase 13] Failed to decompress snapshot at height ${height}:`, error);
+        // Phase 13: Auto-repair corrupted snapshot
+        console.warn(`[Phase 13] Snapshot at height ${height} is corrupted (decompression failed), deleting...`);
+        deleteSnapshotByHeight(height);
         return null;
       }
     }
@@ -238,7 +245,8 @@ export async function saveSnapshot(
   blockHash: string,
   indexStateSnapshot?: any,
   deltaOperations?: Operation[],
-  isFull: boolean = true
+  isFull: boolean = true,
+  stateCommitment?: string // Phase 15: State commitment from block header
 ): Promise<SnapshotMeta> {
   // Create snapshot metadata
   const meta: SnapshotMeta = {
@@ -250,12 +258,15 @@ export async function saveSnapshot(
   };
 
   let snapshotData: SnapshotData;
+  let fullStateSnapshot: any; // For hash computation
 
   if (isFull) {
     // Phase 12: Full snapshot
     if (!indexStateSnapshot) {
       throw new Error("Full snapshot requires indexStateSnapshot");
     }
+
+    fullStateSnapshot = indexStateSnapshot;
 
     // Phase 11: Compress snapshot data
     let compressedData: string;
@@ -278,6 +289,29 @@ export async function saveSnapshot(
       throw new Error("Delta snapshot requires deltaOperations");
     }
 
+    // For delta snapshots, we need to reconstruct the full state to compute hash
+    // Find the nearest full snapshot and apply deltas
+    const fullSnapMeta = findNearestFullSnapshot(height - 1);
+    if (!fullSnapMeta) {
+      throw new Error(`Cannot create delta snapshot: no full snapshot found before height ${height}`);
+    }
+
+    const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
+    if (!fullSnap || !fullSnap.indexState) {
+      throw new Error(`Failed to load full snapshot at height ${fullSnapMeta.height}`);
+    }
+
+    // Reconstruct full state by applying delta operations
+    const { IndexState } = await import("./indexState.js");
+    const restoredState = IndexState.fromSnapshot(fullSnap.indexState);
+    
+    // Apply delta operations
+    for (const op of deltaOperations) {
+      restoredState.applyOperation(op, undefined); // ownerAddress not needed here
+    }
+
+    fullStateSnapshot = restoredState.toSnapshot();
+
     // Compress delta operations
     let compressedDelta: string;
     try {
@@ -293,6 +327,39 @@ export async function saveSnapshot(
       full: false,
       delta: compressedDelta,
     };
+  }
+
+  // Phase 13: Compute state hash and size information
+  // Phase 15: Save stateCommitment from block header
+  try {
+    const stateHash = await computeSnapshotStateHash(fullStateSnapshot);
+    meta.stateHash = stateHash;
+    
+    // Phase 15: Save stateCommitment if provided
+    if (stateCommitment) {
+      meta.stateCommitment = stateCommitment;
+      
+      // Verify that stateCommitment matches stateHash
+      if (stateHash !== stateCommitment) {
+        console.warn(`[Phase 15] State commitment mismatch at height ${height}: stateHash=${stateHash.substring(0, 16)}..., stateCommitment=${stateCommitment.substring(0, 16)}...`);
+        // Still save, but log warning
+      }
+    }
+
+    // Calculate sizes
+    if (snapshotData.compressed) {
+      if (snapshotData.data) {
+        meta.compressedSize = snapshotData.data.length;
+        meta.uncompressedSize = estimateUncompressedSize(snapshotData.data);
+      } else if (snapshotData.delta) {
+        meta.compressedSize = snapshotData.delta.length;
+        // For delta, estimate based on operations count
+        meta.uncompressedSize = deltaOperations ? deltaOperations.length * 100 : 0; // Rough estimate
+      }
+    }
+  } catch (error) {
+    console.error(`[Phase 13] Failed to compute snapshot hash at height ${height}:`, error);
+    // Don't fail snapshot creation if hash computation fails
   }
 
   // Save snapshot data

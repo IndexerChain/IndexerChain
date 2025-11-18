@@ -13,6 +13,8 @@
 
 /**
  * Worker command from main thread
+ * 
+ * Phase 18: Added nonceStart and nonceEnd for cluster mining
  */
 type MinerWorkerCommand =
   | {
@@ -20,11 +22,15 @@ type MinerWorkerCommand =
       candidateBlock: any; // Block with nonce=0, ready for mining
       difficulty: number; // Difficulty from block header
       maxIterations?: number; // Optional: max iterations per batch
+      nonceStart?: number; // Phase 18: Starting nonce (default: 0)
+      nonceEnd?: number; // Phase 18: Ending nonce (default: unlimited)
     }
   | { type: "STOP" };
 
 /**
  * Worker event to main thread
+ * 
+ * Phase 18: Added "exhausted" reason for nonce range exhaustion
  */
 type MinerWorkerEvent =
   | {
@@ -44,7 +50,7 @@ type MinerWorkerEvent =
     }
   | {
       type: "STOPPED";
-      reason: "user" | "replaced" | "error";
+      reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
       errorMessage?: string;
     };
 
@@ -94,6 +100,8 @@ let isRunning: boolean = false;
 let hashesTried: number = 0;
 let startedAt: number = 0;
 let nonce: number = 0;
+let nonceStart: number = 0; // Phase 18: Starting nonce
+let nonceEnd: number | null = null; // Phase 18: Ending nonce (null = unlimited)
 
 // Progress reporting interval (report every N hashes or every M ms)
 const PROGRESS_INTERVAL_HASHES = 20000; // Report every 20k hashes
@@ -110,6 +118,17 @@ async function miningLoop(): Promise<void> {
 
   try {
     while (isRunning && currentBlock) {
+      // Phase 18: Check if nonce range is exhausted
+      if (nonceEnd !== null && nonce >= nonceEnd) {
+        // Nonce range exhausted, request new range
+        isRunning = false;
+        self.postMessage({
+          type: "STOPPED",
+          reason: "exhausted",
+        } as MinerWorkerEvent);
+        return;
+      }
+
       // Update nonce
       currentBlock.header.nonce = nonce;
 
@@ -192,7 +211,10 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
     isRunning = true;
     hashesTried = 0;
     startedAt = Date.now();
-    nonce = 0;
+    // Phase 18: Use nonceStart if provided, otherwise start from 0
+    nonceStart = command.nonceStart ?? 0;
+    nonceEnd = command.nonceEnd ?? null; // null means unlimited
+    nonce = nonceStart;
     lastProgressTime = startedAt;
 
     // Start mining loop

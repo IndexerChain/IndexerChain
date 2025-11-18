@@ -14,14 +14,39 @@
 
 /**
  * P2P message types
+ * 
+ * Phase 17: Added fast block relay messages
+ * Phase 19: Added distributed miner pool messages
  */
 export type P2PMessageType =
   | "NEW_TX"
   | "NEW_BLOCK"
+  | "NEW_BLOCK_HEADER" // Phase 17: Fast header broadcast
   | "REQUEST_BLOCKS"
+  | "REQUEST_BLOCK_BODY" // Phase 17: Request block body by hash
   | "BLOCKS"
+  | "BLOCK_BODY" // Phase 17: Block body response
   | "PING"
-  | "PONG";
+  | "PONG"
+  // Phase 19: Distributed miner pool messages
+  | "WORKER_INFO" // Worker capability information
+  | "REQUEST_NONCE_RANGE" // Request nonce range from delegator
+  | "NONCE_RANGE" // Allocated nonce range response
+  | "WORKER_PROGRESS" // Worker progress report
+  | "NONCE_RANGE_EXHAUSTED" // Worker exhausted its range
+  | "DELEGATOR_ANNOUNCE" // Delegator announcement
+  | "DELEGATOR_HEARTBEAT" // Delegator heartbeat
+  // Phase 20: Global Snapshot Network messages
+  | "REQUEST_SNAPSHOT_META" // Request snapshot metadata list
+  | "SNAPSHOT_META" // Response with snapshot metadata
+  | "REQUEST_SNAPSHOT" // Request specific snapshot download
+  | "SNAPSHOT_CHUNK" // Snapshot data chunk
+  | "SNAPSHOT_DONE" // Snapshot download complete
+  | "GOSSIP_SNAPSHOT_META" // Gossip snapshot metadata
+  // Phase 22: Fast Finality Layer messages
+  | "REQUEST_FINALITY" // Request finality certificate for a block
+  | "FINALITY_VOTE" // Finality vote from committee member
+  | "FINALITY_CERT"; // Finality certificate (>= 2/3 votes)
 
 /**
  * P2P message structure

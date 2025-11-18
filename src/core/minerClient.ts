@@ -10,6 +10,8 @@ import type { Block } from "./types.js";
 
 /**
  * Worker command types (defined inline to avoid import issues)
+ * 
+ * Phase 18: Added nonceStart and nonceEnd for cluster mining
  */
 type MinerWorkerCommand =
   | {
@@ -17,11 +19,15 @@ type MinerWorkerCommand =
       candidateBlock: Block;
       difficulty: number;
       maxIterations?: number;
+      nonceStart?: number; // Phase 18: Starting nonce
+      nonceEnd?: number; // Phase 18: Ending nonce
     }
   | { type: "STOP" };
 
 /**
  * Worker event types (defined inline to avoid import issues)
+ * 
+ * Phase 18: Added "exhausted" reason
  */
 type MinerWorkerEvent =
   | {
@@ -41,7 +47,7 @@ type MinerWorkerEvent =
     }
   | {
       type: "STOPPED";
-      reason: "user" | "replaced" | "error";
+      reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
       errorMessage?: string;
     };
 
@@ -68,9 +74,11 @@ export type MinerFoundHandler = (event: {
 
 /**
  * Stopped event handler
+ * 
+ * Phase 18: Added "exhausted" reason
  */
 export type MinerStoppedHandler = (event: {
-  reason: "user" | "replaced" | "error";
+  reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
   errorMessage?: string;
 }) => void;
 
@@ -161,6 +169,7 @@ export class MinerClient {
       case "STOPPED":
         this.isMining = false;
         this.stopStatsUpdate();
+        // Phase 18: If exhausted, we'll handle it in cluster
         // Notify all stopped handlers
         this.stoppedHandlers.forEach((handler) => handler(event));
         break;
@@ -204,10 +213,14 @@ export class MinerClient {
 
   /**
    * Start mining
+   * 
+   * Phase 18: Added nonceStart and nonceEnd parameters for cluster mining
    */
   startMining(args: {
     candidateBlock: Block;
     difficulty: number;
+    nonceStart?: bigint | number; // Phase 18: Starting nonce
+    nonceEnd?: bigint | number; // Phase 18: Ending nonce
     onProgress?: MinerProgressHandler;
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
@@ -230,10 +243,14 @@ export class MinerClient {
 
   /**
    * Internal start mining implementation
+   * 
+   * Phase 18: Added nonceStart and nonceEnd support
    */
   private doStartMining(args: {
     candidateBlock: Block;
     difficulty: number;
+    nonceStart?: bigint | number; // Phase 18: Starting nonce
+    nonceEnd?: bigint | number; // Phase 18: Ending nonce
     onProgress?: MinerProgressHandler;
     onFound?: MinerFoundHandler;
     onStopped?: MinerStoppedHandler;
@@ -263,6 +280,9 @@ export class MinerClient {
       type: "START",
       candidateBlock: args.candidateBlock,
       difficulty: args.difficulty,
+      // Phase 18: Convert bigint to number (nonce is stored as number in worker)
+      nonceStart: args.nonceStart !== undefined ? Number(args.nonceStart) : undefined,
+      nonceEnd: args.nonceEnd !== undefined ? Number(args.nonceEnd) : undefined,
     };
 
     this.worker.postMessage(command);
@@ -296,6 +316,33 @@ export class MinerClient {
    */
   getStats(): MinerStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Add progress handler
+   * 
+   * Phase 18: Added for cluster mining support
+   */
+  onProgress(handler: MinerProgressHandler): void {
+    this.progressHandlers.add(handler);
+  }
+
+  /**
+   * Add found handler
+   * 
+   * Phase 18: Added for cluster mining support
+   */
+  onFound(handler: MinerFoundHandler): void {
+    this.foundHandlers.add(handler);
+  }
+
+  /**
+   * Add stopped handler
+   * 
+   * Phase 18: Added for cluster mining support
+   */
+  onStopped(handler: MinerStoppedHandler): void {
+    this.stoppedHandlers.add(handler);
   }
 
   /**

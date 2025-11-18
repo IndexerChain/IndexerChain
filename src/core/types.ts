@@ -74,6 +74,9 @@ export interface Tx {
 
 /**
  * Block header
+ * 
+ * Phase 15: Added stateCommitment for verified light clients
+ * Phase 22: Added finalityCert for fast finality
  */
 export interface BlockHeader {
   version: number;
@@ -83,6 +86,8 @@ export interface BlockHeader {
   timestamp: number; // Unix timestamp in seconds
   difficulty: number; // Current difficulty
   nonce: number; // PoW random number
+  stateCommitment?: string; // Phase 15: SHA-256 hash of normalized IndexState after applying all transactions
+  finalityCert?: FinalityCertificate; // Phase 22: Finality certificate for fast confirmation
 }
 
 /**
@@ -113,6 +118,29 @@ export interface ChainParams {
   lightNodeWindow?: number; // Phase 10: Number of recent blocks to keep (pruned node), e.g., 200
   fullSnapshotInterval?: number; // Phase 12: Number of snapshots between full snapshots, e.g., 5
   maxBlockSizeBytes?: number; // Maximum block size in bytes, e.g., 1_000_000 (optional)
+  
+  // Phase 13: Snapshot verification parameters
+  snapshotVerificationSampleRate?: number; // Probability (0-1) of doing full verification on startup, e.g., 0.3
+  snapshotAutoVerifyIntervalMs?: number; // Background verification interval in milliseconds, e.g., 60000
+  
+  // Phase 14: Remote snapshot sync parameters
+  remoteSnapshotEndpoints?: string[]; // Remote snapshot server URLs, e.g., ["https://snap.indexerchain.io/api/v1/snapshots"]
+  remoteSnapshotEnabled?: boolean; // Whether to enable remote snapshot sync, default false
+  remoteSnapshotMinHeight?: number; // Only consider remote snapshots with height >= this value, e.g., 100
+  
+  // Phase 21: Peer reputation and security parameters
+  peerScoreEnabled?: boolean; // Whether to enable peer reputation system, default true
+  peerScoreDecayIntervalMs?: number; // Score decay check interval in milliseconds, e.g., 60_000 (1 minute)
+  peerScoreHalfLifeMs?: number; // Score half-life for decay toward neutral (50), e.g., 300_000 (5 minutes)
+  peerBanThreshold?: number; // Score below this value triggers ban, e.g., 20
+  peerBanDurationMs?: number; // Ban duration in milliseconds, e.g., 600_000 (10 minutes)
+  
+  // Phase 22: Fast finality parameters
+  finalityEnabled?: boolean; // Whether to enable fast finality, default true
+  finalityCommitteeSize?: number; // Committee size for finality voting, e.g., 7-21, default 11
+  finalityThreshold?: number; // Threshold ratio for finality (2/3), default 0.67
+  finalityVoteTimeoutMs?: number; // Timeout for collecting votes, e.g., 5000 (5 seconds)
+  finalityCommitteeRoundInterval?: number; // Blocks between committee re-election, e.g., 10
 }
 
 /**
@@ -129,6 +157,7 @@ export interface DifficultyAdjustmentResult {
  * Snapshot metadata
  * 
  * Phase 9: Metadata for state snapshots used for fast sync
+ * Phase 13: Added integrity verification fields
  */
 export interface SnapshotMeta {
   id: string; // Snapshot ID, e.g., "snap_0000123"
@@ -136,6 +165,16 @@ export interface SnapshotMeta {
   blockHash: string; // Hash of the block at snapshot height
   createdAt: number; // Unix timestamp in milliseconds
   version: number; // Snapshot format version
+  
+  // Phase 13: Integrity verification fields
+  stateHash?: string; // SHA-256 hash of normalized snapshot state (64 hex chars)
+  compressedSize?: number; // Compressed size in bytes
+  uncompressedSize?: number; // Estimated uncompressed size in bytes
+  verifiedAt?: number; // Timestamp of last successful verification (Unix timestamp in milliseconds)
+  verificationVersion?: number; // Verification algorithm version (for future upgrades)
+  
+  // Phase 15: State commitment from block header
+  stateCommitment?: string; // State commitment from the block at snapshot height (matches block.header.stateCommitment)
 }
 
 /**
@@ -152,4 +191,78 @@ export interface SnapshotData {
   data?: string; // Phase 11/12: Base64-encoded compressed data (full snapshot when full=true)
   full?: boolean; // Phase 12: Whether this is a full snapshot (true) or delta snapshot (false)
   delta?: string; // Phase 12: Base64-encoded compressed delta operations (when full=false)
+}
+
+/**
+ * Peer ID type
+ * 
+ * Phase 21: Type alias for peer identification
+ */
+export type PeerId = string; // P2P node ID
+
+/**
+ * Peer reputation score
+ * 
+ * Phase 21: Tracks peer behavior and trustworthiness
+ */
+export interface PeerScore {
+  peerId: PeerId;
+  lastSeenAt: number; // Last seen timestamp in milliseconds
+  connectedAt?: number; // First connection timestamp in milliseconds
+  
+  // Service metrics
+  blocksServed: number; // Number of valid blocks served
+  blocksInvalid: number; // Number of invalid blocks sent
+  snapshotsServed: number; // Number of valid snapshot chunks served
+  snapshotsInvalid: number; // Number of invalid snapshot chunks sent
+  headersServed: number; // Number of valid headers served
+  
+  // Performance / response quality
+  avgLatencyMs?: number; // Rolling average latency in milliseconds
+  requestsSent: number; // Total requests sent to this peer
+  responsesOk: number; // Successful responses received
+  responsesTimeout: number; // Timeout responses
+  
+  // Global miner pool metrics
+  workAssigned: number; // Number of nonce ranges assigned
+  workCompleted: number; // Number of ranges completed successfully
+  workFailed: number; // Number of ranges that failed/abandoned
+  
+  // Calculated score
+  score: number; // Score from 0 to 100
+  trustLevel: "trusted" | "normal" | "low" | "banned";
+  bannedUntil?: number; // Ban expiration timestamp (if banned)
+}
+
+/**
+ * Finality vote signature
+ * 
+ * Phase 22: Individual committee member's vote on a block
+ */
+export interface FinalityVote {
+  blockHash: string; // Hash of the block being voted on
+  blockHeight: number; // Height of the block
+  committeeRound: number; // Committee round number
+  signerAddress: Address; // Address of the committee member
+  signature: string; // ECDSA signature (base64 encoded)
+  timestamp: number; // Vote timestamp in milliseconds
+}
+
+/**
+ * Finality certificate
+ * 
+ * Phase 22: Certificate proving a block has reached finality (>= 2/3 committee votes)
+ */
+export interface FinalityCertificate {
+  blockHash: string; // Hash of the finalized block
+  blockHeight: number; // Height of the finalized block
+  committeeRound: number; // Committee round number
+  signatures: Array<{
+    signer: Address; // Committee member address
+    signature: string; // ECDSA signature (base64 encoded)
+  }>; // Signatures from committee members
+  signatureBitmap?: string; // Phase 22: Compressed bitmap of which committee members signed (optional optimization)
+  createdAt: number; // Certificate creation timestamp in milliseconds
+  threshold: number; // Number of signatures required (>= 2/3 of committee)
+  actualSignatures: number; // Actual number of signatures collected
 }

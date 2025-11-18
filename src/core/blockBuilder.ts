@@ -9,27 +9,87 @@ import type { Block, BlockHeader, ChainParams, Tx, Address, Operation } from "./
 import { calcMerkleRoot } from "./merkle.js";
 import { getNextDifficulty } from "./difficulty.js";
 import { sha256 } from "./crypto.js";
+import { IndexState } from "./indexState.js";
+import { computeSnapshotStateHash } from "./snapshotVerify.js";
+import {
+  getCappedBlockReward,
+  uIDCToIDC,
+  estimateTxFee,
+  IDCToUIDC,
+} from "./idcEmission.js";
 
 /**
  * Create coinbase transaction (mining reward)
  * Phase 7: System transaction that rewards the miner
+ * Phase 16: Uses dynamic emission schedule based on block height and total minted
  * 
  * @param minerAddress Address of the miner
- * @param blockReward Reward amount in IDC
+ * @param blockHeight Block height (for emission calculation)
+ * @param totalMinted Total IDC already minted (in uIDC, for cap check)
+ * @param fees Total transaction fees collected in this block (in uIDC)
  * @returns Coinbase transaction
  */
 export async function createCoinbaseTx(
   minerAddress: Address,
-  blockReward: number
+  blockHeight: number,
+  totalMinted: bigint,
+  fees: bigint = 0n
 ): Promise<Tx> {
   const systemAddress: Address = "idc_system" as Address;
+  
+  // Phase 16: Calculate block reward using emission schedule
+  const blockRewardUIDC = getCappedBlockReward(blockHeight, totalMinted);
+  
+  // Total reward = block reward + fees
+  const totalRewardUIDC = blockRewardUIDC + fees;
+  const totalRewardIDC = uIDCToIDC(totalRewardUIDC);
+  
+  // Only create coinbase if there's a reward
+  if (totalRewardIDC <= 0) {
+    // No reward - return empty coinbase (shouldn't happen in normal operation)
+    const op: Operation = {
+      type: "TRANSFER",
+      namespace: "",
+      key: "",
+      to: minerAddress,
+      amount: 0,
+      nonce: 0,
+      owner: systemAddress,
+    };
+    
+    const coinbaseTx: Omit<Tx, "txId"> = {
+      owner: systemAddress,
+      ownerAddress: systemAddress,
+      ownerPubKey: {
+        alg: "SYSTEM",
+        format: "jwk",
+        jwk: {} as JsonWebKey,
+      },
+      ops: [op],
+      timestamp: Math.floor(Date.now() / 1000),
+      signature: "coinbase",
+    };
+    
+    const serialized = JSON.stringify({
+      owner: coinbaseTx.owner,
+      ownerAddress: coinbaseTx.ownerAddress,
+      ops: coinbaseTx.ops,
+      timestamp: coinbaseTx.timestamp,
+    });
+    const txId = await sha256(serialized);
+    
+    return {
+      ...coinbaseTx,
+      txId,
+    };
+  }
   
   const op: Operation = {
     type: "TRANSFER",
     namespace: "", // Not used for TRANSFER
     key: "", // Not used for TRANSFER
     to: minerAddress,
-    amount: blockReward,
+    amount: totalRewardIDC, // Total reward (block reward + fees) in IDC
     nonce: 0,
     owner: systemAddress,
   };
@@ -68,12 +128,14 @@ export async function createCoinbaseTx(
  * 
  * Phase 6: Calculates dynamic difficulty based on recent block times
  * Phase 7: Automatically adds coinbase transaction as first transaction
+ * Phase 15: Computes stateCommitment from IndexState after applying all transactions
  * 
  * @param pendingTxs Pending transactions to include
  * @param prevBlock Previous block (tip of the chain)
  * @param allBlocks All blocks in the chain (for difficulty calculation)
  * @param params Chain parameters
  * @param minerAddress Address of the miner (for coinbase reward)
+ * @param currentIndexState Current IndexState (before applying block transactions)
  * @returns Candidate block with nonce = 0 (ready for mining)
  */
 export async function buildCandidateBlock(
@@ -81,14 +143,28 @@ export async function buildCandidateBlock(
   prevBlock: Block,
   allBlocks: Block[],
   params: ChainParams,
-  minerAddress: Address
+  minerAddress: Address,
+  currentIndexState: IndexState
 ): Promise<Block> {
   const height = prevBlock.header.height + 1;
   const prevHash = prevBlock.hash;
   const timestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
 
-  // Phase 7: Create coinbase transaction (mining reward)
-  const coinbaseTx = await createCoinbaseTx(minerAddress, params.blockReward);
+  // Phase 16: Get total minted and calculate fees
+  const totalMinted = currentIndexState.getTotalMinted();
+  
+  // Calculate total fees from pending transactions
+  let totalFeesUIDC = 0n;
+  for (const tx of pendingTxs) {
+    // Skip coinbase (it's not in pendingTxs yet)
+    if (tx.ownerAddress !== "idc_system") {
+      const fee = estimateTxFee(tx);
+      totalFeesUIDC += fee;
+    }
+  }
+
+  // Phase 16: Create coinbase transaction with dynamic reward + fees
+  const coinbaseTx = await createCoinbaseTx(minerAddress, height, totalMinted, totalFeesUIDC);
 
   // Combine coinbase + pending transactions
   const allTxs = [coinbaseTx, ...pendingTxs];
@@ -100,6 +176,44 @@ export async function buildCandidateBlock(
   // Phase 6: Calculate dynamic difficulty
   const difficulty = getNextDifficulty(allBlocks, params);
 
+  // Phase 15: Compute stateCommitment by dry-running all transactions
+  let stateCommitment: string | undefined;
+  try {
+    // Create a temporary copy of current state
+    const tempState = IndexState.createEmpty();
+    const currentSnapshot = currentIndexState.toSnapshot();
+    const restoredState = IndexState.fromSnapshot(currentSnapshot);
+    const restoredInternalState = (restoredState as any).getInternalState();
+    const tempInternalState = (tempState as any).getInternalState();
+    tempInternalState.clear();
+    for (const [ns, kvMap] of restoredInternalState) {
+      const newMap = new Map(kvMap);
+      tempInternalState.set(ns, newMap);
+    }
+
+    // Apply all transactions to temporary state
+    for (const tx of allTxs) {
+      tempState.applyTx(tx);
+    }
+
+    // Phase 16: Update total minted after applying coinbase
+    // The coinbase reward increases total_minted
+    if (coinbaseTx.ops.length > 0 && coinbaseTx.ops[0].type === "TRANSFER") {
+      const rewardAmount = coinbaseTx.ops[0].amount || 0;
+      if (rewardAmount > 0) {
+        const rewardUIDC = IDCToUIDC(rewardAmount);
+        tempState.incrementTotalMinted(rewardUIDC);
+      }
+    }
+
+    // Compute stateCommitment from the resulting state
+    const finalSnapshot = tempState.toSnapshot();
+    stateCommitment = await computeSnapshotStateHash(finalSnapshot);
+  } catch (error) {
+    console.error(`[Phase 15] Failed to compute stateCommitment:`, error);
+    // Continue without stateCommitment for backward compatibility
+  }
+
   // Build block header
   const header: BlockHeader = {
     version: params.version,
@@ -109,6 +223,7 @@ export async function buildCandidateBlock(
     timestamp,
     difficulty, // Phase 6: Dynamic difficulty
     nonce: 0, // Will be incremented during mining
+    stateCommitment, // Phase 15: State commitment hash
   };
 
   // Block hash will be computed during mining

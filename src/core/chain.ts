@@ -4,7 +4,7 @@
  * Provides a simple API to initialize and manage the chain
  */
 
-import type { ChainParams, Block } from "./types.js";
+import type { ChainParams, Block, SnapshotMeta } from "./types.js";
 import { BrowserChainStorage } from "./chainStorage.js";
 import { IndexState } from "./indexState.js";
 import { createGenesisBlock } from "./genesis.js";
@@ -29,6 +29,7 @@ export interface ChainContext {
   indexState: IndexState;
   params: ChainParams;
   p2p?: P2PNode; // Optional P2P node
+  remoteSnapshotUsed?: SnapshotMeta | null; // Phase 14: Remote snapshot used during initialization
 }
 
 /**
@@ -84,8 +85,12 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
   // Phase 9: Try to use snapshot for fast initialization
   // Phase 11: Auto-upgrade legacy snapshots to compressed format
   // Phase 12: Start recording changes for delta snapshots
+  // Phase 16: Initialize total_minted to 0 if not exists
   const indexState = IndexState.createEmpty();
   indexState.beginRecording(); // Start recording changes for delta snapshots
+  
+  // Phase 16: Ensure total_minted exists (initialize to 0 if not set)
+  // This will be updated when we rebuild from blocks
   let startHeight = 0;
 
   // Phase 11: Auto-upgrade legacy snapshots in background (non-blocking)
@@ -102,6 +107,8 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
   });
 
   const latestSnap = getLatestSnapshotMeta();
+  let remoteSnapshotUsed: SnapshotMeta | null = null;
+  
   if (latestSnap) {
     // Verify snapshot is still valid
     const snapshotBlock = storage.getBlockByHeight(latestSnap.height);
@@ -177,11 +184,63 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     }
   }
 
-  // Phase 10: Replay blocks from startHeight to tip (with light node window limit)
+  // Phase 14: Try remote snapshot sync if local snapshot is insufficient
   const tip = storage.getTip();
+  const currentHeight = tip?.header.height ?? 0;
+  const minHeight = params.remoteSnapshotMinHeight ?? 0;
+  
+  // Only try remote sync if:
+  // 1. Remote sync is enabled
+  // 2. Current height is below minimum (or no local snapshot)
+  // 3. Local snapshot doesn't exist or is too low
+  if (
+    params.remoteSnapshotEnabled &&
+    params.remoteSnapshotEndpoints &&
+    params.remoteSnapshotEndpoints.length > 0 &&
+    (currentHeight < minHeight || !latestSnap || latestSnap.height < minHeight)
+  ) {
+    try {
+      const { syncFromRemoteSnapshot } = await import("./remoteSnapshot.js");
+      const remoteMeta = await syncFromRemoteSnapshot(params, storage);
+      
+      if (remoteMeta) {
+        remoteSnapshotUsed = remoteMeta;
+        
+        // Reload snapshot after saving remote one
+        const updatedSnap = getLatestSnapshotMeta();
+        if (updatedSnap && updatedSnap.height === remoteMeta.height) {
+          // Load the newly saved remote snapshot
+          const snapData = await loadSnapshotByHeight(updatedSnap.height);
+          if (snapData && snapData.indexState) {
+            // Restore state from remote snapshot
+            const restoredState = IndexState.fromSnapshot(snapData.indexState);
+            const restoredInternalState = (restoredState as any).getInternalState();
+            const currentInternalState = (indexState as any).getInternalState();
+            currentInternalState.clear();
+            for (const [ns, kvMap] of restoredInternalState) {
+              const newMap = new Map(kvMap);
+              currentInternalState.set(ns, newMap);
+            }
+            
+            startHeight = updatedSnap.height + 1;
+            console.log(
+              `[Phase 14] Using remote snapshot at height ${updatedSnap.height}, replaying from height ${startHeight}`
+            );
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("[Phase 14] Remote snapshot sync failed, falling back to local initialization:", error);
+      // Continue with local initialization
+    }
+  }
+
+  // Phase 10: Replay blocks from startHeight to tip (with light node window limit)
   const lightNodeWindow = params.lightNodeWindow ?? 200;
   
-  if (tip) {
+  // Re-fetch tip in case it changed during remote sync
+  const finalTip = storage.getTip();
+  if (finalTip) {
     // In light node mode, we may not have all blocks from startHeight
     // We'll replay what we have, starting from the earliest available block
     const minHeight = storage.getMinHeight();
@@ -189,13 +248,26 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     
     // Only replay blocks within the window (if in light node mode)
     const maxReplayHeight = lightNodeWindow > 0 
-      ? Math.min(tip.header.height, actualStartHeight + lightNodeWindow - 1)
-      : tip.header.height;
+      ? Math.min(finalTip.header.height, actualStartHeight + lightNodeWindow - 1)
+      : finalTip.header.height;
     
     for (let h = actualStartHeight; h <= maxReplayHeight; h++) {
       const block = storage.getBlockByHeight(h);
       if (block) {
         indexState.applyBlock(block);
+        
+        // Phase 16: Update total_minted after applying each block
+        if (block.txs.length > 0) {
+          const coinbaseTx = block.txs[0];
+          if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+            const rewardOp = coinbaseTx.ops[0];
+            if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
+              const { IDCToUIDC } = await import("./idcEmission.js");
+              const rewardUIDC = IDCToUIDC(rewardOp.amount);
+              indexState.incrementTotalMinted(rewardUIDC);
+            }
+          }
+        }
       } else {
         // Block missing - in light node mode this is expected for old blocks
         if (h < minHeight) {
@@ -221,11 +293,49 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     }
   }
 
+  // Phase 13: Sample-based snapshot verification (non-blocking)
+  const sampleRate = params.snapshotVerificationSampleRate ?? 0.3;
+  const r = Math.random();
+  if (r < sampleRate) {
+    // Run verification in background, don't block initialization
+    Promise.resolve().then(async () => {
+      try {
+        const { verifySnapshotIntegrity, handleCorruptedSnapshot } = await import("./snapshotVerify.js");
+        const latestMeta = getLatestSnapshotMeta();
+        if (!latestMeta) {
+          return; // No snapshots to verify
+        }
+
+        const snapshot = await loadSnapshotByHeight(latestMeta.height);
+        if (!snapshot) {
+          return; // Snapshot doesn't exist or was already deleted
+        }
+
+        const isValid = await verifySnapshotIntegrity(snapshot);
+        if (!isValid) {
+          console.warn(
+            `[Phase 13] Latest snapshot at height ${latestMeta.height} failed integrity check, deleting...`
+          );
+          const fallbackHeight = await handleCorruptedSnapshot(latestMeta.height);
+          console.log(
+            `[Phase 13] Snapshot deleted. Next startup will use snapshot at height ${fallbackHeight} or replay from genesis.`
+          );
+        } else {
+          console.log(`[Phase 13] Snapshot at height ${latestMeta.height} verified successfully`);
+        }
+      } catch (error) {
+        console.warn("[Phase 13] Background snapshot verification failed:", error);
+        // Don't throw - this is non-critical
+      }
+    });
+  }
+
   return {
     storage,
     indexState,
     params,
     needsReset,
+    remoteSnapshotUsed, // Phase 14: Track if remote snapshot was used
   };
 }
 
@@ -233,6 +343,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
  * Get default chain parameters for development
  */
 export function getDefaultChainParams(): ChainParams {
+  // Phase 21: Default peer reputation parameters
   return {
     version: 1,
     networkId: "indexerchain-dev",
@@ -246,6 +357,21 @@ export function getDefaultChainParams(): ChainParams {
     lightNodeWindow: 200, // Phase 10: Keep only recent 200 blocks (light node mode)
     fullSnapshotInterval: 5, // Phase 12: Create full snapshot every 5 snapshots
     maxBlockSizeBytes: 1_000_000,
+    // Phase 13: Snapshot verification parameters
+    snapshotVerificationSampleRate: 0.3, // 30% chance of full verification on startup
+    snapshotAutoVerifyIntervalMs: 60_000, // Background verification every 60 seconds
+    // Phase 21: Peer reputation and security parameters
+    peerScoreEnabled: true, // Enable peer reputation system
+    peerScoreDecayIntervalMs: 60_000, // Check decay every 1 minute
+    peerScoreHalfLifeMs: 300_000, // Score half-life: 5 minutes
+    peerBanThreshold: 20, // Ban peers with score below 20
+    peerBanDurationMs: 600_000, // Ban duration: 10 minutes
+    // Phase 22: Fast finality parameters
+    finalityEnabled: true, // Enable fast finality
+    finalityCommitteeSize: 11, // Committee size (7-21 recommended)
+    finalityThreshold: 0.67, // Threshold ratio (2/3)
+    finalityVoteTimeoutMs: 5000, // Vote collection timeout: 5 seconds
+    finalityCommitteeRoundInterval: 10, // Re-elect committee every 10 blocks
   };
 }
 
@@ -286,6 +412,20 @@ export async function appendMinedBlock(
     // Apply block to index state
     context.indexState.applyBlock(block);
 
+    // Phase 16: Update total minted after applying block
+    // Extract coinbase reward and add to total_minted
+    if (block.txs.length > 0) {
+      const coinbaseTx = block.txs[0];
+      if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+        const rewardOp = coinbaseTx.ops[0];
+        if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
+          const { IDCToUIDC } = await import("./idcEmission.js");
+          const rewardUIDC = IDCToUIDC(rewardOp.amount);
+          context.indexState.incrementTotalMinted(rewardUIDC);
+        }
+      }
+    }
+
     // Phase 9: Auto-generate snapshot if needed
     // Phase 11: Snapshots are now automatically compressed
     // Phase 12: Supports full and delta snapshots
@@ -305,7 +445,8 @@ export async function appendMinedBlock(
         if (isFull) {
           // Full snapshot
           const indexStateSnapshot = context.indexState.toSnapshot();
-          await saveSnapshot(height, block.hash, indexStateSnapshot, undefined, true);
+          // Phase 15: Pass stateCommitment from block header
+          await saveSnapshot(height, block.hash, indexStateSnapshot, undefined, true, block.header.stateCommitment);
           // Clear change log after full snapshot
           context.indexState.clearChangeLog();
           context.indexState.beginRecording();
@@ -315,7 +456,8 @@ export async function appendMinedBlock(
           // Get operations since last snapshot
           const deltaOperations = context.indexState.getChangeLog();
           if (deltaOperations.length > 0) {
-            await saveSnapshot(height, block.hash, undefined, deltaOperations, false);
+            // Phase 15: Pass stateCommitment from block header
+            await saveSnapshot(height, block.hash, undefined, deltaOperations, false, block.header.stateCommitment);
             // Clear change log after saving delta
             context.indexState.clearChangeLog();
             context.indexState.beginRecording();
@@ -342,8 +484,25 @@ export async function appendMinedBlock(
       context.storage.autoPrune(height, lightNodeWindow);
     }
 
-    // Broadcast to P2P network
+    // Phase 17: Fast block relay - broadcast header first, then body
     if (context.p2p && context.p2p.isConnected) {
+      // Get miner address from coinbase transaction
+      let minerAddress = "idc_unknown";
+      if (block.txs.length > 0) {
+        const coinbaseTx = block.txs[0];
+        if (coinbaseTx.ops.length > 0 && coinbaseTx.ops[0].type === "TRANSFER") {
+          minerAddress = coinbaseTx.ops[0].to || "idc_unknown";
+        }
+      }
+
+      // Phase 17: Broadcast compact header first (fast relay)
+      // This allows nodes to quickly detect new blocks and restart mining
+      const { headerToCompact } = await import("./blockRelay.js");
+      const compactHeader = headerToCompact(block.header, block.hash, block.txs.length, minerAddress);
+      context.p2p.broadcast("NEW_BLOCK_HEADER", compactHeader);
+
+      // Also broadcast full block for backward compatibility
+      // Nodes that haven't upgraded to Phase 17 will still receive full blocks
       context.p2p.broadcast("NEW_BLOCK", block);
     }
 

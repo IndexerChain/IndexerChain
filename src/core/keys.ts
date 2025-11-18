@@ -2,15 +2,17 @@
  * Key Management
  * 
  * Phase 5: Generate, store, and manage node identity (key pairs and addresses)
+ * Phase 24: Integrated with MultiWalletStore for multi-account support
  * 
  * Uses WebCrypto API with ECDSA P-256 for key generation and signing
  */
 
 import { sha256 } from "./crypto.js";
 import type { KeyPair, Address, SerializedPublicKey } from "./types.js";
+import { getMultiWalletStore } from "./multiWallet.js";
 
 /**
- * Storage keys for localStorage
+ * Storage keys for localStorage (legacy, for backward compatibility)
  */
 const STORAGE_KEY_PUBKEY = "indexerchain_node_pubkey_v1";
 const STORAGE_KEY_PRIVKEY = "indexerchain_node_privkey_v1";
@@ -18,15 +20,20 @@ const STORAGE_KEY_PRIVKEY = "indexerchain_node_privkey_v1";
 /**
  * Get or create node key pair
  * 
- * Generates ECDSA P-256 key pair if not exists, otherwise loads from storage
- * 
- * Note: Private key is stored in localStorage as JWK (plaintext for Phase 5).
- * Production environments should encrypt the private key or use WebAuthn/FIDO.
+ * Phase 24: Uses MultiWalletStore to get current wallet's key pair
+ * Falls back to legacy storage for backward compatibility
  * 
  * @returns Key pair with public key as JWK and private key as CryptoKey
  */
 export async function getOrCreateNodeKeyPair(): Promise<KeyPair> {
-  // Try to load from storage
+  // Phase 24: Try MultiWalletStore first
+  const walletStore = getMultiWalletStore();
+  const currentKeyPair = await walletStore.getCurrentKeyPair();
+  if (currentKeyPair) {
+    return currentKeyPair;
+  }
+
+  // Fallback to legacy storage (for backward compatibility)
   if (typeof localStorage !== "undefined") {
     const storedPubKey = localStorage.getItem(STORAGE_KEY_PUBKEY);
     const storedPrivKey = localStorage.getItem(STORAGE_KEY_PRIVKEY);
@@ -56,7 +63,7 @@ export async function getOrCreateNodeKeyPair(): Promise<KeyPair> {
     }
   }
 
-  // Generate new key pair
+  // Generate new key pair and create wallet
   const keyPair = await crypto.subtle.generateKey(
     {
       name: "ECDSA",
@@ -68,10 +75,20 @@ export async function getOrCreateNodeKeyPair(): Promise<KeyPair> {
 
   // Export keys to JWK format
   const publicKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  const privateKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
 
-  // Store in localStorage
+  // Phase 24: Create wallet in MultiWalletStore
+  const wallet = await walletStore.createWallet("Main Wallet");
+  
+  // Store private key in wallet store (access internal keyPairs map)
+  const walletId = wallet.id;
+  const walletStoreInternal = walletStore as any;
+  if (walletStoreInternal.keyPairs) {
+    walletStoreInternal.keyPairs.set(walletId, keyPair.privateKey);
+  }
+
+  // Also store in legacy format for backward compatibility
   if (typeof localStorage !== "undefined") {
+    const privateKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
     localStorage.setItem(STORAGE_KEY_PUBKEY, JSON.stringify(publicKeyJwk));
     localStorage.setItem(STORAGE_KEY_PRIVKEY, JSON.stringify(privateKeyJwk));
   }
@@ -111,11 +128,19 @@ export async function getNodeAddressFromPublicKey(pubKey: JsonWebKey): Promise<A
 /**
  * Get or create node address
  * 
- * Loads public key from storage and derives address, or generates new key pair if needed
+ * Phase 24: Uses MultiWalletStore to get current wallet's address
  * 
  * @returns Node address
  */
 export async function getOrCreateNodeAddress(): Promise<Address> {
+  // Phase 24: Try MultiWalletStore first
+  const walletStore = getMultiWalletStore();
+  const currentWallet = walletStore.getCurrentWallet();
+  if (currentWallet) {
+    return currentWallet.address;
+  }
+
+  // Fallback to legacy method
   const keyPair = await getOrCreateNodeKeyPair();
   return await getNodeAddressFromPublicKey(keyPair.publicKey);
 }
