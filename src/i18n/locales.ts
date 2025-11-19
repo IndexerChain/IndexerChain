@@ -1424,6 +1424,11 @@ export const translations: Record<Locale, Translations> = {
       noCommittee: "No committee elected yet",
       notInitialized: "Finality manager not initialized",
       notInitializedDesc: "Connect to P2P network to enable finality.",
+      waitingForCommittee: "Waiting for Committee",
+      finalityInitializationMode: "Phase 39: Finality Initialization Mode - Mining Allowed",
+      votes: "Votes",
+      member: "Member",
+      issuedRatio: "Issued Ratio",
     },
     wallet: {
       title: "💼 Wallet",
