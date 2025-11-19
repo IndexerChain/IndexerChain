@@ -104,8 +104,8 @@ export function MiningStatusBanner({
           label = isZh ? "已准备好，可以开始挖矿" : "Ready to Mine";
           color = "#28a745";
           
-          // First year mode: Show friendly message (requiredQuorumScore === 50)
-          const isFirstYearMode = result.details?.requiredQuorumScore === 50;
+          // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+          const isFirstYearMode = result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore <= 50;
           
           // Build summary
           const stageLabels: Record<string, string> = {
@@ -119,10 +119,11 @@ export function MiningStatusBanner({
           if (isFirstYearMode) {
             const independentPeers = result.details?.independentPeerCount || 0;
             const quorumScore = result.details?.quorumScore || 0;
+            const requiredQuorumScore = result.details?.requiredQuorumScore || 40; // Phase 45: First year mode default is 40
             const modeLabel = result.mode === "SAFE" ? (isZh ? "安全模式" : "SAFE") : (isZh ? "保护模式" : "GUARDED");
             summary = isZh
-              ? `第一年模式 · ${modeLabel} · ${independentPeers} 个独立节点 · Quorum ${quorumScore}/50`
-              : `First Year Mode · ${modeLabel} · ${independentPeers} independent peers · Quorum ${quorumScore}/50`;
+              ? `第一年模式 · ${modeLabel} · ${independentPeers} 个独立节点 · Quorum ${quorumScore}/${requiredQuorumScore}`
+              : `First Year Mode · ${modeLabel} · ${independentPeers} independent peers · Quorum ${quorumScore}/${requiredQuorumScore}`;
           } else if (isGenesis) {
             summary = isZh
               ? `创世阶段 · ${quorumStatus.independentPeerCount} 个独立节点 · Quorum ${quorumStatus.totalScore}/100`
@@ -138,8 +139,8 @@ export function MiningStatusBanner({
           label = isZh ? "当前无法挖矿" : "Mining Blocked";
           color = "#dc3545";
           
-          // First year mode: Use friendly reason message (requiredQuorumScore === 50)
-          const isFirstYearModeBlocked = result.details?.requiredQuorumScore === 50;
+          // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+          const isFirstYearModeBlocked = result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore <= 50;
           if (isFirstYearModeBlocked && result.reason) {
             // Remove "First year: " prefix for cleaner display
             summary = result.reason.replace(/^First year: /i, "");

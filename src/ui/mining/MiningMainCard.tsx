@@ -82,30 +82,31 @@ export function MiningMainCard({
         const quorumScore = result.details.quorumScore ?? 0;
         const requiredQuorumScore = result.details.requiredQuorumScore ?? 80;
         const isGenesisMode = result.details.networkStage === "GENESIS_QUORUM";
-        // First year: requiredQuorumScore === 50 indicates first year mode
-        const isFirstYearMode = requiredQuorumScore === 50;
+        // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+        const isFirstYearMode = requiredQuorumScore !== undefined && requiredQuorumScore <= 50;
         const independentPeerCount = result.details.independentPeerCount ?? 0;
+        const firstYearRequiredScore = requiredQuorumScore || 40; // Phase 45: Default to 40 for first year
         
-        // First year: Show score info (required ≥50)
+        // First year: Show score info (required ≥40, but display actual required score)
         if (isFirstYearMode) {
-          // First year: Score must be ≥50 to mine
-          if (quorumScore < 50) {
+          // First year: Score must be ≥ requiredQuorumScore to mine
+          if (quorumScore < firstYearRequiredScore) {
             reasons.push(
               isZh
-                ? `Quorum分数不足: ${quorumScore} / 50（需要 ≥50 分才能挖矿）`
-                : `Insufficient Quorum Score: ${quorumScore} / 50 (need ≥50 to mine)`
+                ? `Quorum分数不足: ${quorumScore} / ${firstYearRequiredScore}（需要 ≥${firstYearRequiredScore} 分才能挖矿）`
+                : `Insufficient Quorum Score: ${quorumScore} / ${firstYearRequiredScore} (need ≥${firstYearRequiredScore} to mine)`
             );
-          } else if (quorumScore < 65) {
+          } else if (quorumScore < firstYearRequiredScore + 15) {
             reasons.push(
               isZh
-                ? `Quorum分数: ${quorumScore}/50（连接正常）`
-                : `Quorum Score: ${quorumScore}/50 (connection normal)`
+                ? `Quorum分数: ${quorumScore}/${firstYearRequiredScore}（连接正常）`
+                : `Quorum Score: ${quorumScore}/${firstYearRequiredScore} (connection normal)`
             );
           } else {
             reasons.push(
               isZh
-                ? `Quorum分数: ${quorumScore}/50（网络健康，多人在线）`
-                : `Quorum Score: ${quorumScore}/50 (network healthy, multiple peers online)`
+                ? `Quorum分数: ${quorumScore}/${firstYearRequiredScore}（网络健康，多人在线）`
+                : `Quorum Score: ${quorumScore}/${firstYearRequiredScore} (network healthy, multiple peers online)`
             );
           }
         } else if (quorumScore < requiredQuorumScore && !(isGenesisMode && independentPeerCount >= 2)) {
@@ -450,7 +451,8 @@ export function MiningMainCard({
           }}
         >
           {(() => {
-            const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+            // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+            const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
             const reason = miningGuardResult.reason?.replace(/^First year: /i, "") || (isZh ? "无法开始挖矿" : "Cannot start mining");
             
             return (
@@ -463,10 +465,10 @@ export function MiningMainCard({
                   <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
                     {miningGuardResult.details.quorumScore !== undefined && (
                       <div>
-                        {isZh ? "Quorum分数" : "Quorum Score"}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || (isFirstYearMode ? 50 : 80)}
+                        {isZh ? "Quorum分数" : "Quorum Score"}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || (isFirstYearMode ? 40 : 80)}
                         {isFirstYearMode && (
                           <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
-                            {isZh ? "(第一年要求 ≥50)" : "(First Year: ≥50)"}
+                            {isZh ? `(第一年要求 ≥${miningGuardResult.details.requiredQuorumScore || 40})` : `(First Year: ≥${miningGuardResult.details.requiredQuorumScore || 40})`}
                           </span>
                         )}
                       </div>

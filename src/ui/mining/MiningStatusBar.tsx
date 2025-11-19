@@ -158,8 +158,8 @@ export function MiningStatusBar({
       return t("miningStatusBar.notActiveMiner");
     }
 
-    // First year mode: Use friendly reason message (requiredQuorumScore === 50)
-    const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+    // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+    const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
     if (isFirstYearMode && miningGuardResult.reason) {
       // Remove "First year: " prefix for cleaner display
       const reason = miningGuardResult.reason.replace(/^First year: /i, "");

@@ -608,39 +608,46 @@ export class MiningGuard {
       };
     } else {
       // BLOCKED: Not enough peers and guarded mining not allowed
-      // First year mode: Use independent peer count and requirement
-      const isFirstYearModeForError = this.isFirstYear(chainContext) && isMainnetNetwork;
-      if (isFirstYearModeForError && p2pNode) {
-        const quorumManager = getQuorumManager();
-        quorumManager.initialize(p2pNode, chainContext);
-        const quorumStatus = quorumManager.getQuorumStatus();
-        const requiredIndependentPeers = 2; // First year: min 2 independent peers
+      // Phase 45: Skip this check if we're in first year mode and already passed first year checks above
+      // (First year mode is handled earlier in the function, so if we reach here in first year mode,
+      // it means bootstrap is not complete or there's another issue)
+      if (isFirstYearMode) {
+        // Phase 45: In first year mode, if we reach here, it's likely bootstrap is not complete
+        // or we're missing some other requirement. Don't show peer count error if peers are sufficient.
+        if (quorumStatus.independentPeerCount >= MIN_PEERS_FIRST_YEAR) {
+          // Peers are sufficient, but something else is blocking (likely bootstrap)
+          // This should have been handled in the first year mode check above
+          // Just continue to other checks
+        } else {
+          // Peers are actually insufficient
+          return {
+            ok: false,
+            mode: "BLOCKED",
+            code: "INSUFFICIENT_PEERS",
+            reason: `首年规则：需要至少 ${MIN_PEERS_FIRST_YEAR} 个独立 IP 对等节点，目前只有 ${quorumStatus.independentPeerCount} 个`,
+            details: {
+              peerCount,
+              requiredPeers: MIN_PEERS_FIRST_YEAR,
+              independentPeerCount: quorumStatus.independentPeerCount,
+              requiredIndependentPeers: MIN_PEERS_FIRST_YEAR,
+              quorumScore: quorumStatus.totalScore,
+              requiredQuorumScore: quorumManager.getRequiredQuorumScore(chainContext.params, { height: currentHeight }),
+            },
+          };
+        }
+      } else {
+        // Normal mode: Show peer insufficiency
         return {
           ok: false,
           mode: "BLOCKED",
           code: "INSUFFICIENT_PEERS",
-          reason: `First year: Need ≥${requiredIndependentPeers} independent peers (current: ${quorumStatus.independentPeerCount})`,
+          reason: `Insufficient peers: ${peerCount} < ${minPeersRequired}`,
           details: {
             peerCount,
-            requiredPeers: requiredIndependentPeers,
-            independentPeerCount: quorumStatus.independentPeerCount,
-            requiredIndependentPeers: requiredIndependentPeers,
-            quorumScore: quorumStatus.totalScore,
-            requiredQuorumScore: 50, // First year: Quorum ≥ 50
+            requiredPeers: minPeersRequired,
           },
         };
       }
-      
-      return {
-        ok: false,
-        mode: "BLOCKED",
-        code: "INSUFFICIENT_PEERS",
-        reason: `Insufficient peers: ${peerCount} < ${minPeersRequired}`,
-        details: {
-          peerCount,
-          requiredPeers: minPeersRequired,
-        },
-      };
     }
     
     // Continue with other checks, but mining is allowed in GUARDED or LOCAL_ONLY mode
@@ -796,9 +803,16 @@ export class MiningGuard {
     // Phase 33: All checks passed, return with mining mode and quorum info
     // Phase 39: Include network stage information
     // Phase 44: Include IP sharing weight information
-    // First year: Set requiredQuorumScore to 50, requiredIndependentPeers to 2
+    // Phase 45: Get actual required quorum score (first year = 40, not 50)
     const isFirstYearModeForDisplay = this.isFirstYear(chainContext) && isMainnet(chainContext.params);
-    const requiredQuorumScoreForDisplay = isFirstYearModeForDisplay ? 50 : quorumStatus.requiredScore;
+    let requiredQuorumScoreForDisplay = quorumStatus.requiredScore;
+    if (isFirstYearModeForDisplay && p2pNode) {
+      const quorumManager = getQuorumManager();
+      quorumManager.initialize(p2pNode, chainContext);
+      const tip = chainContext.storage.getTip();
+      const height = tip?.header.height ?? 0;
+      requiredQuorumScoreForDisplay = quorumManager.getRequiredQuorumScore(chainContext.params, { height });
+    }
     
     // Get required independent peers (first year: 2, normal: from admission status)
     let requiredIndependentPeers = 3; // Default for normal mode
@@ -862,8 +876,8 @@ export class MiningGuard {
           : `🚫 Mining Ready: BLOCKED - Node not synced (local height: ${result.details?.localHeight || 0})`;
       
       case "INSUFFICIENT_PEERS":
-        // First year mode: Show friendly message (requiredQuorumScore === 50)
-        const isFirstYearMode = result.details?.requiredQuorumScore === 50;
+        // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+        const isFirstYearMode = result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore <= 50;
         if (isFirstYearMode && result.reason) {
           // Use the reason from first year mode (already formatted)
           return result.reason;

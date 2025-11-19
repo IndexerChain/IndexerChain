@@ -5870,14 +5870,15 @@ function App() {
                                     : "✅ Mining Ready: SAFE (Network Healthy)";
                                   break;
                                 case "GUARDED":
-                                  // First year mode: Show friendly message (requiredQuorumScore === 50)
-                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+                                  // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
                                   if (isFirstYearMode) {
                                     const independentPeers = miningGuardResult.details?.independentPeerCount || 0;
                                     const quorumScore = miningGuardResult.details?.quorumScore || 0;
+                                    const requiredQuorumScore = miningGuardResult.details?.requiredQuorumScore || 40;
                                     statusMessage = locale === "zh"
-                                      ? `🟡 挖矿就绪：保护模式（第一年模式，${independentPeers} 个独立节点，Quorum ${quorumScore}/50）`
-                                      : `🟡 Mining Ready: GUARDED (First Year Mode, ${independentPeers} independent peers, Quorum ${quorumScore}/50)`;
+                                      ? `🟡 挖矿就绪：保护模式（第一年模式，${independentPeers} 个独立节点，Quorum ${quorumScore}/${requiredQuorumScore}）`
+                                      : `🟡 Mining Ready: GUARDED (First Year Mode, ${independentPeers} independent peers, Quorum ${quorumScore}/${requiredQuorumScore})`;
                                   } else {
                                     const peerCount = miningGuardResult.details?.peerCount || 0;
                                     const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? 3;
@@ -6137,7 +6138,7 @@ function App() {
                         : "#721c24"
                     }}>
                       {locale === "zh" ? "📋 主网准入规则" : "📋 Mainnet Admission Rules"}
-                      {miningGuardResult.ok && miningGuardResult.details?.requiredQuorumScore === 50 && (
+                      {miningGuardResult.ok && miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50 && (
                         <span style={{ fontSize: "0.85rem", marginLeft: "0.5rem", fontWeight: "normal" }}>
                           ({locale === "zh" ? "第一年模式" : "First Year Mode"})
                         </span>
@@ -6166,7 +6167,8 @@ function App() {
                               </div>
                               <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic", marginLeft: "1.75rem" }}>
                                 {(() => {
-                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+                                  // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
                                   if (isFirstYearMode) {
                                     return locale === "zh"
                                       ? `💡 第一年模式：需要至少 2 个独立节点（来自不同 IP 地址）。同一台电脑的多个标签页不算独立节点。第一年规则更宽松，便于网络启动。`
@@ -6184,7 +6186,8 @@ function App() {
                       {miningGuardResult.details?.quorumScore !== undefined &&
                         miningGuardResult.details?.requiredQuorumScore !== undefined && (() => {
                           const passed = miningGuardResult.details.quorumScore >= miningGuardResult.details.requiredQuorumScore;
-                          const isFirstYearMode = miningGuardResult.details.requiredQuorumScore === 50;
+                          // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
+                          const isFirstYearMode = miningGuardResult.details.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
                           return (
                             <QuorumScoreExplanation
                               passed={passed}
