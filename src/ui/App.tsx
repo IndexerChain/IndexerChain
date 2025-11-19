@@ -1356,6 +1356,9 @@ function App() {
             if (peerCount === 0) {
               console.warn(`[Auto-Sync] ⚠️ No peers! Cannot sync. Will retry when peers connect.`);
             } else {
+              // Log which peers we're requesting from
+              const peerIds = Array.from(p2p.peers.keys());
+              console.log(`[Auto-Sync] 📤 Requesting from ${peerIds.length} peer(s): ${peerIds.map(id => id.substring(0, 16) + '...').join(', ')}`);
               p2p.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: targetHeight,

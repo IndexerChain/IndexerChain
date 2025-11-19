@@ -135,6 +135,10 @@ export async function handleReceivedBlocks(
   // Sort blocks by height
   const sortedBlocks = blocks.sort((a, b) => a.header.height - b.header.height);
 
+  // Track the expected next height as we process blocks
+  // This allows us to handle out-of-order blocks in the same batch
+  let expectedNextHeight = -1;
+  
   for (const block of sortedBlocks) {
     const localTip = context.storage.getTip();
     const localHeight = localTip?.header.height ?? -1;
@@ -147,13 +151,36 @@ export async function handleReceivedBlocks(
 
     // Check if block is too far ahead (height gap > 1)
     // This indicates missing blocks, which is normal when blocks are pruned
-    // We should skip verification and not ban the peer for this
-    if (block.header.height > localHeight + 1) {
-      const gap = block.header.height - localHeight;
-      console.log(`[Sync] ⚠️ Block ${block.header.height} is too far ahead (local: ${localHeight}, gap: ${gap}). Skipping - need to sync missing blocks first or use snapshot.`);
-      // Don't ban peer for this - it's normal when blocks are pruned
-      // Just skip this block and continue
-      continue;
+    // However, if we're in the middle of processing a batch, we should continue
+    // to process consecutive blocks in the batch, even if there's a gap from local height
+    
+    // If this is the first block in the batch, check if it's consecutive from local
+    // For subsequent blocks, check if they continue the sequence
+    if (expectedNextHeight === -1) {
+      // First block in batch - must be consecutive from local height
+      if (block.header.height !== localHeight + 1) {
+        const gap = block.header.height - localHeight;
+        if (gap > 1) {
+          console.log(`[Sync] ⚠️ First block ${block.header.height} is too far ahead (local: ${localHeight}, gap: ${gap}). Skipping - need to sync missing blocks first.`);
+          continue;
+        } else if (gap < 1) {
+          // This shouldn't happen (already checked above), but handle it
+          console.log(`[Sync] ⚠️ First block ${block.header.height} is behind local height ${localHeight}. Skipping.`);
+          continue;
+        }
+      }
+      // This block is consecutive, process it
+      expectedNextHeight = block.header.height + 1;
+    } else {
+      // We're processing a batch - check if this block continues the sequence
+      if (block.header.height !== expectedNextHeight) {
+        // Gap in the batch - this means we're missing blocks in the middle
+        // Log but continue to see if we can process later blocks
+        const gap = block.header.height - expectedNextHeight;
+        console.log(`[Sync] ⚠️ Gap in batch: expected ${expectedNextHeight}, got ${block.header.height} (gap: ${gap}). Skipping this block.`);
+        continue;
+      }
+      // This block continues the sequence - expectedNextHeight will be updated after append
     }
 
     // Phase 6: Get all blocks for difficulty verification
@@ -213,9 +240,14 @@ export async function handleReceivedBlocks(
       
       appended++;
       console.log(`[Sync] ✅ Appended block ${block.header.height} (total appended: ${appended})`);
+      
+      // Update expectedNextHeight after successful append
+      // This ensures we continue processing consecutive blocks correctly
+      expectedNextHeight = block.header.height + 1;
     } catch (error) {
       console.error(`[Sync] ❌ Failed to append block ${block.header.height}:`, error);
       // Continue processing other blocks instead of returning immediately
+      // Don't update expectedNextHeight on error - we'll skip this block
       continue;
     }
   }
