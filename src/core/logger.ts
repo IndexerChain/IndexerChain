@@ -102,17 +102,21 @@ class Logger {
   }
   
   /**
-   * Info log (disabled - only errors are logged)
+   * Info log
    */
-  info(..._args: any[]): void {
-    // Disabled - only errors are logged
+  info(...args: any[]): void {
+    if (this.shouldLog(LogLevel.INFO)) {
+      console.log("[INFO]", ...args);
+    }
   }
   
   /**
-   * Warning log (disabled - only errors are logged)
+   * Warning log
    */
-  warn(..._args: any[]): void {
-    // Disabled - only errors are logged
+  warn(...args: any[]): void {
+    if (this.shouldLog(LogLevel.WARN)) {
+      console.warn("[WARN]", ...args);
+    }
   }
   
   /**

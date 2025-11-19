@@ -213,6 +213,32 @@ export class ChunkBasedSyncManager {
       }
     }
 
+    // Wait a bit for blocks to arrive (especially important for genesis sync)
+    // Check if we're syncing from genesis (fromHeight === 1)
+    if (fromHeight === 1) {
+      // For genesis sync, wait longer and check multiple times
+      const maxWaitTime = 5000; // 5 seconds max
+      const checkInterval = 500; // Check every 500ms
+      const startTime = Date.now();
+      
+      while (Date.now() - startTime < maxWaitTime) {
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+        
+        // Check if we've received blocks
+        const currentTip = this.chainContext.storage.getTip();
+        const currentHeight = currentTip?.header.height ?? -1;
+        
+        // If we've received at least some blocks, we can return
+        if (currentHeight >= fromHeight) {
+          logger.debug(`[ChunkSync] Received blocks during wait: height=${currentHeight}, target=${toHeight}`);
+          break;
+        }
+      }
+    } else {
+      // For non-genesis sync, wait a shorter time
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+    }
+
     return {
       success: true,
       requestedChunks: chunks,

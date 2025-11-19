@@ -164,19 +164,27 @@ export async function handleReceivedBlocks(
             // Request missing blocks from height 1 to block.header.height - 1
             if (context.p2p) {
               // Only request if we haven't requested this range recently
-              const requestKey = `genesis_sync_${block.header.height}`;
+              // Use a single key for all genesis sync requests to prevent multiple requests
+              const requestKey = `genesis_sync_request`;
               const lastRequest = (typeof window !== "undefined" && (window as any)[requestKey]) || 0;
+              const lastRequestedHeight = (typeof window !== "undefined" && (window as any)[`genesis_sync_max_height`]) || 0;
               const now = Date.now();
               
-              if (now - lastRequest > 5000) { // Request every 5 seconds max
+              // Only request if:
+              // 1. We haven't requested in the last 10 seconds, AND
+              // 2. The target height is higher than what we last requested
+              if (now - lastRequest > 10000 && block.header.height > lastRequestedHeight) {
                 if (typeof window !== "undefined") {
                   (window as any)[requestKey] = now;
+                  (window as any)[`genesis_sync_max_height`] = block.header.height;
                 }
-                logger.info(`[Sync] Local is at genesis, requesting blocks from height 1 to ${block.header.height - 1}`);
+                logger.debug(`[Sync] Local is at genesis, requesting blocks from height 1 to ${block.header.height - 1}`);
                 context.p2p.broadcast("REQUEST_BLOCKS", {
                   fromHeight: 1,
                   toHeight: block.header.height - 1,
                 });
+              } else {
+                logger.debug(`[Sync] Skipping duplicate genesis sync request: lastRequest=${now - lastRequest}ms ago, lastHeight=${lastRequestedHeight}, currentHeight=${block.header.height}`);
               }
             }
             // Skip this block - we need to sync from height 1 first
@@ -204,12 +212,69 @@ export async function handleReceivedBlocks(
     // Phase 6: Get all blocks for difficulty verification
     const allBlocks = context.storage.getAllBlocks();
     
-    // CRITICAL: If local is at genesis (height 0) and block height > 1,
-    // we cannot append it directly because chainStorage requires consecutive heights.
-    // Skip it and let UnifiedSyncManager or Warp Sync handle it.
-    if (localHeight === 0 && block.header.height > 1) {
-      logger.debug(`[Sync] Skipping block ${block.header.height} - local is at genesis, need to sync from height 1 first`);
-      continue;
+    // Phase 47: If local is at genesis (height 0), allow blocks with valid prevHash chain
+    // This allows genesis nodes to receive blocks > 1 if they can verify the chain
+    if (localHeight === 0) {
+      if (block.header.height === 1) {
+        // This is the first block after genesis - we can append it
+        // Verify it's connected to genesis
+        const genesisBlock = context.storage.getBlockByHeight(0);
+        if (genesisBlock && block.header.prevHash === genesisBlock.hash) {
+          // Valid first block - proceed to append
+          logger.debug(`[Sync] Received first block (height 1) at genesis, will append`);
+        } else {
+          logger.debug(`[Sync] Block 1 has invalid prevHash, skipping`);
+          continue;
+        }
+      } else if (block.header.height > 1) {
+        // Phase 47: For blocks > 1 at genesis, check if we can verify the prevHash chain
+        // If we can't verify (prevHash doesn't exist), trigger warp sync instead
+        const genesisBlock = context.storage.getBlockByHeight(0);
+        if (!genesisBlock) {
+          logger.debug(`[Sync] No genesis block found, skipping block ${block.header.height}`);
+          continue;
+        }
+        
+        // Try to find the previous block in the chain
+        // For genesis sync, we likely don't have the previous block, so we should trigger warp sync
+        const prevBlock = context.storage.getBlockByHash(block.header.prevHash);
+        if (!prevBlock) {
+          // Phase 47: Can't verify prevHash - this means we're missing blocks in between
+          // Instead of skipping, trigger warp sync to get the full chain
+          logger.info(`[Sync] ⚠️ Block ${block.header.height} at genesis has unverifiable prevHash - triggering warp sync`);
+          
+          // Request warp sync via UnifiedSyncManager
+          if (context.p2p) {
+            // Trigger warp sync by requesting snapshot metadata
+            const peerIds = Array.from(context.p2p.peers?.keys() || []);
+            for (const peerId of peerIds) {
+              const peer = context.p2p.peers?.get(peerId);
+              if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                try {
+                  context.p2p.sendToPeer?.(peerId, "REQUEST_SNAPSHOT_META", {
+                    targetHeight: block.header.height - 1,
+                    requestId: `genesis_warp_${Date.now()}`,
+                  });
+                } catch (error) {
+                  // Ignore errors
+                }
+              }
+            }
+          }
+          
+          // Skip this block - warp sync will handle it
+          continue;
+        }
+        
+        // If we have the previous block, verify the chain
+        if (prevBlock.header.height !== block.header.height - 1) {
+          logger.debug(`[Sync] Block ${block.header.height} prevHash doesn't match expected height, skipping`);
+          continue;
+        }
+        
+        // Valid chain - proceed to append
+        logger.debug(`[Sync] Block ${block.header.height} at genesis has verifiable prevHash, will append`);
+      }
     }
     
     // Phase 21: Check if sender is banned

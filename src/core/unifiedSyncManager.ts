@@ -197,10 +197,89 @@ async function chunkSync(
     const result = await chunkSyncManager.syncMissingBlocks(fromHeight, toHeight);
     
     if (result.success) {
-      logger.info(`[ChunkSync] ✅ Chunk sync completed: requested ${result.requestedChunks.length} chunk(s), ${result.skippedBlocks} blocks already present`);
+      // Check if we actually received any blocks
+      const actualLocalHeight = chainContext.storage.getTip()?.header.height ?? -1;
+      const actuallySynced = actualLocalHeight >= toHeight;
+      
+      if (result.missingBlocks > 0 && !actuallySynced) {
+        // Requested blocks but didn't receive them - wait longer and check again
+        // This is especially important for genesis sync (fromHeight === 1)
+        if (fromHeight === 1) {
+          logger.info(`[ChunkSync] ⏳ Waiting for blocks to arrive (genesis sync): current=${actualLocalHeight}, target=${toHeight}`);
+          
+          // Wait up to 10 seconds for blocks to arrive
+          const maxWaitTime = 10000;
+          const checkInterval = 1000;
+          const startTime = Date.now();
+          let currentHeight = actualLocalHeight;
+          
+          while (Date.now() - startTime < maxWaitTime) {
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+            
+            // Re-check local height
+            const newTip = chainContext.storage.getTip();
+            const newHeight = newTip?.header.height ?? -1;
+            
+            if (newHeight > currentHeight) {
+              logger.info(`[ChunkSync] ✅ Blocks arriving: height=${newHeight}, target=${toHeight}`);
+              currentHeight = newHeight;
+              
+              // If we've reached target, we're done
+              if (newHeight >= toHeight) {
+                return {
+                  success: true,
+                  synced: true,
+                  method: "chunk",
+                  fromHeight,
+                  toHeight,
+                };
+              }
+            }
+          }
+          
+          // After waiting, check final state
+          const finalTip = chainContext.storage.getTip();
+          const finalHeight = finalTip?.header.height ?? -1;
+          const finalSynced = finalHeight >= toHeight;
+          
+          if (finalSynced) {
+            logger.info(`[ChunkSync] ✅ Chunk sync completed after wait: height=${finalHeight}, target=${toHeight}`);
+            return {
+              success: true,
+              synced: true,
+              method: "chunk",
+              fromHeight,
+              toHeight,
+            };
+          } else {
+            logger.warn(`[ChunkSync] ⚠️ Still waiting for blocks: current=${finalHeight}, target=${toHeight}. Blocks may still be downloading...`);
+            return {
+              success: true,
+              synced: false,
+              method: "chunk",
+              fromHeight,
+              toHeight,
+              error: `Blocks requested but not yet received (current: ${finalHeight}, target: ${toHeight})`,
+            };
+          }
+        } else {
+          // For non-genesis sync, just warn and return
+          logger.warn(`[ChunkSync] ⚠️ Requested ${result.requestedChunks.length} chunk(s) but local height is still ${actualLocalHeight} (target: ${toHeight}). Blocks may still be downloading...`);
+          return {
+            success: true,
+            synced: false,
+            method: "chunk",
+            fromHeight,
+            toHeight,
+            error: "Blocks requested but not yet received",
+          };
+        }
+      }
+      
+      logger.info(`[ChunkSync] ✅ Chunk sync completed: requested ${result.requestedChunks.length} chunk(s), ${result.skippedBlocks} blocks already present, actual height: ${actualLocalHeight}`);
       return {
         success: true,
-        synced: result.missingBlocks > 0,
+        synced: actuallySynced || result.missingBlocks === 0,
         method: "chunk",
         fromHeight,
         toHeight,
@@ -341,6 +420,93 @@ async function rollbackTo(
  * This is the main entry point for handling ROOT_TIP_UPDATE messages.
  * Implements the complete unified sync algorithm from the Phase 46 specification.
  */
+/**
+ * Phase 47: Request snapshots from peers for genesis warp sync
+ */
+async function warpSyncFromPeers(
+  chainContext: ChainContext,
+  p2pNode: P2PNode,
+  rootTip: RootTip
+): Promise<UnifiedSyncResult> {
+  logger.info(`[UnifiedSync] 🔍 Requesting snapshots from peers for genesis sync`);
+  
+  if (!p2pNode.sendToPeer) {
+    return {
+      success: false,
+      synced: false,
+      method: "warp",
+      fromHeight: 0,
+      toHeight: rootTip.latestHeight,
+      error: "sendToPeer not available",
+    };
+  }
+  
+  // Get all connected peers
+  const peers = Array.from(p2pNode.peers?.entries() || []);
+  if (peers.length === 0) {
+    return {
+      success: false,
+      synced: false,
+      method: "warp",
+      fromHeight: 0,
+      toHeight: rootTip.latestHeight,
+      error: "No peers available",
+    };
+  }
+  
+  logger.info(`[UnifiedSync] Requesting snapshots from ${peers.length} peer(s)`);
+  
+  // Request snapshot metadata from all peers
+  const requestId = `genesis_warp_${Date.now()}`;
+  for (const [peerId, peer] of peers) {
+    if (peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+      try {
+        p2pNode.sendToPeer(peerId, "REQUEST_SNAPSHOT_META", {
+          targetHeight: rootTip.latestHeight,
+          requestId,
+        });
+        logger.debug(`[UnifiedSync] Sent REQUEST_SNAPSHOT_META to peer ${peerId.substring(0, 16)}...`);
+      } catch (error) {
+        logger.debug(`[UnifiedSync] Failed to request snapshot from peer ${peerId.substring(0, 16)}...:`, error);
+      }
+    }
+  }
+  
+  // Wait for snapshot metadata responses (up to 5 seconds)
+  const maxWaitTime = 5000;
+  const checkInterval = 500;
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    await new Promise(resolve => setTimeout(resolve, checkInterval));
+    
+    // Check if we've received any snapshots via snapshotDownloader
+    // The snapshotDownloader will handle SNAPSHOT_META responses and download snapshots
+    const localTip = chainContext.storage.getTip();
+    const localHeight = localTip?.header.height ?? -1;
+    
+    if (localHeight > 0) {
+      logger.info(`[UnifiedSync] ✅ Genesis sync successful via peer snapshot: height=${localHeight}`);
+      return {
+        success: true,
+        synced: localHeight >= rootTip.latestHeight,
+        method: "warp",
+        fromHeight: 0,
+        toHeight: localHeight,
+      };
+    }
+  }
+  
+  return {
+    success: false,
+    synced: false,
+    method: "warp",
+    fromHeight: 0,
+    toHeight: rootTip.latestHeight,
+    error: "No snapshots received from peers within timeout",
+  };
+}
+
 export async function handleRootTipUpdate(
   chainContext: ChainContext,
   p2pNode: P2PNode,
@@ -382,16 +548,22 @@ export async function handleRootTipUpdate(
   const rootHeight = rootTip.latestHeight;
   const rootTipHash = rootTip.latestHeaderHash;
 
-  // Special case: If local is at genesis (height 0) and network is far ahead,
-  // try Warp Sync first, but fallback to Chunk Sync if Warp Sync is not applicable
-  if (localHeight === 0 && rootHeight >= 100) {
-    logger.info(`[UnifiedSync] Local is at genesis, network at ${rootHeight}, trying warp sync first`);
+  // Phase 47: Special case - If local is at genesis (height 0), ALWAYS force warp sync
+  // This ensures genesis nodes never get stuck, even if peers have pruned old blocks
+  if (localHeight === 0) {
+    logger.info(`[UnifiedSync] 🚀 Genesis node detected (height 0) → FORCING warp sync (network: ${rootHeight})`);
     const warpSyncManager = getWarpSyncManager();
     warpSyncManager.init(chainContext, p2pNode);
     
-    // Check if warp sync is applicable (gap >= 1000)
-    if (warpSyncManager.canWarpSync(localHeight, rootHeight)) {
-      // Convert recentHeaders to BlockHeader[] if needed
+    // Phase 47: Force warp sync from peers, even if rootTip doesn't have snapshotMeta
+    // First try with rootTip's snapshotMeta (if available)
+    const hasRootTipSnapshot = rootTip.latestSnapshotMeta !== null && 
+                              rootTip.latestSnapshotMeta !== undefined &&
+                              typeof rootTip.latestSnapshotMeta === 'object' &&
+                              'height' in rootTip.latestSnapshotMeta;
+    
+    if (hasRootTipSnapshot) {
+      logger.info(`[UnifiedSync] RootTip has snapshot, trying warp sync with rootTip snapshot`);
       const recentHeadersForWarp = rootTip.recentHeaders?.filter((h): h is BlockHeader => 
         "version" in h || "prevHash" in h
       ) as BlockHeader[] | undefined;
@@ -414,15 +586,28 @@ export async function handleRootTipUpdate(
           error: warpResult.error,
         };
       }
-      // Warp sync failed or not synced, fall through to Chunk Sync
-      logger.info(`[UnifiedSync] Warp sync not applicable or failed, falling back to chunk sync`);
-    } else {
-      logger.info(`[UnifiedSync] Warp sync not applicable (gap ${rootHeight - localHeight} < 1000), using chunk sync`);
+      logger.info(`[UnifiedSync] RootTip snapshot warp sync failed, trying peer snapshots`);
     }
     
-    // Fallback: Use Chunk Sync for genesis state
-    // This ensures we can sync even if gap < 1000
-    return await chunkSync(chainContext, p2pNode, 1, rootHeight);
+    // Phase 47: If rootTip snapshot failed or not available, request snapshots from peers
+    logger.info(`[UnifiedSync] Requesting snapshots from peers for genesis sync`);
+    const peerWarpResult = await warpSyncFromPeers(chainContext, p2pNode, rootTip);
+    
+    if (peerWarpResult.success && peerWarpResult.synced) {
+      return peerWarpResult;
+    }
+    
+    // If all warp sync attempts failed, log warning but don't fall back to chunk sync
+    // Chunk sync won't work if peers don't have height 1 blocks
+    logger.warn(`[UnifiedSync] ⚠️ All warp sync attempts failed for genesis node. Waiting for peers with snapshots...`);
+    return {
+      success: false,
+      synced: false,
+      method: "warp" as const,
+      fromHeight: 0,
+      toHeight: rootHeight,
+      error: "Genesis warp sync failed: no snapshots available from peers or rootTip",
+    };
   }
 
   // Step 1: StateLock highest priority

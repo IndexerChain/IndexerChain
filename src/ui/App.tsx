@@ -927,8 +927,14 @@ function App() {
       
       // Connect immediately (small delay to ensure state is updated)
       setTimeout(() => {
-        logger.debug(`[Auto-Connect] Connecting to ${urlToUse}...`);
-        handleConnectP2P();
+        const autoConnectLog = `[Auto-Connect] 🚀 Attempting automatic connection to ${urlToUse}...`;
+        console.log(autoConnectLog); // Force console output for debugging
+        logger.info(autoConnectLog);
+        handleConnectP2P().catch((error) => {
+          const errorLog = `[Auto-Connect] ❌ Auto-connect failed: ${error}`;
+          console.error(errorLog); // Force console output for debugging
+          logger.error(errorLog, error);
+        });
       }, 300); // Reduced delay for faster connection
     } else {
       logger.debug(`[Auto-Connect] No bootstrap URL available, skipping auto-connect`);
@@ -1381,7 +1387,16 @@ function App() {
         return;
       }
       
-      logger.info(`[Sync] 📦 Received ${data.blocks.length} blocks from ${sender.substring(0, 16)}... (heights: ${data.blocks[0]?.header?.height || '?'}-${data.blocks[data.blocks.length - 1]?.header?.height || '?'})`);
+      // Only log if significant change (reduce spam)
+      const firstHeight = data.blocks[0]?.header?.height || 0;
+      const lastHeight = data.blocks[data.blocks.length - 1]?.header?.height || 0;
+      const localTip = chainContext.storage.getTip();
+      const localHeight = localTip?.header.height ?? -1;
+      
+      // Only log if blocks are ahead of local height or if it's a significant batch
+      if (firstHeight > localHeight || data.blocks.length >= 50) {
+        logger.debug(`[Sync] 📦 Received ${data.blocks.length} blocks from ${sender.substring(0, 16)}... (heights: ${firstHeight}-${lastHeight})`);
+      }
       
       // Phase 43: Notify parallel sync manager if this is part of parallel sync
       if (data.requestId) {
@@ -1682,7 +1697,7 @@ function App() {
             if (peerCount === 0) {
               logger.warn(`[Sync] ⚠️ Behind by ${behindBy} blocks but no peers connected`);
             } else {
-              logger.info(`[Sync] 📥 Requesting ${requestRange} blocks (heights ${localHeight + 1}-${targetHeight}) from ${peerCount} peer(s)`);
+              logger.debug(`[Sync] 📥 Requesting ${requestRange} blocks (heights ${localHeight + 1}-${targetHeight}) from ${peerCount} peer(s)`);
               p2p.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: targetHeight,
@@ -1761,6 +1776,8 @@ function App() {
           heightSyncManager.init(chainContext, p2pNodeRef.current);
           const syncStatus = heightSyncManager.getSyncStatus();
           
+          logger.debug(`[Phase 46] HeightSyncManager status: local=${localHeight}, recommended=${syncStatus.recommendedHeight}, source=${syncStatus.recommendedSource}, status=${syncStatus.syncStatus}`);
+          
           // If recommended height is higher than local, trigger sync
           if (syncStatus.recommendedHeight > localHeight && syncStatus.recommendedHeight > 0) {
             const heightDiff = syncStatus.recommendedHeight - localHeight;
@@ -1774,7 +1791,13 @@ function App() {
               if (now - lastSyncTime > 5000) {
                 (window as any)[lastSyncKey] = now;
                 
-                logger.info(`[Phase 46] Auto-sync triggered: local=${localHeight}, recommended=${syncStatus.recommendedHeight} (source: ${syncStatus.recommendedSource}), diff=${heightDiff}`);
+                // Only log if significant change or first time
+                const lastAutoSyncLog = (window as any).lastAutoSyncLog || "";
+                const autoSyncLog = `[Phase 46] 🚀 Auto-sync triggered: local=${localHeight}, recommended=${syncStatus.recommendedHeight} (source: ${syncStatus.recommendedSource}), diff=${heightDiff}`;
+                if (autoSyncLog !== lastAutoSyncLog) {
+                  (window as any).lastAutoSyncLog = autoSyncLog;
+                  logger.debug(autoSyncLog);
+                }
                 
                 // Use UnifiedSyncManager to sync
                 const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
@@ -1812,18 +1835,40 @@ function App() {
                     isMiner
                   );
                   
-                  if (syncResult.success && syncResult.synced) {
-                    logger.info(`[Phase 46] ✅ Auto-sync completed: ${syncResult.method} sync from ${syncResult.fromHeight} → ${syncResult.toHeight}`);
-                    setChainContext({ ...chainContext });
+                  if (syncResult.success) {
+                    if (syncResult.synced) {
+                      logger.info(`[Phase 46] ✅ Auto-sync completed: ${syncResult.method} sync from ${syncResult.fromHeight} → ${syncResult.toHeight}`);
+                      setChainContext({ ...chainContext });
+                    } else {
+                      logger.debug(`[Phase 46] Auto-sync: ${syncResult.error || 'not applicable'}`);
+                    }
+                  } else {
+                    logger.warn(`[Phase 46] Auto-sync failed: ${syncResult.error}`);
                   }
                 } catch (syncError) {
-                  logger.debug(`[Phase 46] Auto-sync error (will retry):`, syncError);
+                  logger.warn(`[Phase 46] Auto-sync error:`, syncError);
                 }
+              }
+            }
+          } else if (localHeight === 0 && peerCount > 0) {
+            // Special case: at genesis (height 0) with peers, try to sync
+            // This handles the case where we have peers but haven't received rootTip yet
+            const lastGenesisSyncKey = `lastGenesisSyncAttempt`;
+            const lastGenesisSyncTime = (window as any)[lastGenesisSyncKey] || 0;
+            
+            if (now - lastGenesisSyncTime > 10000) { // Try every 10 seconds
+              (window as any)[lastGenesisSyncKey] = now;
+              
+              logger.info(`[Phase 46] 🔄 At genesis (height 0) with ${peerCount} peer(s), requesting network height...`);
+              
+              // Request global view to get network height
+              if (p2pNodeRef.current) {
+                p2pNodeRef.current.broadcast("GLOBAL_VIEW_REQUEST", {});
               }
             }
           }
         } catch (error) {
-          // Silently fail - will retry next interval
+          logger.debug(`[Phase 46] HeightSyncManager check error:`, error);
         }
       }
     }, 2000); // Check every 2 seconds for faster sync (reduced from 3 seconds)
@@ -1920,11 +1965,35 @@ function App() {
         globalSentinel.onGlobalViewResponse(sender, payload);
       }
       
-      // Handle availableFromHeight hint (when peer can't provide requested blocks)
+      // Phase 47: Handle availableFromHeight hint (when peer can't provide requested blocks)
       if (payload && typeof payload.availableFromHeight === 'number' && payload.availableFromHeight > 0) {
         const localTip = chainContext.storage.getTip();
         const localHeight = localTip?.header?.height ?? -1;
         const gap = payload.availableFromHeight - localHeight;
+        
+        // Phase 47: If local is at genesis (height 0) and availableFromHeight > 1, force warp sync
+        if (localHeight === 0 && payload.availableFromHeight > 1) {
+          logger.info(`[Phase 47] 🚀 Genesis node detected with availableFromHeight=${payload.availableFromHeight} → FORCING warp sync`);
+          
+          // Trigger UnifiedSyncManager to force warp sync
+          if (p2pNodeRef.current) {
+            const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
+            const rootTip = {
+              latestHeight: payload.height,
+              latestHeaderHash: payload.tipHash || "",
+              recentHeaders: [],
+              latestSnapshotMeta: null,
+              stateCommitment: payload.stateCommitment,
+            };
+            
+            // Force warp sync
+            handleRootTipUpdate(chainContext, p2pNodeRef.current, rootTip, false).catch((error) => {
+              logger.error(`[Phase 47] Failed to trigger warp sync:`, error);
+            });
+          }
+          
+          return; // Don't process as regular GLOBAL_VIEW_RESPONSE
+        }
         
         // If we're requesting blocks that are pruned, check if we need snapshot sync
         if (localHeight < payload.availableFromHeight && payload.height > localHeight) {
@@ -2106,9 +2175,10 @@ function App() {
           const localHeight = localTip?.header.height ?? -1;
           const behindBy = networkHeight - localHeight;
           
-          // Log when network height is discovered or changes significantly
-          if (lastKnownNetworkHeight !== networkHeight || (localHeight === 0 && networkHeight > 0)) {
-            logger.info(`[Sync] 📡 Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy} blocks`);
+          // Log when network height is discovered or changes significantly (reduce frequency)
+          const shouldLog = lastKnownNetworkHeight !== networkHeight || (localHeight === 0 && networkHeight > 0 && behindBy > 100);
+          if (shouldLog) {
+            logger.debug(`[Sync] 📡 Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy} blocks`);
             
             // Phase 46: If we're at genesis (height 0) and network is ahead, trigger UnifiedSyncManager immediately
             if (localHeight === 0 && networkHeight > 0 && p2pNodeRef.current) {
@@ -2120,40 +2190,53 @@ function App() {
               const targetHeight = lastRootTipHeight > 0 ? lastRootTipHeight : networkHeight;
               
               if (targetHeight > localHeight) {
-                logger.info(`[Phase 46] 🚀 Triggering immediate sync from GLOBAL_VIEW_RESPONSE: local=0, target=${targetHeight}`);
+                // Deduplication: Only trigger if target height changed or last sync was > 10 seconds ago
+                // Store in window to persist across function calls
+                const now = Date.now();
+                const lastSyncTriggerTime = (window as any).lastGLOBAL_VIEW_SYNC_TIME || 0;
+                const lastSyncTargetHeight = (window as any).lastGLOBAL_VIEW_SYNC_HEIGHT || -1;
                 
-                // Trigger UnifiedSyncManager immediately
-                setTimeout(async () => {
-                  try {
-                    const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
+                if (targetHeight !== lastSyncTargetHeight || (now - lastSyncTriggerTime > 10000)) {
+                  (window as any).lastGLOBAL_VIEW_SYNC_TIME = now;
+                  (window as any).lastGLOBAL_VIEW_SYNC_HEIGHT = targetHeight;
+                  
+                  logger.debug(`[Phase 46] 🚀 Triggering immediate sync from GLOBAL_VIEW_RESPONSE: local=0, target=${targetHeight}`);
+                  
+                  // Trigger UnifiedSyncManager immediately
+                  setTimeout(async () => {
+                    try {
+                      const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
                     const isMiner = isMining || clusterMining;
                     
-                    const syncResult = await handleRootTipUpdate(
-                      chainContext,
-                      p2pNodeRef.current!,
-                      {
-                        latestHeight: targetHeight,
-                        latestHeaderHash: lastRootTipHash || "",
-                        recentHeaders: lastRootTipRecentHeaders || [],
-                        stateCommitment: (window as any).lastRootTipStateCommitment || undefined,
-                      },
-                      isMiner
-                    );
-                    
-                    if (syncResult.success) {
-                      if (syncResult.synced) {
-                        logger.info(`[Phase 46] ✅ Sync from GLOBAL_VIEW_RESPONSE completed: ${syncResult.method} sync from ${syncResult.fromHeight} → ${syncResult.toHeight}`);
-                        setChainContext({ ...chainContext });
+                      const syncResult = await handleRootTipUpdate(
+                        chainContext,
+                        p2pNodeRef.current!,
+                        {
+                          latestHeight: targetHeight,
+                          latestHeaderHash: lastRootTipHash || "",
+                          recentHeaders: lastRootTipRecentHeaders || [],
+                          stateCommitment: (window as any).lastRootTipStateCommitment || undefined,
+                        },
+                        isMiner
+                      );
+                      
+                      if (syncResult.success) {
+                        if (syncResult.synced) {
+                          logger.info(`[Phase 46] ✅ Sync from GLOBAL_VIEW_RESPONSE completed: ${syncResult.method} sync from ${syncResult.fromHeight} → ${syncResult.toHeight}`);
+                          setChainContext({ ...chainContext });
+                        } else {
+                          logger.debug(`[Phase 46] Sync from GLOBAL_VIEW_RESPONSE: ${syncResult.error || 'not applicable'}`);
+                        }
                       } else {
-                        logger.debug(`[Phase 46] Sync from GLOBAL_VIEW_RESPONSE: ${syncResult.error || 'not applicable'}`);
+                        logger.warn(`[Phase 46] Sync from GLOBAL_VIEW_RESPONSE failed: ${syncResult.error}`);
                       }
-                    } else {
-                      logger.warn(`[Phase 46] Sync from GLOBAL_VIEW_RESPONSE failed: ${syncResult.error}`);
+                    } catch (error) {
+                      logger.warn(`[Phase 46] Sync from GLOBAL_VIEW_RESPONSE error:`, error);
                     }
-                  } catch (error) {
-                    logger.warn(`[Phase 46] Sync from GLOBAL_VIEW_RESPONSE error:`, error);
-                  }
-                }, 100);
+                  }, 100);
+                } else {
+                  logger.debug(`[Phase 46] Skipping duplicate sync trigger: target=${targetHeight}, lastSync=${now - lastSyncTriggerTime}ms ago`);
+                }
               }
             }
           }
@@ -3102,11 +3185,13 @@ function App() {
       });
 
       // Phase 45: Connect using multiple signal servers
+      logger.info(`[P2P] 🔌 Connecting to ${signalServersToUse.length} signal server(s): ${signalServersToUse.join(", ")}`);
       if (signalServersToUse.length > 1) {
         await p2pNode.connect(signalServersToUse);
       } else {
         await p2pNode.connect(signalServersToUse[0]);
       }
+      logger.info(`[P2P] ✅ Connected to signal server, requesting peers...`);
       p2pNode.requestPeers();
 
       // Phase 45: Initialize Shadow Node with multiple URLs for mobile persistence

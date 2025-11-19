@@ -176,10 +176,15 @@ export class BrowserP2PNode implements P2PNode {
 
         this.ws.onopen = () => {
           clearTimeout(timeout);
-          logger.debug("Connected to signaling server");
+          const connectLog = `[P2P] ✅ Connected to signaling server: ${bootstrapUrl}`;
+          console.log(connectLog); // Force console output for debugging
+          logger.info(connectLog);
           this.isConnected = true;
 
           // Send join message
+          const joinLog = `[P2P] 📤 Sending JOIN message: nodeId=${this.nodeId.substring(0, 16)}...`;
+          console.log(joinLog); // Force console output for debugging
+          logger.info(joinLog);
           this.sendSignalingMessage({
             type: "join",
             nodeId: this.nodeId,
@@ -201,11 +206,14 @@ export class BrowserP2PNode implements P2PNode {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
+            const msgLog = `[P2P] 📨 Received signaling message: type=${message.type}`;
+            console.log(msgLog); // Force console output for debugging
+            logger.info(msgLog);
             logger.debug(`[P2P] Received signaling message:`, message.type, message);
             
             // Phase 32: Check if this is a BOOTSTRAP_RESPONSE and handle it directly
             if (message.type === 'BOOTSTRAP_RESPONSE') {
-              logger.debug(`[Phase 32] Direct handling of BOOTSTRAP_RESPONSE from WebSocket`);
+              logger.info(`[Phase 32] 📦 Direct handling of BOOTSTRAP_RESPONSE from WebSocket`);
               this.handleSignalingMessage(message);
             } else {
               this.handleSignalingMessage(message);
@@ -536,7 +544,9 @@ export class BrowserP2PNode implements P2PNode {
     switch (message.type) {
       case "JOIN_ACK":
         // Phase 37: Handle JOIN_ACK with rootTip
-        logger.info(`[P2P] 🔔 Received JOIN_ACK: peers=${message.peers?.length || 0}, rootTip.height=${message.rootTip?.latestHeight || 0}, hasHeader=${!!message.rootTip?.latestHeader}, recentHeaders=${message.rootTip?.recentHeaders?.length || 0}`);
+        const joinAckLog = `[P2P] 🔔 Received JOIN_ACK: peers=${message.peers?.length || 0}, rootTip.height=${message.rootTip?.latestHeight || 0}, hasHeader=${!!message.rootTip?.latestHeader}, recentHeaders=${message.rootTip?.recentHeaders?.length || 0}`;
+        console.log(joinAckLog); // Force console output for debugging
+        logger.info(joinAckLog);
         logger.debug(`[P2P] Received JOIN_ACK:`, {
           peerCount: message.peers?.length || 0,
           hasRootTip: !!message.rootTip,
@@ -596,10 +606,14 @@ export class BrowserP2PNode implements P2PNode {
         
         // Handle rootTip - forward to bootstrap sync manager
         if (message.rootTip) {
-          logger.info(`[P2P] 📦 JOIN_ACK contains rootTip: height=${message.rootTip.latestHeight}, hasHeader=${!!message.rootTip.latestHeader}, recentHeaders=${message.rootTip.recentHeaders?.length || 0}`);
+          const rootTipLog = `[P2P] 📦 JOIN_ACK contains rootTip: height=${message.rootTip.latestHeight}, hasHeader=${!!message.rootTip.latestHeader}, recentHeaders=${message.rootTip.recentHeaders?.length || 0}`;
+          console.log(rootTipLog); // Force console output for debugging
+          logger.info(rootTipLog);
           
           if (message.rootTip.latestHeight > 0) {
-            logger.info(`[P2P] ✅ RootTip has valid height, forwarding to bootstrap handlers`);
+            const validHeightLog = `[P2P] ✅ RootTip has valid height, forwarding to bootstrap handlers`;
+            console.log(validHeightLog); // Force console output for debugging
+            logger.info(validHeightLog);
           }
           
           // Phase 37: Store rootTip info for debug overlay
