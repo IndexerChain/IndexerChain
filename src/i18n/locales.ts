@@ -641,6 +641,376 @@ export interface Translations {
       unknown: string;
     };
 
+    // Daily Info Bar
+    dailyInfo: {
+      checkIn: string;
+      checkedIn: string;
+      notCheckedIn: string;
+      checkingIn: string;
+      checkInButton: string;
+      consecutiveDays: string;
+      days: string;
+      multiplier: string;
+      referralStatus: string;
+      bound: string;
+      invitees: string;
+      miningStatus: string;
+      active: string;
+      stopped: string;
+      clickToCopyInviteCode: string;
+      inviteCode: string;
+      copied: string;
+    };
+
+    // Mining Status
+    miningStatus: {
+      checking: string;
+      mining: string;
+      notReady: string;
+      readyToMine: string;
+      limitedMode: string;
+      localMode: string;
+      stopClusterMining: string;
+      stopMining: string;
+      leaderOnly: string;
+      startClusterMining: string;
+      startMiningGlobalPool: string;
+      startMiningSolo: string;
+      cannotStartMining: string;
+      quorumScore: string;
+      independentPeers: string;
+      referralCodeBinding: string;
+      enterInviteCodeOrAddress: string;
+      bind: string;
+      referralAddressBound: string;
+      errorCheckingMiningStatus: string;
+    };
+
+    // Network & Security
+    networkSecurity: {
+      networkSecurityStatus: string;
+      loading: string;
+      finality: string;
+      initializationMode: string;
+      normalMode: string;
+      first50BlocksRelaxed: string;
+      stateLock: string;
+      locked: string;
+      earlyStage: string;
+      stateLockNotFormed: string;
+      genesisMode: string;
+      genesisModeDesc: string;
+      finalityInitializationMode: string;
+      finalityInitializationModeDesc: string;
+    };
+
+    // Mining Status Bar
+    miningStatusBar: {
+      miningLeader: string;
+      readyCanMine: string;
+      waitingLimitedMode: string;
+      conditionsNotMet: string;
+      notActiveMiner: string;
+      height: string;
+      miningWallet: string;
+      thisDeviceIsActiveMiner: string;
+      anotherDeviceIsMining: string;
+      noActiveMiner: string;
+      details: string;
+    };
+
+    // Reward Breakdown
+    rewardBreakdown: {
+      expectedBlockReward: string;
+      calculating: string;
+      expectedBlockRewardThisDevice: string;
+      collapse: string;
+      expandDetails: string;
+      baseBlockReward: string;
+      totalMultiplierCapped: string;
+      expectedTotalReward: string;
+      globalMultipliers: string;
+      ipReputation: string;
+      sessionDuration: string;
+      activeBooster: string;
+      year1Cap: string;
+      totalMultiplier: string;
+      minerBaseReward: string;
+      ipSharingWeight: string;
+      concurrentMinersOnSameIP: string;
+      thisDeviceWeight: string;
+      finalMinerReward: string;
+      referralRewards: string;
+      level1Referral: string;
+      valid: string;
+      level2Referral: string;
+    };
+
+    // Referral & Booster
+    referralBooster: {
+      referralBooster: string;
+      myReferralRewardsOverview: string;
+      totalLevel1ReferralRewards: string;
+      ofTotalSupply: string;
+      cap: string;
+      rewardsDecayAfterCap: string;
+      totalLevel2ReferralRewards: string;
+      myReferralStatus: string;
+      myInviteCode: string;
+      copyLink: string;
+      validInvites: string;
+      validInvitesDesc: string;
+      pendingInvites: string;
+      pendingInvitesDesc: string;
+      activeBoosterProgress: string;
+      todayActive: string;
+      yes: string;
+      no: string;
+      consecutiveMiningDays: string;
+      currentMultiplier: string;
+      nextTier: string;
+      keepGoingFor: string;
+      multiplierFrom: string;
+      currentYear: string;
+      activeBoosterCap: string;
+      tips: string;
+      tip1: string;
+      tip2: string;
+      tip3: string;
+    };
+
+    // Local State Sync
+    localStateSync: {
+      title: string;
+      syncStatus: string;
+      synced: string;
+      syncing: string;
+      outOfSync: string;
+      error: string;
+      lastSyncHeight: string;
+      lastSyncTime: string;
+      consistencyCheck: string;
+      consistent: string;
+      inconsistent: string;
+      tipHashMismatch: string;
+      heightMismatch: string;
+      stateCommitmentMismatch: string;
+      networkHeight: string;
+      syncProgress: string;
+      behind: string;
+      syncingNow: string;
+    };
+
+    // Global Consistency Sentinel
+    globalSentinel: {
+      title: string;
+      collectingNetworkView: string;
+      forkDetected: string;
+      recommendedActions: string;
+    };
+
+    // Network Health
+    networkHealth: {
+      title: string;
+      bootstrapComplete: string;
+      finalityStatus: string;
+      initMode: string;
+      localRole: string;
+      walletValid: string;
+      networkValidated: string;
+      quorumScore: string;
+      independentPeer: string;
+      admissionStatus: string;
+      bootstrapStatus: string;
+      localTip: string;
+    };
+
+    // Height Sync
+    heightSync: {
+      shadowNode: string;
+      signalRootTip: string;
+      localHeight: string;
+    };
+
+    // Quorum Score
+    quorumScore: {
+      hideExplanation: string;
+      scoreBreakdown: string;
+      requiredScore: string;
+      currentScore: string;
+      independentPeerCount: string;
+      peerAnalysis: string;
+      peerId: string;
+    };
+
+    // Genesis Quorum
+    genesisQuorum: {
+      bootstrapIncomplete: string;
+    };
+
+    // Mining Status Banner
+    miningStatusBanner: {
+      coldStart: string;
+      earlyGrowth: string;
+      miningBlocked: string;
+      stopMining: string;
+      startMining: string;
+    };
+
+    // Mining Readiness
+    miningReadiness: {
+      bootstrapIncomplete: string;
+      syncingBlocks: string;
+      viewDetails: string;
+    };
+
+    // Mining Live Stats
+    miningLiveStats: {
+      localCluster: string;
+      globalPool: string;
+      currentMode: string;
+      currentHeight: string;
+      blockStats: string;
+      effectiveRate: string;
+    };
+
+    // Mining Onboarding
+    miningOnboarding: {
+      powerSave: string;
+      detectedDevice: string;
+      recommendedWorkers: string;
+      dutyCycle: string;
+    };
+
+    // Mining Mode Selector
+    miningModeSelector: {
+      solo: string;
+      soloDesc: string;
+      localCluster: string;
+      localClusterDesc: string;
+      globalPool: string;
+      globalPoolDesc: string;
+      requiresHigherQuorum: string;
+      followerMiningDisabled: string;
+      miningMode: string;
+    };
+
+    // Privacy Panel
+    privacyPanel: {
+      walletOrChainNotInitialized: string;
+      pleaseEnterRecipientPublicKeys: string;
+      amountMustBePositive: string;
+      invalidPublicKeyFormat: string;
+      invalidStartHeight: string;
+      scanning: string;
+      alreadyUpToDate: string;
+      shieldedTransfers: string;
+      pleaseCreateOrSelectWallet: string;
+      shieldedBalance: string;
+      walletAddress: string;
+      shieldedBalanceLabel: string;
+      noteCount: string;
+      unspent: string;
+      scanStatus: string;
+      notScanned: string;
+      viewStealthKeys: string;
+      receivedNotes: string;
+      rescanFromHeight: string;
+      rescan: string;
+      resyncLatest: string;
+      noReceivedShieldedNotes: string;
+      noteId: string;
+      amount: string;
+      status: string;
+      blockHeight: string;
+      spent: string;
+      unspentNote: string;
+      sendShieldedTransfer: string;
+      recipientPubViewKey: string;
+      recipientPubSpendKey: string;
+      amountIdc: string;
+      memoOptional: string;
+      optionalMemo: string;
+      scanFailed: string;
+    };
+
+    // App
+    app: {
+      openMenu: string;
+      globalConsistencySentinel: string;
+      networkHealthStatus: string;
+      coldStartMode: string;
+      mainnetAdmissionRules: string;
+      followerMode: string;
+      rewardsNetworkInfo: string;
+      hideAdvancedSettings: string;
+      showAdvancedSettings: string;
+      advancedSettings: string;
+      cannotMine: string;
+      miningEffectiveness: string;
+      acceptedBlocks: string;
+      rejectedOrphaned: string;
+      totalMined: string;
+      effectiveness: string;
+      cacheSize: string;
+      downloadProgress: string;
+      chunks: string;
+      speed: string;
+      gsnDesc: string;
+      gsnSeeding: string;
+      storageCleanup: string;
+      cleanUnusedStorage: string;
+      warning: string;
+      totalSupplyDesc: string;
+      emissionPeriodDesc: string;
+      blockTimeDesc: string;
+      year1OutputDesc: string;
+      first3YearsDesc: string;
+      blocksPerYearDesc: string;
+      year: string;
+      yearlyOutput: string;
+      cumulativePercent: string;
+      maximizedEarlyIncentives: string;
+      rewardMultiplierSystem: string;
+      networkHealthLabel: string;
+      healthyOnMainnet: string;
+      degraded: string;
+      blocked: string;
+      miningReady: string;
+      safe: string;
+      safeMode: string;
+      guardedMode: string;
+      localOnlyMode: string;
+    };
+
+    // Active Miner Dialog
+    activeMinerDialog: {
+      cancel: string;
+      takingOver: string;
+      forceTakeover: string;
+      forceTakeoverDesc: string;
+    };
+
+    // Hard Reorg Banner
+    hardReorgBanner: {
+      hardReorgDetected: string;
+      dismiss: string;
+    };
+
+    // Config Checker
+    configChecker: {
+      browserEnvironment: string;
+      networkId: string;
+      initialDifficulty: string;
+      snapshotInterval: string;
+      chainContext: string;
+      notConnected: string;
+      nodeAddress: string;
+      walletInitialized: string;
+      miningStatus: string;
+      miningActive: string;
+    };
+
 
 }
 
@@ -1238,6 +1608,332 @@ export const translations: Record<Locale, Translations> = {
       seconds: "秒",
       unknown: "Unknown",
     },
+    dailyInfo: {
+      checkIn: "今日签到",
+      checkedIn: "已签到",
+      notCheckedIn: "未签到",
+      checkingIn: "签到中...",
+      checkInButton: "签到",
+      consecutiveDays: "连续天数",
+      days: "天",
+      multiplier: "倍率",
+      referralStatus: "邀请状态",
+      bound: "已绑定",
+      invitees: "邀请人数",
+      miningStatus: "挖矿状态",
+      active: "进行中",
+      stopped: "已停止",
+      clickToCopyInviteCode: "点击复制邀请码",
+      inviteCode: "邀请码",
+      copied: "✅ 已复制",
+    },
+    miningStatus: {
+      checking: "检查中...",
+      mining: "正在挖矿",
+      notReady: "未就绪",
+      readyToMine: "就绪，可以挖矿",
+      limitedMode: "受限模式（可挖矿）",
+      localMode: "本地模式",
+      stopClusterMining: "停止集群挖矿",
+      stopMining: "停止挖矿",
+      leaderOnly: "仅 LEADER 可挖矿",
+      startClusterMining: "开始集群挖矿",
+      startMiningGlobalPool: "开始挖矿（全局矿池）",
+      startMiningSolo: "开始挖矿",
+      cannotStartMining: "无法开始挖矿",
+      quorumScore: "Quorum分数",
+      independentPeers: "独立节点",
+      referralCodeBinding: "🎯 邀请码绑定",
+      enterInviteCodeOrAddress: "输入邀请码或邀请地址",
+      bind: "绑定",
+      referralAddressBound: "✅ 已绑定邀请地址",
+      errorCheckingMiningStatus: "检查挖矿状态时出错",
+    },
+    networkSecurity: {
+      networkSecurityStatus: "🛡️ 网络 & 安全状态",
+      loading: "加载中...",
+      finality: "🔐 Finality",
+      initializationMode: "初始化模式",
+      normalMode: "正常模式",
+      first50BlocksRelaxed: "前 50 块放宽限制",
+      stateLock: "📡 StateLock",
+      locked: "已锁定",
+      earlyStage: "早期阶段",
+      stateLockNotFormed: "StateLock 未形成，已放宽检查",
+      genesisMode: "🌟 Genesis Mode",
+      genesisModeDesc: "当前处于创世阶段，已放宽部分安全检查，以便主网启动。",
+      finalityInitializationMode: "🔵 Finality 初始化模式",
+      finalityInitializationModeDesc: "Finality 系统正在初始化，允许挖矿。",
+    },
+    miningStatusBar: {
+      miningLeader: "正在挖矿 · Leader",
+      readyCanMine: "就绪 · 可以挖矿",
+      waitingLimitedMode: "等待条件 · 受限模式",
+      conditionsNotMet: "条件未满足",
+      notActiveMiner: "本设备不是 Active Miner",
+      height: "当前高度",
+      miningWallet: "挖矿钱包",
+      thisDeviceIsActiveMiner: "✅ 本设备为 Active Miner",
+      anotherDeviceIsMining: "⚠️ 另一个设备正在挖矿",
+      noActiveMiner: "⚪ 未设置 Active Miner",
+      details: "详情",
+    },
+    rewardBreakdown: {
+      expectedBlockReward: "💰 预期区块奖励",
+      calculating: "计算中...",
+      expectedBlockRewardThisDevice: "💰 本设备当前预期区块奖励",
+      collapse: "收起",
+      expandDetails: "展开详情",
+      baseBlockReward: "基础区块奖励",
+      totalMultiplierCapped: "总乘数（封顶）",
+      expectedTotalReward: "预期总奖励",
+      globalMultipliers: "全局乘数（封顶 3.0x）",
+      ipReputation: "IP 信誉系数",
+      sessionDuration: "在线时长",
+      activeBooster: "连续登录",
+      year1Cap: "第1年上限: 1.5x",
+      totalMultiplier: "总乘数",
+      minerBaseReward: "矿工基础奖励",
+      ipSharingWeight: "IP 共享权重（同 IP 多设备）",
+      concurrentMinersOnSameIP: "当前 IP 同时挖矿设备",
+      thisDeviceWeight: "本设备权重",
+      finalMinerReward: "最终矿工奖励",
+      referralRewards: "邀请奖励",
+      level1Referral: "一级邀请奖励",
+      valid: "有效邀请",
+      level2Referral: "二级邀请奖励",
+    },
+    referralBooster: {
+      referralBooster: "🎯 邀请 & 裂变收益",
+      myReferralRewardsOverview: "我的邀请收益总览",
+      totalLevel1ReferralRewards: "累计一级邀请奖励",
+      ofTotalSupply: "已占总量",
+      cap: "上限",
+      rewardsDecayAfterCap: "⚠️ 超过上限后，奖励按 1% 衰减发放",
+      totalLevel2ReferralRewards: "累计二级邀请奖励",
+      myReferralStatus: "我的邀请状态",
+      myInviteCode: "我的邀请码",
+      copyLink: "复制链接",
+      validInvites: "有效邀请人数",
+      validInvitesDesc: "满足在线 ≥ 60 分钟 + 挖出 ≥ 1 块",
+      pendingInvites: "待激活邀请",
+      pendingInvitesDesc: "还未满足有效条件，只按 1/10 结算",
+      activeBoosterProgress: "ActiveBooster 进度",
+      todayActive: "今日是否签到",
+      yes: "是",
+      no: "否",
+      consecutiveMiningDays: "连续挖矿天数",
+      currentMultiplier: "当前倍率",
+      nextTier: "下一个档位提示",
+      keepGoingFor: "再坚持",
+      multiplierFrom: "倍率从",
+      currentYear: "当前年份",
+      activeBoosterCap: "ActiveBooster 上限",
+      tips: "🎯 提示",
+      tip1: "邀请真实矿工，长期在线收益更高",
+      tip2: "同一 IP 多设备挖矿只会摊薄收益（权重衰减到 0.1x）",
+      tip3: "连续挖矿越久，ActiveBooster 倍率越高",
+    },
+    localStateSync: {
+      title: "本地状态同步",
+      syncStatus: "同步状态",
+      synced: "已同步",
+      syncing: "同步中...",
+      outOfSync: "未同步",
+      error: "错误",
+      lastSyncHeight: "最后同步高度",
+      lastSyncTime: "最后同步时间",
+      consistencyCheck: "一致性检查",
+      consistent: "一致",
+      inconsistent: "不一致",
+      tipHashMismatch: "Tip Hash 不匹配",
+      heightMismatch: "高度不匹配",
+      stateCommitmentMismatch: "State Commitment 不匹配",
+      networkHeight: "网络高度",
+      syncProgress: "同步进度",
+      behind: "落后",
+      syncingNow: "正在同步中...",
+    },
+    globalSentinel: {
+      title: "🔍 全局一致性监控",
+      collectingNetworkView: "正在收集网络视图信息...",
+      forkDetected: "⚠️ 检测到分叉",
+      recommendedActions: "💡 建议操作",
+    },
+    networkHealth: {
+      title: "🌐 网络健康状态",
+      bootstrapComplete: "Bootstrap 完成",
+      finalityStatus: "Finality 状态",
+      initMode: "初始化模式",
+      localRole: "本地角色",
+      walletValid: "钱包有效",
+      networkValidated: "网络验证",
+      quorumScore: "Quorum 分数",
+      independentPeer: "独立 Peer",
+      admissionStatus: "准入状态",
+      bootstrapStatus: "Bootstrap 状态",
+      localTip: "本地 Tip",
+    },
+    heightSync: {
+      shadowNode: "Shadow Node",
+      signalRootTip: "Signal RootTip",
+      localHeight: "本地高度",
+    },
+    quorumScore: {
+      hideExplanation: "隐藏说明",
+      scoreBreakdown: "分数详情",
+      requiredScore: "需要分数",
+      currentScore: "当前分数",
+      independentPeerCount: "独立 Peer 数",
+      peerAnalysis: "Peer 分析表",
+      peerId: "Peer ID",
+    },
+    genesisQuorum: {
+      bootstrapIncomplete: "Bootstrap 未完成",
+    },
+    miningStatusBanner: {
+      coldStart: "冷启动",
+      earlyGrowth: "早期增长",
+      miningBlocked: "当前无法挖矿",
+      stopMining: "停止挖矿",
+      startMining: "开始挖矿",
+    },
+    miningReadiness: {
+      bootstrapIncomplete: "Bootstrap 未完成",
+      syncingBlocks: "正在同步区块",
+      viewDetails: "查看详情",
+    },
+    miningLiveStats: {
+      localCluster: "本地集群",
+      globalPool: "全局矿池",
+      currentMode: "当前模式",
+      currentHeight: "当前高度",
+      blockStats: "区块统计",
+      effectiveRate: "有效率",
+    },
+    miningOnboarding: {
+      powerSave: "省电模式",
+      detectedDevice: "检测到的设备",
+      recommendedWorkers: "推荐 Worker 数",
+      dutyCycle: "Duty Cycle",
+    },
+    miningModeSelector: {
+      solo: "单机挖矿",
+      soloDesc: "使用单个 Worker 进行挖矿，适合低功耗设备",
+      localCluster: "本地集群",
+      localClusterDesc: "使用多个 Worker 并行挖矿，提高算力",
+      globalPool: "全局矿池",
+      globalPoolDesc: "加入全局矿池，与其他节点协作挖矿",
+      requiresHigherQuorum: "需要更高的 Quorum 分数",
+      followerMiningDisabled: "⚠️ 此实例为 FOLLOWER（只读模式），所有挖矿模式已禁用",
+      miningMode: "挖矿模式",
+    },
+    privacyPanel: {
+      walletOrChainNotInitialized: "钱包或链上下文未初始化",
+      pleaseEnterRecipientPublicKeys: "请输入接收者的公钥",
+      amountMustBePositive: "金额必须为正数",
+      invalidPublicKeyFormat: "公钥格式无效（应为 JSON）",
+      invalidStartHeight: "无效的起始高度",
+      scanning: "扫描中...",
+      alreadyUpToDate: "已是最新状态",
+      shieldedTransfers: "🔒 隐私转账",
+      pleaseCreateOrSelectWallet: "请先创建或选择一个钱包",
+      shieldedBalance: "💰 隐私余额",
+      walletAddress: "钱包地址",
+      shieldedBalanceLabel: "隐私余额",
+      noteCount: "Note 数量",
+      unspent: "未花费",
+      scanStatus: "扫描状态",
+      notScanned: "未扫描",
+      viewStealthKeys: "查看 Stealth Keys",
+      receivedNotes: "📝 收到的 Notes",
+      rescanFromHeight: "从高度开始扫描",
+      rescan: "🔄 重新扫描",
+      resyncLatest: "🔄 同步最新",
+      noReceivedShieldedNotes: "暂无收到的隐私 note",
+      noteId: "Note ID",
+      amount: "金额",
+      status: "状态",
+      blockHeight: "区块高度",
+      spent: "已花费",
+      unspentNote: "未花费",
+      sendShieldedTransfer: "📤 发送隐私转账",
+      recipientPubViewKey: "接收者 Pub View Key (JSON)",
+      recipientPubSpendKey: "接收者 Pub Spend Key (JSON)",
+      amountIdc: "金额 (IDC)",
+      memoOptional: "备注 (可选)",
+      optionalMemo: "可选备注",
+      scanFailed: "扫描失败",
+    },
+    app: {
+      openMenu: "Open menu",
+      globalConsistencySentinel: "🔍 全局一致性监控",
+      networkHealthStatus: "🌐 网络健康状态",
+      coldStartMode: "冷启动模式",
+      mainnetAdmissionRules: "📋 主网准入规则",
+      followerMode: "FOLLOWER 模式",
+      rewardsNetworkInfo: "📊 奖励与网络信息",
+      hideAdvancedSettings: "▼ 隐藏高级设置",
+      showAdvancedSettings: "▶ 显示高级设置",
+      advancedSettings: "⚙️ 高级设置",
+      cannotMine: "无法挖矿",
+      miningEffectiveness: "挖矿有效性统计",
+      acceptedBlocks: "已接受区块:",
+      rejectedOrphaned: "拒绝/孤块:",
+      totalMined: "总挖矿数:",
+      effectiveness: "有效率:",
+      cacheSize: "缓存大小",
+      downloadProgress: "下载进度",
+      chunks: "块数",
+      speed: "速度",
+      gsnDesc: "💡 GSN: 所有节点通过 P2P 自动共享快照。",
+      gsnSeeding: " 您正在向其他节点提供快照。",
+      storageCleanup: "🧹 存储清理",
+      cleanUnusedStorage: "🧹 清理未使用的存储",
+      warning: "警告",
+      totalSupplyDesc: "总供应量：10 亿 IDC（固定上限）",
+      emissionPeriodDesc: "发行周期：10 年（不是 100 年）",
+      blockTimeDesc: "区块时间：约 10 秒",
+      year1OutputDesc: "第一年产出：50%（500M IDC）",
+      first3YearsDesc: "前 3 年产出：90%（875M IDC）",
+      blocksPerYearDesc: "每年区块数：3,153,600 个区块",
+      year: "年份",
+      yearlyOutput: "年度产出",
+      cumulativePercent: "累计占比",
+      maximizedEarlyIncentives: "最大化早期激励",
+      rewardMultiplierSystem: "奖励系数系统",
+      networkHealthLabel: "网络健康状态:",
+      healthyOnMainnet: "✅ 健康 & 主网",
+      degraded: "⚠️ 降级",
+      blocked: "🚫 已阻止",
+      miningReady: "挖矿就绪:",
+      safe: "✅ 安全",
+      safeMode: "✅ 安全模式（网络健康）",
+      guardedMode: "🟡 保护模式（低连接）",
+      localOnlyMode: "🔵 本地训练模式",
+    },
+    activeMinerDialog: {
+      cancel: "❌ 取消",
+      takingOver: "接管中...",
+      forceTakeover: "⚠️ 强制接管",
+      forceTakeoverDesc: "⚠️ 强制接管将停止另一设备的挖矿，并在此设备上开始挖矿。",
+    },
+    hardReorgBanner: {
+      hardReorgDetected: "发生链重组",
+      dismiss: "关闭",
+    },
+    configChecker: {
+      browserEnvironment: "Browser Environment",
+      networkId: "Network ID",
+      initialDifficulty: "Initial Difficulty",
+      snapshotInterval: "Snapshot Interval",
+      chainContext: "Chain Context",
+      notConnected: "Not connected",
+      nodeAddress: "Node Address",
+      walletInitialized: "Wallet initialized",
+      miningStatus: "Mining Status",
+      miningActive: "Mining active",
+    },
   },
   en: {
     common: {
@@ -1831,6 +2527,332 @@ export const translations: Record<Locale, Translations> = {
     commonExpanded: {
       seconds: "s",
       unknown: "Unknown",
+    },
+    dailyInfo: {
+      checkIn: "Check In",
+      checkedIn: "Done",
+      notCheckedIn: "Pending",
+      checkingIn: "Checking in...",
+      checkInButton: "Check",
+      consecutiveDays: "Consecutive",
+      days: "days",
+      multiplier: "Multiplier",
+      referralStatus: "Referral",
+      bound: "Bound",
+      invitees: "Invitees",
+      miningStatus: "Mining",
+      active: "Active",
+      stopped: "Stopped",
+      clickToCopyInviteCode: "Click to copy invite code",
+      inviteCode: "Invite Code",
+      copied: "✅ Copied",
+    },
+    miningStatus: {
+      checking: "Checking...",
+      mining: "Mining",
+      notReady: "Not Ready",
+      readyToMine: "Ready to Mine",
+      limitedMode: "Limited / Degraded",
+      localMode: "Local Mode",
+      stopClusterMining: "Stop Cluster Mining",
+      stopMining: "Stop Mining",
+      leaderOnly: "LEADER Only",
+      startClusterMining: "Start Mining (Cluster)",
+      startMiningGlobalPool: "Start Mining (Global Pool)",
+      startMiningSolo: "Start Mining (Solo)",
+      cannotStartMining: "Cannot start mining",
+      quorumScore: "Quorum Score",
+      independentPeers: "Independent Peers",
+      referralCodeBinding: "🎯 Referral Code",
+      enterInviteCodeOrAddress: "Enter invite code or address",
+      bind: "Bind",
+      referralAddressBound: "✅ Referral Address Bound",
+      errorCheckingMiningStatus: "Error checking mining status",
+    },
+    networkSecurity: {
+      networkSecurityStatus: "🛡️ Network & Security Status",
+      loading: "Loading...",
+      finality: "🔐 Finality",
+      initializationMode: "Initialization Mode",
+      normalMode: "Normal Mode",
+      first50BlocksRelaxed: "First 50 blocks relaxed",
+      stateLock: "📡 StateLock",
+      locked: "Locked",
+      earlyStage: "Early Stage",
+      stateLockNotFormed: "StateLock not formed, checks relaxed",
+      genesisMode: "🌟 Genesis Mode",
+      genesisModeDesc: "Currently in genesis phase, some security checks relaxed for mainnet launch.",
+      finalityInitializationMode: "🔵 Finality Initialization Mode",
+      finalityInitializationModeDesc: "Finality system initializing, mining allowed.",
+    },
+    miningStatusBar: {
+      miningLeader: "Mining · Leader",
+      readyCanMine: "Ready · Can Mine",
+      waitingLimitedMode: "Waiting · Limited Mode",
+      conditionsNotMet: "Conditions Not Met",
+      notActiveMiner: "Not Active Miner",
+      height: "Height",
+      miningWallet: "Mining Wallet",
+      thisDeviceIsActiveMiner: "✅ This Device is Active Miner",
+      anotherDeviceIsMining: "⚠️ Another Device is Mining",
+      noActiveMiner: "⚪ No Active Miner",
+      details: "Details",
+    },
+    rewardBreakdown: {
+      expectedBlockReward: "💰 Expected Block Reward",
+      calculating: "Calculating...",
+      expectedBlockRewardThisDevice: "💰 Expected Block Reward (If This Device Mines Next Block)",
+      collapse: "Collapse",
+      expandDetails: "Expand Details",
+      baseBlockReward: "Base Block Reward",
+      totalMultiplierCapped: "Total Multiplier (Capped)",
+      expectedTotalReward: "Expected Total Reward",
+      globalMultipliers: "Global Multipliers (Capped at 3.0x)",
+      ipReputation: "IP Reputation",
+      sessionDuration: "Session Duration",
+      activeBooster: "ActiveBooster",
+      year1Cap: "Year 1 Cap: 1.5x",
+      totalMultiplier: "Total Multiplier",
+      minerBaseReward: "Miner Base Reward",
+      ipSharingWeight: "IP Sharing Weight (Same IP Multiple Devices)",
+      concurrentMinersOnSameIP: "Concurrent Miners on Same IP",
+      thisDeviceWeight: "This Device Weight",
+      finalMinerReward: "Final Miner Reward",
+      referralRewards: "Referral Rewards",
+      level1Referral: "Level 1 Referral",
+      valid: "Valid",
+      level2Referral: "Level 2 Referral",
+    },
+    referralBooster: {
+      referralBooster: "🎯 Referral & Booster",
+      myReferralRewardsOverview: "My Referral Rewards Overview",
+      totalLevel1ReferralRewards: "Total Level 1 Referral Rewards",
+      ofTotalSupply: "Of Total Supply",
+      cap: "Cap",
+      rewardsDecayAfterCap: "⚠️ Rewards decay to 1% after cap",
+      totalLevel2ReferralRewards: "Total Level 2 Referral Rewards",
+      myReferralStatus: "My Referral Status",
+      myInviteCode: "My Invite Code",
+      copyLink: "Copy Link",
+      validInvites: "Valid Invites",
+      validInvitesDesc: "Online ≥ 60 min + Mined ≥ 1 block",
+      pendingInvites: "Pending Invites",
+      pendingInvitesDesc: "Not yet valid, rewards at 1/10 rate",
+      activeBoosterProgress: "ActiveBooster Progress",
+      todayActive: "Today Active",
+      yes: "Yes",
+      no: "No",
+      consecutiveMiningDays: "Consecutive Days",
+      currentMultiplier: "Current Multiplier",
+      nextTier: "Next Tier",
+      keepGoingFor: "Keep going for",
+      multiplierFrom: "multiplier from",
+      currentYear: "Current Year",
+      activeBoosterCap: "ActiveBooster Cap",
+      tips: "🎯 Tips",
+      tip1: "Invite real miners, long-term online rewards are higher",
+      tip2: "Multiple devices on same IP will dilute rewards (weight decays to 0.1x)",
+      tip3: "Longer consecutive mining = higher ActiveBooster multiplier",
+    },
+    localStateSync: {
+      title: "Local State Sync",
+      syncStatus: "Sync Status",
+      synced: "Synced",
+      syncing: "Syncing...",
+      outOfSync: "Out of Sync",
+      error: "Error",
+      lastSyncHeight: "Last Sync Height",
+      lastSyncTime: "Last Sync Time",
+      consistencyCheck: "Consistency Check",
+      consistent: "Consistent",
+      inconsistent: "Inconsistent",
+      tipHashMismatch: "Tip Hash mismatch",
+      heightMismatch: "Height mismatch",
+      stateCommitmentMismatch: "State Commitment mismatch",
+      networkHeight: "Network Height",
+      syncProgress: "Sync Progress",
+      behind: "behind",
+      syncingNow: "Syncing...",
+    },
+    globalSentinel: {
+      title: "🔍 Global Consistency Sentinel",
+      collectingNetworkView: "Collecting network view information...",
+      forkDetected: "⚠️ Fork Detected",
+      recommendedActions: "💡 Recommended Actions",
+    },
+    networkHealth: {
+      title: "🌐 Network Health Status",
+      bootstrapComplete: "Bootstrap Complete",
+      finalityStatus: "Finality Status",
+      initMode: "Init Mode",
+      localRole: "Local Role",
+      walletValid: "Wallet Valid",
+      networkValidated: "Network Validated",
+      quorumScore: "Quorum Score",
+      independentPeer: "Independent Peers",
+      admissionStatus: "Admission Status",
+      bootstrapStatus: "Bootstrap Status",
+      localTip: "Local Tip",
+    },
+    heightSync: {
+      shadowNode: "Shadow Node",
+      signalRootTip: "Signal RootTip",
+      localHeight: "Local Height",
+    },
+    quorumScore: {
+      hideExplanation: "Hide Explanation",
+      scoreBreakdown: "Score Breakdown",
+      requiredScore: "Required Score",
+      currentScore: "Current Score",
+      independentPeerCount: "Independent Peer Count",
+      peerAnalysis: "Peer Analysis",
+      peerId: "Peer ID",
+    },
+    genesisQuorum: {
+      bootstrapIncomplete: "Bootstrap incomplete",
+    },
+    miningStatusBanner: {
+      coldStart: "Cold Start",
+      earlyGrowth: "Early Growth",
+      miningBlocked: "Mining Blocked",
+      stopMining: "Stop Mining",
+      startMining: "Start Mining",
+    },
+    miningReadiness: {
+      bootstrapIncomplete: "Bootstrap Incomplete",
+      syncingBlocks: "Syncing Blocks",
+      viewDetails: "View Details",
+    },
+    miningLiveStats: {
+      localCluster: "Local Cluster",
+      globalPool: "Global Pool",
+      currentMode: "Current Mode",
+      currentHeight: "Current Height",
+      blockStats: "Block Stats",
+      effectiveRate: "Effective Rate",
+    },
+    miningOnboarding: {
+      powerSave: "Power Save",
+      detectedDevice: "Detected Device",
+      recommendedWorkers: "Recommended Workers",
+      dutyCycle: "Duty Cycle",
+    },
+    miningModeSelector: {
+      solo: "Solo",
+      soloDesc: "Mine with a single worker, suitable for low-power devices",
+      localCluster: "Local Cluster",
+      localClusterDesc: "Use multiple workers for parallel mining, higher hash rate",
+      globalPool: "Global Pool",
+      globalPoolDesc: "Join global pool, collaborate with other nodes",
+      requiresHigherQuorum: "Requires higher Quorum score",
+      followerMiningDisabled: "⚠️ This instance is FOLLOWER (read-only), all mining modes are disabled",
+      miningMode: "Mining Mode",
+    },
+    privacyPanel: {
+      walletOrChainNotInitialized: "Wallet or chain context not initialized",
+      pleaseEnterRecipientPublicKeys: "Please enter recipient public keys",
+      amountMustBePositive: "Amount must be positive",
+      invalidPublicKeyFormat: "Invalid public key format (should be JSON)",
+      invalidStartHeight: "Invalid start height",
+      scanning: "Scanning...",
+      alreadyUpToDate: "Already up to date",
+      shieldedTransfers: "🔒 Shielded Transfers",
+      pleaseCreateOrSelectWallet: "Please create or select a wallet first",
+      shieldedBalance: "💰 Shielded Balance",
+      walletAddress: "Wallet Address",
+      shieldedBalanceLabel: "Shielded Balance",
+      noteCount: "Note Count",
+      unspent: "unspent",
+      scanStatus: "Scan Status",
+      notScanned: "Not scanned",
+      viewStealthKeys: "View Stealth Keys",
+      receivedNotes: "📝 Received Notes",
+      rescanFromHeight: "Rescan from height",
+      rescan: "🔄 Rescan",
+      resyncLatest: "🔄 Resync Latest",
+      noReceivedShieldedNotes: "No received shielded notes",
+      noteId: "Note ID",
+      amount: "Amount",
+      status: "Status",
+      blockHeight: "Block Height",
+      spent: "Spent",
+      unspentNote: "Unspent",
+      sendShieldedTransfer: "📤 Send Shielded Transfer",
+      recipientPubViewKey: "Recipient Pub View Key (JSON)",
+      recipientPubSpendKey: "Recipient Pub Spend Key (JSON)",
+      amountIdc: "Amount (IDC)",
+      memoOptional: "Memo (optional)",
+      optionalMemo: "Optional memo",
+      scanFailed: "Scan failed",
+    },
+    app: {
+      openMenu: "Open menu",
+      globalConsistencySentinel: "🔍 Global Consistency Sentinel",
+      networkHealthStatus: "🌐 Network Health Status",
+      coldStartMode: "Cold Start Mode",
+      mainnetAdmissionRules: "📋 Mainnet Admission Rules",
+      followerMode: "FOLLOWER Mode",
+      rewardsNetworkInfo: "📊 Rewards & Network Info",
+      hideAdvancedSettings: "▼ Hide Advanced Settings",
+      showAdvancedSettings: "▶ Show Advanced Settings",
+      advancedSettings: "⚙️ Advanced Settings",
+      cannotMine: "Cannot mine",
+      miningEffectiveness: "Mining Effectiveness",
+      acceptedBlocks: "Accepted Blocks:",
+      rejectedOrphaned: "Rejected/Orphaned:",
+      totalMined: "Total Mined:",
+      effectiveness: "Effectiveness:",
+      cacheSize: "Cache Size",
+      downloadProgress: "Download Progress",
+      chunks: "Chunks",
+      speed: "Speed",
+      gsnDesc: "💡 GSN: All nodes automatically share snapshots via P2P.",
+      gsnSeeding: " You are seeding snapshots to other nodes.",
+      storageCleanup: "🧹 Storage Cleanup",
+      cleanUnusedStorage: "🧹 Clean Unused Storage",
+      warning: "Warning",
+      totalSupplyDesc: "Total Supply: 1 billion IDC (fixed cap)",
+      emissionPeriodDesc: "Emission Period: 10 years (not 100 years)",
+      blockTimeDesc: "Block Time: ~10 seconds",
+      year1OutputDesc: "Year 1 Output: 50% (500M IDC)",
+      first3YearsDesc: "First 3 Years: 90% (875M IDC)",
+      blocksPerYearDesc: "Blocks per Year: 3,153,600 blocks",
+      year: "Year",
+      yearlyOutput: "Yearly Output",
+      cumulativePercent: "Cumulative %",
+      maximizedEarlyIncentives: "Maximized Early Incentives",
+      rewardMultiplierSystem: "Reward Multiplier System",
+      networkHealthLabel: "Network Health:",
+      healthyOnMainnet: "✅ Healthy & On Mainnet",
+      degraded: "⚠️ Degraded",
+      blocked: "🚫 Blocked",
+      miningReady: "Mining Ready:",
+      safe: "✅ SAFE",
+      safeMode: "✅ SAFE Mode (Network Healthy)",
+      guardedMode: "🟡 GUARDED Mode (Low Connectivity)",
+      localOnlyMode: "🔵 LOCAL-ONLY Mode",
+    },
+    activeMinerDialog: {
+      cancel: "❌ Cancel",
+      takingOver: "Taking over...",
+      forceTakeover: "⚠️ Force Takeover",
+      forceTakeoverDesc: "⚠️ Force takeover will stop mining on the other device and start mining on this device.",
+    },
+    hardReorgBanner: {
+      hardReorgDetected: "Hard Reorg Detected",
+      dismiss: "Dismiss",
+    },
+    configChecker: {
+      browserEnvironment: "Browser Environment",
+      networkId: "Network ID",
+      initialDifficulty: "Initial Difficulty",
+      snapshotInterval: "Snapshot Interval",
+      chainContext: "Chain Context",
+      notConnected: "Not connected",
+      nodeAddress: "Node Address",
+      walletInitialized: "Wallet initialized",
+      miningStatus: "Mining Status",
+      miningActive: "Mining active",
     },
   },
 };

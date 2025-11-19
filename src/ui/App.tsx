@@ -599,7 +599,7 @@ function App() {
             } else {
               console.warn("[App] Invalid invite code format:", inviteCode);
             }
-          }).catch((error) => {
+          }).catch(() => {
             // If import fails, try direct address format
             if (inviteCode.startsWith("idc_")) {
               console.log("[App] Found invite address directly in URL:", inviteCode);

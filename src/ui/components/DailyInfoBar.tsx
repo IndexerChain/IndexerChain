@@ -12,9 +12,9 @@
 import { useState, useEffect } from "react";
 import { getActiveBoosterTracker, saveActiveBoosterData } from "../../core/activeBooster.js";
 import { getReferralSystem, generateReferralCode } from "../../core/referralSystem.js";
-import { IDC_BLOCKS_PER_YEAR } from "../../core/idcEmission.js";
 import type { ChainContext } from "../../core/chain.js";
 import type { Address } from "../../core/types.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 interface DailyInfoBarProps {
   chainContext: ChainContext | null;
@@ -33,7 +33,7 @@ export function DailyInfoBar({
   isMining,
   clusterMining,
   currentReferrerAddress,
-  locale,
+  locale: _locale,
 }: DailyInfoBarProps) {
   const [activeBoosterData, setActiveBoosterData] = useState<{
     consecutiveDays: number;
@@ -45,7 +45,7 @@ export function DailyInfoBar({
   const [inviteCode, setInviteCode] = useState<string>("");
   const [copySuccess, setCopySuccess] = useState<boolean>(false);
 
-  const isZh = locale === "zh";
+  const { t } = useI18n();
 
   // Update ActiveBooster data
   useEffect(() => {
@@ -100,8 +100,6 @@ export function DailyInfoBar({
       // Update UI immediately
       const consecutiveDays = activeBooster.getConsecutiveDays();
       const multiplier = activeBooster.getMultiplier();
-      const today = new Date();
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
       
       setActiveBoosterData({
         consecutiveDays,
@@ -164,12 +162,12 @@ export function DailyInfoBar({
           </span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-              {isZh ? "今日签到" : "Check In"}
+              {t("dailyInfo.checkIn")}
             </div>
             <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: activeBoosterData?.isActiveToday ? "#155724" : "#856404" }}>
               {activeBoosterData?.isActiveToday 
-                ? (isZh ? "已签到" : "Done")
-                : (isZh ? "未签到" : "Pending")}
+                ? t("dailyInfo.checkedIn")
+                : t("dailyInfo.notCheckedIn")}
             </div>
           </div>
           {!activeBoosterData?.isActiveToday && (
@@ -188,7 +186,7 @@ export function DailyInfoBar({
                 fontWeight: "500",
               }}
             >
-              {isCheckingIn ? (isZh ? "..." : "...") : (isZh ? "签到" : "Check")}
+              {isCheckingIn ? "..." : t("dailyInfo.checkInButton")}
             </button>
           )}
         </div>
@@ -207,10 +205,10 @@ export function DailyInfoBar({
           <span style={{ fontSize: "1.2rem" }}>📅</span>
           <div>
             <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-              {isZh ? "连续天数" : "Consecutive"}
+              {t("dailyInfo.consecutiveDays")}
             </div>
             <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: "#333" }}>
-              {activeBoosterData?.consecutiveDays || 0} {isZh ? "天" : "days"}
+              {activeBoosterData?.consecutiveDays || 0} {t("dailyInfo.days")}
             </div>
           </div>
         </div>
@@ -229,7 +227,7 @@ export function DailyInfoBar({
           <span style={{ fontSize: "1.2rem" }}>⚡</span>
           <div>
             <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-              {isZh ? "倍率" : "Multiplier"}
+              {t("dailyInfo.multiplier")}
             </div>
             <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: "#667eea" }}>
               {activeBoosterData?.multiplier.toFixed(2) || "1.00"}x
@@ -252,10 +250,10 @@ export function DailyInfoBar({
             <span style={{ fontSize: "1.2rem" }}>🎯</span>
             <div>
               <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-                {isZh ? "邀请状态" : "Referral"}
+                {t("dailyInfo.referralStatus")}
               </div>
               <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: "#0c5460" }}>
-                {isZh ? "已绑定" : "Bound"}
+                {t("dailyInfo.bound")}
               </div>
             </div>
           </div>
@@ -276,7 +274,7 @@ export function DailyInfoBar({
             <span style={{ fontSize: "1.2rem" }}>👥</span>
             <div>
               <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-                {isZh ? "邀请人数" : "Invitees"}
+                {t("dailyInfo.invitees")}
               </div>
               <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: "#333" }}>
                 {referralCount}
@@ -301,7 +299,7 @@ export function DailyInfoBar({
           </span>
           <div>
             <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-              {isZh ? "挖矿状态" : "Mining"}
+              {t("dailyInfo.miningStatus")}
             </div>
             <div style={{ 
               fontSize: "0.9rem", 
@@ -309,8 +307,8 @@ export function DailyInfoBar({
               color: (isMining || clusterMining) ? "#155724" : "#666"
             }}>
               {(isMining || clusterMining) 
-                ? (isZh ? "进行中" : "Active")
-                : (isZh ? "已停止" : "Stopped")}
+                ? t("dailyInfo.active")
+                : t("dailyInfo.stopped")}
             </div>
           </div>
         </div>
@@ -341,12 +339,12 @@ export function DailyInfoBar({
                 e.currentTarget.style.background = "#e7f3ff";
               }
             }}
-            title={isZh ? "点击复制邀请码" : "Click to copy invite code"}
+            title={t("dailyInfo.clickToCopyInviteCode")}
           >
             <span style={{ fontSize: "1.2rem" }}>🔗</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: "0.25rem" }}>
-                {isZh ? "邀请码" : "Invite Code"}
+                {t("dailyInfo.inviteCode")}
               </div>
               <div style={{ 
                 fontSize: "0.85rem", 
@@ -358,7 +356,7 @@ export function DailyInfoBar({
                 textOverflow: "ellipsis"
               }}>
                 {copySuccess 
-                  ? (isZh ? "✅ 已复制" : "✅ Copied")
+                  ? t("dailyInfo.copied")
                   : `${inviteCode.substring(0, 12)}...`}
               </div>
             </div>
