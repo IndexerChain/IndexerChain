@@ -394,6 +394,31 @@ export class ShadowNodeClient {
   }
 
   /**
+   * Helper method to safely parse JSON response
+   */
+  private async safeParseJsonResponse(response: Response): Promise<any> {
+    const contentType = response.headers.get('content-type');
+    const text = await response.text();
+    
+    // If content type is not JSON or response is empty, return null
+    if (!contentType || !contentType.includes('application/json')) {
+      // If it's a plain text error message, return it
+      if (text && text.trim()) {
+        return { error: text.trim() };
+      }
+      return null;
+    }
+    
+    // Try to parse as JSON
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      // If parsing fails, return the text as error
+      return { error: text.trim() || 'Invalid response format' };
+    }
+  }
+
+  /**
    * Phase 41: Claim active miner status
    */
   async claimActiveMiner(nodeId: string): Promise<{ success: boolean; error?: string; activeMinerId?: string }> {
@@ -413,24 +438,52 @@ export class ShadowNodeClient {
         }),
       });
 
+      // Handle 503 Service Unavailable or other server errors
+      if (response.status === 503) {
+        const data = await this.safeParseJsonResponse(response);
+        const errorMsg = data?.error || 'Service temporarily unavailable. Please try again later.';
+        return { success: false, error: errorMsg };
+      }
+
       if (response.status === 409) {
         // Conflict - another miner is active
-        const data = await response.json();
-        return { success: false, error: data.error || 'Another device is already mining', activeMinerId: data.activeMinerId };
+        const data = await this.safeParseJsonResponse(response);
+        return { 
+          success: false, 
+          error: data?.error || 'Another device is already mining', 
+          activeMinerId: data?.activeMinerId 
+        };
       }
 
       if (!response.ok) {
-        const data = await response.json();
-        return { success: false, error: data.error || 'Failed to claim active miner' };
+        const data = await this.safeParseJsonResponse(response);
+        const errorMsg = data?.error || `Failed to claim active miner (status: ${response.status})`;
+        return { success: false, error: errorMsg };
       }
 
-      const data = await response.json();
+      const data = await this.safeParseJsonResponse(response);
+      if (!data) {
+        return { success: false, error: 'Invalid response from server' };
+      }
+
       this.activeMinerId = data.activeMinerId || null;
       this.notifyActiveMinerHandlers(this.activeMinerId);
       return { success: true };
     } catch (error) {
+      // Handle network errors, CORS errors, etc.
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Check if it's a CORS error
+      if (errorMessage.includes('CORS') || errorMessage.includes('fetch')) {
+        logger.warn(`[ShadowNode] CORS or network error when claiming active miner:`, error);
+        return { 
+          success: false, 
+          error: 'Network error: Unable to connect to server. Please check your connection.' 
+        };
+      }
+      
       logger.error(`[ShadowNode] Failed to claim active miner:`, error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      return { success: false, error: errorMessage };
     }
   }
 

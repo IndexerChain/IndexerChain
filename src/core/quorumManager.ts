@@ -25,6 +25,7 @@ import type { P2PNode } from "./p2p.js";
 import type { ChainContext } from "./chain.js";
 import { isMainnet } from "./networkParams.js";
 import { logger } from "./logger.js";
+import { getYear } from "./idcEmission.js";
 
 /**
  * Phase 33: Peer quality metrics for quorum scoring
@@ -301,7 +302,22 @@ export class QuorumManager {
   }
 
   /**
+   * Check if we're in the first year (Year 0-1)
+   */
+  private isFirstYear(): boolean {
+    if (!this.chainContext) {
+      return false;
+    }
+    const localTip = this.chainContext.storage.getTip();
+    const localHeight = localTip?.header.height ?? 0;
+    const year = getYear(localHeight);
+    return year === 0; // Year 0 is the first year
+  }
+
+  /**
    * Calculate quorum score for a peer
+   * First year: Each peer max 40 points (IP 15, Availability 10, Height 10, Latency 5)
+   * Normal: Each peer max 100 points (IP 30, Availability 20, Height 20, Latency 10, Finality 10, GSN 10)
    */
   private calculatePeerScore(
     metrics: PeerQualityMetrics,
@@ -309,87 +325,142 @@ export class QuorumManager {
     ipHashes: Record<string, string>
   ): void {
     const breakdown = metrics.scoreBreakdown;
+    const isFirstYearMode = this.isFirstYear();
     
-    // 1. IP Independence (0-30 points)
-    // Same IP as other peers = 0 points
-    // Different IP = 30 points
-    if (!metrics.ipHash) {
-      breakdown.ipIndependence = 0; // No IP hash = cannot verify independence
-    } else {
-      const sameIPCount = Object.values(ipHashes).filter(hash => hash === metrics.ipHash).length;
-      if (sameIPCount > 1) {
-        breakdown.ipIndependence = 0; // Same IP as other peers
+    if (isFirstYearMode) {
+      // 🟦 First Year (Year 0-1) - Simplified scoring (max 40 points per peer)
+      
+      // 1. IP Independence (0-15 points)
+      if (!metrics.ipHash) {
+        breakdown.ipIndependence = 0;
       } else {
-        breakdown.ipIndependence = 30; // Unique IP
+        const sameIPCount = Object.values(ipHashes).filter(hash => hash === metrics.ipHash).length;
+        if (sameIPCount > 1) {
+          breakdown.ipIndependence = 0; // Same IP as other peers
+        } else {
+          breakdown.ipIndependence = 15; // Unique IP
+        }
       }
-    }
-    
-    // 2. Availability (0-20 points)
-    // Online > 2 minutes = 20 points
-    // Online < 2 minutes = proportional score
-    if (metrics.onlineDuration >= this.MIN_ONLINE_DURATION_MS) {
-      breakdown.availability = 20;
-    } else {
-      breakdown.availability = Math.floor((metrics.onlineDuration / this.MIN_ONLINE_DURATION_MS) * 20);
-    }
-    
-    // 3. Height Reliability (0-20 points)
-    // Height matches majority = 20 points
-    // Height differs = proportional penalty
-    if (metrics.reportedHeight !== undefined) {
-      const heightDiff = Math.abs(metrics.reportedHeight - majorityHeight);
-      if (heightDiff === 0) {
-        breakdown.heightReliability = 20;
-      } else if (heightDiff <= 3) {
-        breakdown.heightReliability = 15; // Close enough
-      } else if (heightDiff <= 10) {
-        breakdown.heightReliability = 10; // Somewhat behind
+      
+      // 2. Availability (0-10 points)
+      if (metrics.onlineDuration >= this.MIN_ONLINE_DURATION_MS) {
+        breakdown.availability = 10;
       } else {
-        breakdown.heightReliability = 0; // Too far behind
+        breakdown.availability = Math.floor((metrics.onlineDuration / this.MIN_ONLINE_DURATION_MS) * 10);
       }
-    } else {
-      breakdown.heightReliability = 10; // Unknown height = partial score
-    }
-    
-    // 4. Latency (0-10 points)
-    // < 200ms = 10 points
-    // > 200ms = proportional score
-    if (metrics.avgLatencyMs !== undefined) {
-      if (metrics.avgLatencyMs <= this.MAX_LATENCY_MS) {
-        breakdown.latency = 10;
+      
+      // 3. Height Reliability (0-10 points)
+      if (metrics.reportedHeight !== undefined) {
+        const heightDiff = Math.abs(metrics.reportedHeight - majorityHeight);
+        if (heightDiff === 0) {
+          breakdown.heightReliability = 10;
+        } else if (heightDiff <= 3) {
+          breakdown.heightReliability = 8; // Close enough
+        } else if (heightDiff <= 10) {
+          breakdown.heightReliability = 5; // Somewhat behind
+        } else {
+          breakdown.heightReliability = 0; // Too far behind
+        }
       } else {
-        breakdown.latency = Math.max(0, Math.floor(10 * (this.MAX_LATENCY_MS / metrics.avgLatencyMs)));
+        breakdown.heightReliability = 5; // Unknown height = partial score
       }
+      
+      // 4. Latency (0-5 points)
+      // < 500ms = 5 points (first year is more lenient)
+      if (metrics.avgLatencyMs !== undefined) {
+        if (metrics.avgLatencyMs <= 500) {
+          breakdown.latency = 5;
+        } else {
+          breakdown.latency = Math.max(0, Math.floor(5 * (500 / metrics.avgLatencyMs)));
+        }
+      } else {
+        breakdown.latency = 2; // Unknown latency = partial score
+      }
+      
+      // First year: Don't count Finality and GSN
+      breakdown.finalityParticipation = 0;
+      breakdown.gsnContribution = 0;
+      
+      // Calculate total score (max 40)
+      metrics.quorumScore = 
+        breakdown.ipIndependence +
+        breakdown.availability +
+        breakdown.heightReliability +
+        breakdown.latency;
     } else {
-      breakdown.latency = 5; // Unknown latency = partial score
+      // Normal scoring (max 100 points per peer)
+      
+      // 1. IP Independence (0-30 points)
+      if (!metrics.ipHash) {
+        breakdown.ipIndependence = 0;
+      } else {
+        const sameIPCount = Object.values(ipHashes).filter(hash => hash === metrics.ipHash).length;
+        if (sameIPCount > 1) {
+          breakdown.ipIndependence = 0;
+        } else {
+          breakdown.ipIndependence = 30;
+        }
+      }
+      
+      // 2. Availability (0-20 points)
+      if (metrics.onlineDuration >= this.MIN_ONLINE_DURATION_MS) {
+        breakdown.availability = 20;
+      } else {
+        breakdown.availability = Math.floor((metrics.onlineDuration / this.MIN_ONLINE_DURATION_MS) * 20);
+      }
+      
+      // 3. Height Reliability (0-20 points)
+      if (metrics.reportedHeight !== undefined) {
+        const heightDiff = Math.abs(metrics.reportedHeight - majorityHeight);
+        if (heightDiff === 0) {
+          breakdown.heightReliability = 20;
+        } else if (heightDiff <= 3) {
+          breakdown.heightReliability = 15;
+        } else if (heightDiff <= 10) {
+          breakdown.heightReliability = 10;
+        } else {
+          breakdown.heightReliability = 0;
+        }
+      } else {
+        breakdown.heightReliability = 10;
+      }
+      
+      // 4. Latency (0-10 points)
+      if (metrics.avgLatencyMs !== undefined) {
+        if (metrics.avgLatencyMs <= this.MAX_LATENCY_MS) {
+          breakdown.latency = 10;
+        } else {
+          breakdown.latency = Math.max(0, Math.floor(10 * (this.MAX_LATENCY_MS / metrics.avgLatencyMs)));
+        }
+      } else {
+        breakdown.latency = 5;
+      }
+      
+      // 5. Finality Participation (0-10 points)
+      if (metrics.finalityVotesSent > 0) {
+        const validRate = metrics.finalityVotesValid / metrics.finalityVotesSent;
+        breakdown.finalityParticipation = Math.floor(validRate * 10);
+      } else {
+        breakdown.finalityParticipation = 0;
+      }
+      
+      // 6. GSN Contribution (0-10 points)
+      if (metrics.snapshotChunksServed > 0) {
+        const validRate = metrics.snapshotChunksValid / metrics.snapshotChunksServed;
+        breakdown.gsnContribution = Math.floor(validRate * 10);
+      } else {
+        breakdown.gsnContribution = 0;
+      }
+      
+      // Calculate total score (max 100)
+      metrics.quorumScore = 
+        breakdown.ipIndependence +
+        breakdown.availability +
+        breakdown.heightReliability +
+        breakdown.latency +
+        breakdown.finalityParticipation +
+        breakdown.gsnContribution;
     }
-    
-    // 5. Finality Participation (0-10 points)
-    // Participates in finality votes = 10 points
-    if (metrics.finalityVotesSent > 0) {
-      const validRate = metrics.finalityVotesValid / metrics.finalityVotesSent;
-      breakdown.finalityParticipation = Math.floor(validRate * 10);
-    } else {
-      breakdown.finalityParticipation = 0; // No participation
-    }
-    
-    // 6. GSN Contribution (0-10 points)
-    // Serves snapshot chunks = 10 points
-    if (metrics.snapshotChunksServed > 0) {
-      const validRate = metrics.snapshotChunksValid / metrics.snapshotChunksServed;
-      breakdown.gsnContribution = Math.floor(validRate * 10);
-    } else {
-      breakdown.gsnContribution = 0; // No contribution
-    }
-    
-    // Calculate total score
-    metrics.quorumScore = 
-      breakdown.ipIndependence +
-      breakdown.availability +
-      breakdown.heightReliability +
-      breakdown.latency +
-      breakdown.finalityParticipation +
-      breakdown.gsnContribution;
   }
 
   /**

@@ -3946,13 +3946,25 @@ function App() {
             method: 'GET',
           });
           if (response.ok) {
-            const data = await response.json();
-            setActiveMinerInfo({
-              activeMinerId: data.activeMinerId,
-              lastSeen: data.activeMinerLastSeen || Date.now(),
-            });
-            setActiveMinerDialogOpen(true);
-            return; // Wait for user decision
+            try {
+              const contentType = response.headers.get('content-type');
+              const text = await response.text();
+              let data;
+              if (contentType && contentType.includes('application/json')) {
+                data = JSON.parse(text);
+              } else {
+                // Non-JSON response, skip
+                return;
+              }
+              setActiveMinerInfo({
+                activeMinerId: data.activeMinerId,
+                lastSeen: data.activeMinerLastSeen || Date.now(),
+              });
+              setActiveMinerDialogOpen(true);
+              return; // Wait for user decision
+            } catch (parseError) {
+              logger.warn("[ActiveMiner] Failed to parse response:", parseError);
+            }
           }
         } catch (error) {
           logger.warn("[ActiveMiner] Failed to get active miner info:", error);

@@ -41,6 +41,7 @@ import type { P2PNode } from "./p2p.js";
 import { validateMainnetParams, isMainnet } from "./networkParams.js";
 import { getQuorumManager } from "./quorumManager.js";
 import { logger } from "./logger.js";
+import { getYear } from "./idcEmission.js";
 
 /**
  * Phase 33: Mining permission level
@@ -121,6 +122,17 @@ const FINALITY_WARMUP_MAX_HEIGHT = 500; // Maximum height to tolerate finalizedH
  * Performs health checks before allowing mining
  */
 export class MiningGuard {
+  /**
+   * Check if we're in the first year (Year 0-1)
+   * First year: height < IDC_BLOCKS_PER_YEAR (3,153,600 blocks)
+   */
+  static isFirstYear(chainContext: ChainContext): boolean {
+    const localTip = chainContext.storage.getTip();
+    const localHeight = localTip?.header.height ?? 0;
+    const year = getYear(localHeight);
+    return year === 0; // Year 0 is the first year
+  }
+
   /**
    * Phase 39: Determine current network stage
    */
@@ -304,8 +316,68 @@ export class MiningGuard {
       miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
     }
     
+    // 🟦 First Year (Year 0-1) - Relaxed Rules
+    // First year: Only check minimal requirements, don't block on QuorumScore/StateLock/Finality
+    const isFirstYearMode = this.isFirstYear(chainContext) && isMainnetNetwork;
+    
+    if (isFirstYearMode && p2pNode) {
+      // First year requirements: ≥2 independent IPs, bootstrapComplete, no critical state drift
+      // Check state drift (only critical drift blocks mining)
+      let stateDriftCritical = false;
+      try {
+        const { getStateDriftDetector } = await import("./stateDriftDetector.js");
+        const driftDetector = getStateDriftDetector();
+        driftDetector.initialize(chainContext, p2pNode);
+        const driftCheck = driftDetector.checkDrift();
+        stateDriftCritical = driftCheck.hasDrift && driftCheck.severity === "critical";
+      } catch (e) {
+        logger.debug("[First Year] State drift check failed, assuming no critical drift:", e);
+      }
+      
+      // First year: Check independent peers and bootstrap status
+      if (quorumStatus.independentPeerCount >= 2 && bootstrapComplete && !stateDriftCritical) {
+        logger.info(`[First Year] ✅ Allowing mining: ${quorumStatus.independentPeerCount} independent peers, bootstrap complete, no critical drift (score: ${quorumStatus.totalScore}, not required)`);
+        miningMode = "SAFE";
+        // Skip all QuorumScore/StateLock/Finality checks for first year
+        // Continue to wallet/network checks, then return success
+      } else {
+        // First year: Still need minimal requirements
+        const reasons: string[] = [];
+        if (quorumStatus.independentPeerCount < 2) {
+          reasons.push(`Need ≥2 independent peers (current: ${quorumStatus.independentPeerCount})`);
+        }
+        if (!bootstrapComplete) {
+          reasons.push("Bootstrap not complete");
+        }
+        if (stateDriftCritical) {
+          reasons.push("Critical state drift detected");
+        }
+        
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "INSUFFICIENT_PEERS",
+          reason: `First year: ${reasons.join(", ")}`,
+          details: {
+            peerCount,
+            requiredPeers: 2,
+            quorumScore: quorumStatus.totalScore,
+            requiredQuorumScore: 0, // First year: not required (used as identifier for first year mode)
+            independentPeerCount: quorumStatus.independentPeerCount,
+            requiredIndependentPeers: 2,
+            networkStage: "GENESIS_QUORUM", // Use existing stage type
+            networkStageInfo: {
+              stage: "GENESIS_QUORUM",
+              relaxedChecks: ["QuorumScore", "StateLock", "Finality"],
+              description: "First year: Relaxed rules - only require ≥2 independent IPs, bootstrap complete, no critical drift",
+            },
+          },
+        };
+      }
+    }
+    
     // Phase 39: Stage 1 - Genesis Quorum Mode (height = 0)
-    if (networkStage === "GENESIS_QUORUM" && isMainnetNetwork && p2pNode) {
+    if (networkStage === "GENESIS_QUORUM" && isMainnetNetwork && p2pNode && !isFirstYearMode) {
       // Genesis mode: Check minimal requirements
       // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
       if (quorumStatus.ready && quorumStatus.independentPeerCount >= 2) {
@@ -332,8 +404,8 @@ export class MiningGuard {
       }
     }
     
-    // Phase 35: Check mainnet admission rules first (unless in Cold Start mode or Genesis mode)
-    if (isMainnetNetwork && !isColdStartMode && networkStage !== "GENESIS_QUORUM" && p2pNode) {
+    // Phase 35: Check mainnet admission rules first (unless in Cold Start mode, Genesis mode, or First Year mode)
+    if (isMainnetNetwork && !isColdStartMode && networkStage !== "GENESIS_QUORUM" && !isFirstYearMode && p2pNode) {
       const admissionStatus = quorumManager.getMainnetAdmissionStatus();
       
       if (admissionStatus.admissionReady) {

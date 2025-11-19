@@ -394,6 +394,112 @@ export class ShadowSession {
   }
 
   /**
+   * Phase 41: Handle active miner management
+   * Actions: 'claim', 'release', 'heartbeat'
+   */
+  async handleSetActiveMiner(request) {
+    try {
+      const data = await request.json();
+      const { nodeId, action } = data;
+      
+      if (!nodeId || !action) {
+        return new Response(JSON.stringify({ 
+          error: 'Missing nodeId or action' 
+        }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+      
+      if (action === 'claim') {
+        // Check if another miner is already active
+        if (this.activeMinerId && this.activeMinerId !== nodeId) {
+          return new Response(JSON.stringify({ 
+            error: 'Another device is already mining',
+            activeMinerId: this.activeMinerId,
+          }), {
+            status: 409, // Conflict
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          });
+        }
+        
+        // Claim active miner status
+        this.activeMinerId = nodeId;
+        this.activeMinerLastSeen = Date.now();
+        await this.saveSession();
+        
+        return new Response(JSON.stringify({ 
+          success: true,
+          activeMinerId: this.activeMinerId,
+        }), {
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } else if (action === 'release') {
+        // Release active miner status (only if we are the active miner)
+        if (this.activeMinerId === nodeId) {
+          this.activeMinerId = null;
+          this.activeMinerLastSeen = 0;
+          await this.saveSession();
+        }
+        
+        return new Response(JSON.stringify({ 
+          success: true,
+        }), {
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } else if (action === 'heartbeat') {
+        // Update last seen time for active miner
+        if (this.activeMinerId === nodeId) {
+          this.activeMinerLastSeen = Date.now();
+          await this.saveSession();
+        }
+        
+        return new Response(JSON.stringify({ 
+          success: true,
+        }), {
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } else {
+        return new Response(JSON.stringify({ 
+          error: `Unknown action: ${action}` 
+        }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+    } catch (error) {
+      console.error(`[ShadowSession] Error handling setActiveMiner:`, error);
+      return new Response(JSON.stringify({ 
+        error: error.message || 'Internal server error' 
+      }), {
+        status: 500,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+  }
+
+  /**
    * Handle WebSocket connection from browser
    */
   async handleBrowserConnection(request) {

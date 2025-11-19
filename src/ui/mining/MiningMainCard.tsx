@@ -77,14 +77,39 @@ export function MiningMainCard({
       const reasons = [];
       
       // Check if Quorum score is insufficient (even if result.ok is true)
+      // First year: QuorumScore is only informational, not blocking
       if (result.details) {
         const quorumScore = result.details.quorumScore ?? 0;
         const requiredQuorumScore = result.details.requiredQuorumScore ?? 80;
         const isGenesisMode = result.details.networkStage === "GENESIS_QUORUM";
+        // First year: requiredQuorumScore === 0 indicates first year mode
+        const isFirstYearMode = requiredQuorumScore === 0;
         const independentPeerCount = result.details.independentPeerCount ?? 0;
         
-        // If Quorum score is insufficient and not in Genesis mode with enough peers
-        if (quorumScore < requiredQuorumScore && !(isGenesisMode && independentPeerCount >= 2)) {
+        // First year: Show score as info only, don't block
+        if (isFirstYearMode) {
+          // First year: Score is informational only
+          if (quorumScore < 50) {
+            reasons.push(
+              isZh
+                ? `Quorum分数: ${quorumScore}（弱连接，但仍可挖矿）`
+                : `Quorum Score: ${quorumScore} (weak connection, but mining allowed)`
+            );
+          } else if (quorumScore < 80) {
+            reasons.push(
+              isZh
+                ? `Quorum分数: ${quorumScore}（连接正常）`
+                : `Quorum Score: ${quorumScore} (connection normal)`
+            );
+          } else {
+            reasons.push(
+              isZh
+                ? `Quorum分数: ${quorumScore}（网络健康，多人在线）`
+                : `Quorum Score: ${quorumScore} (network healthy, multiple peers online)`
+            );
+          }
+        } else if (quorumScore < requiredQuorumScore && !(isGenesisMode && independentPeerCount >= 2)) {
+          // Normal mode: Block if score insufficient
           reasons.push(
             isZh
               ? `Quorum分数不足: ${quorumScore} / ${requiredQuorumScore}（需要至少 ${requiredQuorumScore} 分才能挖矿）`
@@ -189,15 +214,19 @@ export function MiningMainCard({
   const requiredQuorumScore = miningGuardResult?.details?.requiredQuorumScore ?? 80;
   const hasSufficientQuorum = quorumScore >= requiredQuorumScore;
   
-  // Only allow mining if:
-  // 1. MiningGuard says it's ok AND
-  // 2. Quorum score is sufficient (unless in Genesis mode with ≥2 independent peers)
+  // First year: QuorumScore is only informational, not blocking
+  // First year: requiredQuorumScore === 0 indicates first year mode
+  const isFirstYearMode = requiredQuorumScore === 0;
   const isGenesisMode = miningGuardResult?.details?.networkStage === "GENESIS_QUORUM";
   const hasGenesisPeers = (miningGuardResult?.details?.independentPeerCount ?? 0) >= 2;
+  
+  // Only allow mining if:
+  // 1. MiningGuard says it's ok AND
+  // 2. Quorum score is sufficient (unless in First Year mode, Genesis mode with ≥2 independent peers)
   const canMine = miningGuardResult?.ok && 
                   !isMining && 
                   !clusterMining && 
-                  (hasSufficientQuorum || (isGenesisMode && hasGenesisPeers));
+                  (isFirstYearMode || hasSufficientQuorum || (isGenesisMode && hasGenesisPeers));
   
   const isFollowerBlocked = localRole === "FOLLOWER" && chainContext?.params?.networkId === "IXC_MAINNET_V1";
 
