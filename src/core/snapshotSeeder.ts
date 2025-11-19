@@ -72,19 +72,34 @@ export class SnapshotSeeder {
     if (!this.p2pNode) return;
     
     // Handle REQUEST_SNAPSHOT_META
-    this.p2pNode.onMessage("REQUEST_SNAPSHOT_META", (request: { targetHeight?: number }) => {
+    this.p2pNode.onMessage("REQUEST_SNAPSHOT_META", (request: { targetHeight?: number }, sender: string) => {
       if (!this.config.autoSeed) return;
       
       const allMetas = loadAllSnapshotMeta();
-      const filtered = request.targetHeight
-        ? allMetas.filter(m => m.height >= request.targetHeight!)
+      const targetHeight = request?.targetHeight;
+      const filtered = targetHeight
+        ? allMetas.filter(m => m.height <= targetHeight) // Use <= to find snapshots at or before target
         : allMetas;
       
-      // Send metadata
-      this.p2pNode!.broadcast("SNAPSHOT_META", {
-        metas: filtered,
-        nodeId: this.p2pNode!.nodeId,
-      });
+      if (filtered.length === 0) {
+        console.log(`[SnapshotSeeder] No snapshots available for target height ${targetHeight || 'any'}`);
+        return;
+      }
+      
+      // Send metadata directly to requesting peer if sendToPeer is available
+      if (this.p2pNode && this.p2pNode.sendToPeer) {
+        console.log(`[SnapshotSeeder] Sending ${filtered.length} snapshot metadata to ${sender.substring(0, 16)}... (target: ${targetHeight || 'any'})`);
+        this.p2pNode.sendToPeer(sender, "SNAPSHOT_META", {
+          metas: filtered,
+          nodeId: this.p2pNode.nodeId,
+        });
+      } else if (this.p2pNode) {
+        // Fallback to broadcast
+        this.p2pNode.broadcast("SNAPSHOT_META", {
+          metas: filtered,
+          nodeId: this.p2pNode.nodeId,
+        });
+      }
     });
     
     // Handle REQUEST_SNAPSHOT

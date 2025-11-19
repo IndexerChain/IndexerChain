@@ -24,6 +24,7 @@ import { GlobalStateSentinel } from "../core/globalSentinel.js";
 import type { DriftAssessment } from "../core/types.js";
 import { verifyTxSignature } from "../core/signatures.js";
 import { verifyBlock } from "../core/verify.js";
+import { logger } from "../core/logger.js";
 import {
   getAverageBlockTime,
   getBlocksUntilAdjustment,
@@ -652,7 +653,7 @@ function App() {
     if (urlToUse) {
       autoConnectAttemptedRef.current = true; // Mark as attempted immediately to prevent duplicate attempts
       
-      console.log(`[Auto-Connect] Attempting automatic connection to ${urlToUse}`, { 
+      logger.debug(`[Auto-Connect] Attempting automatic connection to ${urlToUse}`, { 
         hasSavedState: !!savedState.bootstrapUrl,
         savedUrl: savedState.bootstrapUrl,
         currentUrl: bootstrapUrl,
@@ -661,11 +662,11 @@ function App() {
       
       // If saved state has a different URL, update it first
       if (savedState.bootstrapUrl && savedState.bootstrapUrl !== bootstrapUrl) {
-        console.log(`[Auto-Connect] Updating bootstrap URL from ${bootstrapUrl} to ${savedState.bootstrapUrl}`);
+        logger.debug(`[Auto-Connect] Updating bootstrap URL from ${bootstrapUrl} to ${savedState.bootstrapUrl}`);
         setBootstrapUrl(savedState.bootstrapUrl);
         // Wait for state update, then connect
         setTimeout(() => {
-          console.log(`[Auto-Connect] Connecting after URL update...`);
+          logger.debug(`[Auto-Connect] Connecting after URL update...`);
           handleConnectP2P();
         }, 500);
       } else {
@@ -673,19 +674,19 @@ function App() {
         if (bootstrapUrl !== urlToUse) {
           setBootstrapUrl(urlToUse);
           setTimeout(() => {
-            console.log(`[Auto-Connect] Connecting to ${urlToUse}...`);
+            logger.debug(`[Auto-Connect] Connecting to ${urlToUse}...`);
             handleConnectP2P();
           }, 500);
         } else {
           // Connect immediately with current bootstrapUrl
           setTimeout(() => {
-            console.log(`[Auto-Connect] Connecting to ${urlToUse}...`);
+            logger.debug(`[Auto-Connect] Connecting to ${urlToUse}...`);
             handleConnectP2P();
           }, 1000); // Small delay to ensure everything is ready
         }
       }
     } else {
-      console.log(`[Auto-Connect] No bootstrap URL available, skipping auto-connect`);
+      logger.debug(`[Auto-Connect] No bootstrap URL available, skipping auto-connect`);
     }
   }, [chainContext, loading]); // Only depend on chainContext and loading to avoid re-triggering
 
@@ -1069,7 +1070,8 @@ function App() {
       }
       
       if (blocks.length > 0) {
-        // Only log when actually sending blocks
+        // Log when sending blocks to help debug sync
+        console.log(`[Sync] 📤 Sending ${blocks.length} blocks (height ${actualFromHeight}-${actualToHeight}) to ${sender.substring(0, 16)}...`);
         // Send blocks directly to the requesting peer if sendToPeer is available
         if (p2p.sendToPeer) {
           p2p.sendToPeer(sender, "BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
@@ -1077,35 +1079,40 @@ function App() {
           // Fallback to broadcast
           p2p.broadcast("BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
         }
+      } else {
+        // Log when we can't provide blocks (helpful for debugging)
+        console.log(`[Sync] ⚠️ Cannot provide blocks ${request.fromHeight}-${request.toHeight} (local: ${localHeight}, min: ${minHeight}, available: ${actualFromHeight}-${actualToHeight})`);
       }
     });
 
     // Handle BLOCKS messages (chain sync)
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("BLOCKS", async (data: { blocks: Block[] }, sender: string) => {
-      // Suppress frequent BLOCKS logs - only log occasionally or for significant events
-      // console.log(`[Sync] Received BLOCKS from ${sender.substring(0, 16)}...`, {
-      //   count: data.blocks.length,
-      //   heights: data.blocks.length > 0 ? `${data.blocks[0]?.header?.height ?? '?'}-${data.blocks[data.blocks.length - 1]?.header?.height ?? '?'}` : "none",
-      //   localHeight
-      // });
+      // Always log when receiving blocks to help debug sync issues
+      if (data.blocks && data.blocks.length > 0) {
+        const firstHeight = data.blocks[0]?.header?.height ?? '?';
+        const lastHeight = data.blocks[data.blocks.length - 1]?.header?.height ?? '?';
+        const localTip = chainContext.storage.getTip();
+        const localHeight = localTip?.header?.height ?? -1;
+        console.log(`[Sync] 📦 Received ${data.blocks.length} blocks from ${sender.substring(0, 16)}... (heights: ${firstHeight}-${lastHeight}, local: ${localHeight})`);
+      }
       
-      if (data.blocks.length === 0) {
-        console.warn("[Sync] Received empty BLOCKS message");
+      if (!data.blocks || data.blocks.length === 0) {
+        console.warn("[Sync] ⚠️ Received empty BLOCKS message from", sender.substring(0, 16));
         return;
       }
       
       const result = await handleReceivedBlocks(data.blocks, chainContext, sender);
       
       // Always update UI even if no blocks were appended (blocks may already exist)
+      const oldTip = chainContext.storage.getTip();
+      const oldHeight = oldTip?.header?.height ?? 0;
       const newTip = chainContext.storage.getTip();
       const newHeight = newTip?.header.height ?? 0;
       
       if (result.success && result.appended > 0) {
-        // Only log when significant progress is made (e.g., > 10 blocks or reaching milestones)
-        if (result.appended > 10 || newHeight % 100 === 0) {
-          console.log(`[Sync] ✅ Appended ${result.appended} blocks. New height: ${newHeight}`);
-        }
+        // Always log when blocks are appended to help debug sync
+        console.log(`[Sync] ✅ Appended ${result.appended} blocks. New height: ${newHeight} (was ${oldHeight})`);
         setChainContext({ ...chainContext }); // Trigger re-render
         
         // Phase 32: Auto-scroll console to bottom when new blocks arrive
@@ -1170,6 +1177,12 @@ function App() {
         
         // Update sync status to reflect current state
         setSyncStatus(prev => {
+          // Store sync status in window for auto-sync interval to access
+          (window as any).lastSyncStatus = {
+            networkHeight: prev.networkHeight,
+            localHeight: newHeight,
+          };
+          
           if (prev.networkHeight > 0) {
             const behindBy = prev.networkHeight - newHeight;
             return {
@@ -1300,18 +1313,53 @@ function App() {
           delete (window as any).pendingBlockRequest;
         }
         
-        // If we're at height 0 or very low, request more aggressively for initial sync
-        if (localHeight === 0 || localHeight < 100) {
-          // Request a larger range for initial sync
-          const requestRange = 500; // Increased for faster initial sync
-          console.log(`[Auto-Sync] Local height is ${localHeight}, requesting blocks from ${localHeight + 1} to ${localHeight + requestRange}`);
-          p2p.broadcast("REQUEST_BLOCKS", {
-            fromHeight: localHeight + 1,
-            toHeight: localHeight + requestRange,
-          });
-        } else {
-          // For ongoing sync, request a smaller range periodically
-          const requestRange = 100; // Increased from 50
+        // Check if we're behind network height
+        const syncStatus = (window as any).lastSyncStatus || { networkHeight: 0, localHeight: 0 };
+        const networkHeight = syncStatus.networkHeight || 0;
+        const behindBy = networkHeight > 0 ? networkHeight - localHeight : 0;
+        
+        // Only request blocks if we're actually behind
+        if (behindBy > 0) {
+          // Request blocks to catch up
+          const requestRange = Math.min(behindBy, 500); // Request up to 500 blocks at a time
+          const targetHeight = Math.min(localHeight + requestRange, networkHeight);
+          
+          // Only request if we haven't requested this range recently (avoid spam)
+          const lastRequestKey = `lastBlockRequest_${localHeight + 1}_${targetHeight}`;
+          const lastRequestTime = (window as any)[lastRequestKey] || 0;
+          const now = Date.now();
+          
+          // Request every 3 seconds if we're behind
+          if (now - lastRequestTime > 3000) {
+            (window as any)[lastRequestKey] = now;
+            const peerCount = p2p.getPeerCount();
+            console.log(`[Auto-Sync] 🔄 Local: ${localHeight}, Network: ${networkHeight}, Behind: ${behindBy}, Peers: ${peerCount}, Requesting blocks ${localHeight + 1}-${targetHeight}`);
+            if (peerCount === 0) {
+              console.warn(`[Auto-Sync] ⚠️ No peers! Cannot sync. Will retry when peers connect.`);
+            } else {
+              p2p.broadcast("REQUEST_BLOCKS", {
+                fromHeight: localHeight + 1,
+                toHeight: targetHeight,
+              });
+              // Also try direct peer requests
+              if (p2p.sendToPeer) {
+                const peerIds = Array.from(p2p.peers.keys());
+                for (const peerId of peerIds) {
+                  const peer = p2p.peers.get(peerId);
+                  if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                    p2p.sendToPeer(peerId, "REQUEST_BLOCKS", {
+                      fromHeight: localHeight + 1,
+                      toHeight: targetHeight,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } else if (localHeight === 0 || localHeight < 100) {
+          // Initial sync: request aggressively even without network height
+          const requestRange = 500;
+          logger.debug(`[Auto-Sync] Initial sync: requesting blocks from ${localHeight + 1} to ${localHeight + requestRange}`);
           p2p.broadcast("REQUEST_BLOCKS", {
             fromHeight: localHeight + 1,
             toHeight: localHeight + requestRange,
@@ -1328,7 +1376,7 @@ function App() {
           
           // Also try bootstrap again (in case Worker state was updated)
           if (typeof (p2p as any).sendToSignalServer === 'function') {
-            console.log(`[Auto-Sync] No peers, requesting peers and bootstrap data again...`);
+            logger.debug(`[Auto-Sync] No peers, requesting peers and bootstrap data again...`);
             (p2p as any).sendToSignalServer("REQUEST_BOOTSTRAP", {
               requestId: `${Date.now()}_${Math.random()}`,
               wantSnapshotMeta: true,
@@ -1398,6 +1446,23 @@ function App() {
     p2p.onMessage("STATE_COMMIT_GOSSIP", async (data: any, sender: string) => {
       if (!chainContext) return;
       
+      // Validate data structure
+      if (!data || typeof data !== 'object') {
+        console.warn("[StateCommitGossip] Invalid message data:", data);
+        return;
+      }
+      
+      // Validate required fields
+      if (typeof data.height !== 'number' || !data.stateCommitment || !data.tipHash) {
+        console.warn("[StateCommitGossip] Missing required fields:", { 
+          hasHeight: typeof data.height === 'number',
+          hasStateCommitment: !!data.stateCommitment,
+          hasTipHash: !!data.tipHash,
+          data 
+        });
+        return;
+      }
+      
       const { getStateCommitGossip } = await import("../core/stateCommitGossip.js");
       const gossip = getStateCommitGossip();
       
@@ -1426,16 +1491,101 @@ function App() {
       if (payload && typeof payload.availableFromHeight === 'number' && payload.availableFromHeight > 0) {
         const localTip = chainContext.storage.getTip();
         const localHeight = localTip?.header?.height ?? -1;
+        const gap = payload.availableFromHeight - localHeight;
         
-        // If we're requesting blocks that are pruned, update our request to start from availableFromHeight
+        // If we're requesting blocks that are pruned, check if we need snapshot sync
         if (localHeight < payload.availableFromHeight && payload.height > localHeight) {
-          console.log(`[Sync] Peer indicates blocks available from height ${payload.availableFromHeight}, updating request range`);
-          // Request from available height instead
-          p2p.broadcast("REQUEST_BLOCKS", {
-            fromHeight: payload.availableFromHeight,
-            toHeight: Math.min(payload.height, payload.availableFromHeight + 500),
-          });
-          return; // Don't process as regular GLOBAL_VIEW_RESPONSE
+          const snapshotInterval = chainContext.params.snapshotInterval || 1000;
+          
+          // If gap is large (>= snapshotInterval), we need snapshot sync
+          if (gap >= snapshotInterval) {
+            // Prevent duplicate snapshot requests
+            const snapshotRequestKey = `snapshot_request_${payload.availableFromHeight}`;
+            const lastRequest = (window as any)[snapshotRequestKey] || 0;
+            const now = Date.now();
+            
+            // Only request snapshot once every 30 seconds
+            if (now - lastRequest < 30000) {
+              logger.debug(`[Sync] Snapshot request already in progress, skipping duplicate request`);
+              // Still request blocks from available height
+              p2p.broadcast("REQUEST_BLOCKS", {
+                fromHeight: payload.availableFromHeight,
+                toHeight: Math.min(payload.height, payload.availableFromHeight + 500),
+              });
+              return;
+            }
+            
+            (window as any)[snapshotRequestKey] = now;
+            console.warn(`[Sync] ⚠️ Large gap detected: local height ${localHeight}, peer can only provide from ${payload.availableFromHeight} (gap: ${gap}). Need snapshot sync.`);
+            
+            // Try to request snapshot from peers via P2P
+            if (p2p.sendToPeer && snapshotDownloader) {
+              const peerIds = Array.from(p2p.peers.keys());
+              for (const peerId of peerIds) {
+                const peer = p2p.peers.get(peerId);
+                if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                  logger.debug(`[Sync] Requesting snapshot metadata from peer ${peerId.substring(0, 16)}... (need height ~${payload.availableFromHeight - 1})`);
+                  // Request snapshot metadata first
+                  p2p.sendToPeer(peerId, "REQUEST_SNAPSHOT_META", {
+                    targetHeight: payload.availableFromHeight - 1,
+                  });
+                }
+              }
+              
+              // Also try to trigger snapshot downloader to find and download snapshot
+              // Use setTimeout to avoid blocking the message handler
+              setTimeout(async () => {
+                try {
+                  const targetHeight = payload.availableFromHeight - 1;
+                  console.log(`[Sync] Triggering snapshot downloader to find snapshot near height ${targetHeight}`);
+                  // Wait a bit for SNAPSHOT_META responses to arrive
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  const metas = await snapshotDownloader.requestSnapshotMeta(targetHeight);
+                  if (metas && metas.length > 0) {
+                    // Find the best snapshot (closest to targetHeight but not exceeding it)
+                    const suitableSnapshots = metas.filter(m => m.height <= targetHeight);
+                    if (suitableSnapshots.length > 0) {
+                      const bestSnapshot = suitableSnapshots.sort((a, b) => b.height - a.height)[0];
+                      console.log(`[Sync] Found suitable snapshot at height ${bestSnapshot.height}, starting download...`);
+                      snapshotDownloader.downloadSnapshot(bestSnapshot, {}, (progress) => {
+                        console.log(`[Sync] Snapshot download progress: ${progress.percent.toFixed(1)}% (${progress.receivedChunks}/${progress.totalChunks} chunks)`);
+                      }).then(() => {
+                        console.log(`[Sync] ✅ Snapshot downloaded successfully at height ${bestSnapshot.height}`);
+                        // Snapshot will be applied automatically by the downloader
+                      }).catch((error) => {
+                        console.error(`[Sync] ❌ Failed to download snapshot:`, error);
+                      });
+                    } else {
+                      console.warn(`[Sync] No suitable snapshot found (need <= ${targetHeight}, but available: ${metas.map(m => m.height).join(', ')})`);
+                    }
+                  } else {
+                    console.warn(`[Sync] No snapshot metadata received from peers`);
+                    // Show user-friendly error message
+                    const errorMsg = locale === "zh" 
+                      ? `⚠️ 无法同步：本地高度 ${localHeight}，对等节点只能从高度 ${payload.availableFromHeight} 提供区块（差距 ${gap} 个）。\n\n对等节点没有快照，无法填补缺失的区块。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）`
+                      : `⚠️ Cannot sync: Local height ${localHeight}, peer can only provide from height ${payload.availableFromHeight} (gap: ${gap} blocks).\n\nPeer has no snapshots to fill the gap.\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)`;
+                    console.error(`[Sync] ${errorMsg}`);
+                    setError(errorMsg);
+                  }
+                } catch (error) {
+                  console.error(`[Sync] Error requesting snapshot:`, error);
+                }
+              }, 100);
+            }
+            
+            // Don't request blocks from available height if gap is too large
+            // Wait for snapshot sync first
+            console.log(`[Sync] Gap too large (${gap}), waiting for snapshot sync before requesting blocks`);
+            return; // Don't process as regular GLOBAL_VIEW_RESPONSE
+          } else {
+            // Small gap, just request from available height
+            console.log(`[Sync] Peer indicates blocks available from height ${payload.availableFromHeight}, updating request range`);
+            p2p.broadcast("REQUEST_BLOCKS", {
+              fromHeight: payload.availableFromHeight,
+              toHeight: Math.min(payload.height, payload.availableFromHeight + 500),
+            });
+            return; // Don't process as regular GLOBAL_VIEW_RESPONSE
+          }
         }
       }
       
@@ -1458,6 +1608,12 @@ function App() {
           const finalNetworkHeight = Math.max(networkHeight, prev.networkHeight);
           const finalBehindBy = finalNetworkHeight - localHeight;
           
+          // Store sync status in window for auto-sync interval to access
+          (window as any).lastSyncStatus = {
+            networkHeight: finalNetworkHeight,
+            localHeight: localHeight,
+          };
+          
           return {
             isSyncing: finalBehindBy > 0,
             localHeight,
@@ -1469,12 +1625,41 @@ function App() {
         
         if (networkHeight > localHeight) {
           const requestRange = Math.min(behindBy, 500); // Request up to 500 blocks at a time
-          // Suppress frequent request logs
-          // console.log(`[Sync] Requesting ${requestRange} blocks to catch up (from ${localHeight + 1} to ${localHeight + requestRange})`);
-          p2p.broadcast("REQUEST_BLOCKS", {
-            fromHeight: localHeight + 1,
-            toHeight: localHeight + requestRange,
-          });
+          const targetHeight = Math.min(localHeight + requestRange, networkHeight);
+          
+          // Check if we've requested this range recently (avoid duplicate requests)
+          const requestKey = `request_${localHeight + 1}_${targetHeight}`;
+          const lastRequest = (window as any)[requestKey] || 0;
+          const now = Date.now();
+          
+          // Request if we haven't requested this exact range in the last 2 seconds
+          if (now - lastRequest > 2000) {
+            (window as any)[requestKey] = now;
+            const peerCount = p2p.getPeerCount();
+            console.log(`[Sync] 🔄 Requesting ${requestRange} blocks to catch up (from ${localHeight + 1} to ${targetHeight}, network: ${networkHeight}, peers: ${peerCount})`);
+            if (peerCount === 0) {
+              console.warn(`[Sync] ⚠️ No peers available! Cannot sync. Please check connection.`);
+            } else {
+              p2p.broadcast("REQUEST_BLOCKS", {
+                fromHeight: localHeight + 1,
+                toHeight: targetHeight,
+              });
+              // Also try direct peer requests if sendToPeer is available
+              if (p2p.sendToPeer) {
+                const peerIds = Array.from(p2p.peers.keys());
+                for (const peerId of peerIds) {
+                  const peer = p2p.peers.get(peerId);
+                  if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                    logger.debug(`[Sync] Also requesting directly from peer ${peerId.substring(0, 16)}...`);
+                    p2p.sendToPeer(peerId, "REQUEST_BLOCKS", {
+                      fromHeight: localHeight + 1,
+                      toHeight: targetHeight,
+                    });
+                  }
+                }
+              }
+            }
+          }
         } else if (networkHeight === localHeight) {
           // Only log when fully synced (important milestone)
           // console.log(`[Sync] ✅ Already synced to network height ${networkHeight}`);
@@ -1514,6 +1699,35 @@ function App() {
       const localTip = chainContext.storage.getTip();
       const localHeight = localTip?.header.height ?? -1;
       const networkHeight = payload.latestHeight || 0;
+      
+      // Check if Worker has snapshot meta and we need it
+      if (payload.latestSnapshotMeta && networkHeight > localHeight) {
+        const heightDiff = networkHeight - localHeight;
+        const snapshotInterval = chainContext.params.snapshotInterval || 1000;
+        
+        if (heightDiff >= snapshotInterval) {
+          console.log(`[Phase 32] ✅ Worker has snapshot meta at height ${payload.latestSnapshotMeta.height}, triggering snapshot download (height diff: ${heightDiff})`);
+          
+          // Trigger snapshot download from Worker's snapshot meta
+          if (snapshotDownloader) {
+            setTimeout(async () => {
+              try {
+                console.log(`[Phase 32] Starting snapshot download from Worker snapshot meta (height: ${payload.latestSnapshotMeta.height})`);
+                snapshotDownloader.downloadSnapshot(payload.latestSnapshotMeta, {}, (progress) => {
+                  console.log(`[Phase 32] Snapshot download progress: ${progress.percent.toFixed(1)}% (${progress.receivedChunks}/${progress.totalChunks} chunks)`);
+                }).then(() => {
+                  console.log(`[Phase 32] ✅ Snapshot downloaded successfully from Worker at height ${payload.latestSnapshotMeta.height}`);
+                  // Snapshot will be applied automatically by the downloader
+                }).catch((error) => {
+                  console.error(`[Phase 32] ❌ Failed to download snapshot from Worker:`, error);
+                });
+              } catch (error) {
+                console.error(`[Phase 32] Error downloading snapshot from Worker:`, error);
+              }
+            }, 500);
+          }
+        }
+      }
       
       // Phase 32: If bootstrap state is empty (latestHeight: 0), fall back to P2P query
       if (networkHeight === 0 || !payload.latestHeader) {
@@ -2384,7 +2598,7 @@ function App() {
           
           // If we have peers but height is still 0, retry sync
           if (peerCount > 0 && localHeight <= 0) {
-            console.log(`[Phase 32] Periodic sync check: height=${localHeight}, peers=${peerCount}, retrying sync...`);
+            logger.debug(`[Phase 32] Periodic sync check: height=${localHeight}, peers=${peerCount}, retrying sync...`);
             p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
             p2pNode.broadcast("REQUEST_BLOCKS", {
               fromHeight: 1,
@@ -5273,11 +5487,18 @@ function App() {
                 <div className="status-item">
                   <span className="label">{t("networkExpanded.mode")}</span>
                   <span className="value">
-                    {isMainnetMode ? (
-                      <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("network.mainnet")}</span>
-                    ) : (
-                      <span style={{ color: "#ffc107", fontWeight: "bold" }}>{t("network.dev")}</span>
-                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      {isMainnetMode ? (
+                        <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("network.mainnet")}</span>
+                      ) : (
+                        <span style={{ color: "#ffc107", fontWeight: "bold" }}>{t("network.dev")}</span>
+                      )}
+                      {chainContext && (
+                        <span style={{ fontSize: "0.75rem", color: "#999", marginLeft: "0.5rem" }}>
+                          ({chainContext.params.networkId})
+                        </span>
+                      )}
+                    </div>
                   </span>
                 </div>
                 <div className="status-item">
@@ -5297,11 +5518,24 @@ function App() {
                           type="checkbox"
                           checked={isMainnetMode}
                           onChange={(e) => {
-                            setIsMainnetMode(e.target.checked);
-                            if (e.target.checked) {
+                            const newMainnetMode = e.target.checked;
+                            setIsMainnetMode(newMainnetMode);
+                            
+                            // Set network mode in localStorage to force mainnet networkId
+                            if (newMainnetMode) {
+                              localStorage.setItem("indexerchain_force_mainnet", "true");
                               setBootstrapUrl(DEFAULT_MAINNET_SIGNALING);
+                              // Show warning that page needs to be refreshed
+                              alert(locale === "zh" 
+                                ? "已切换到主网模式。请刷新页面以使网络ID更改生效。\n\n注意：切换到主网后，您将连接到主网节点，但本地链数据可能需要重置。"
+                                : "Switched to mainnet mode. Please refresh the page for the network ID change to take effect.\n\nNote: After switching to mainnet, you will connect to mainnet nodes, but local chain data may need to be reset.");
                             } else {
+                              localStorage.removeItem("indexerchain_force_mainnet");
                               setBootstrapUrl("ws://localhost:8080");
+                              // Show warning that page needs to be refreshed
+                              alert(locale === "zh"
+                                ? "已切换到开发模式。请刷新页面以使网络ID更改生效。"
+                                : "Switched to dev mode. Please refresh the page for the network ID change to take effect.");
                             }
                           }}
                         />
@@ -5339,6 +5573,37 @@ function App() {
                   <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                     <div style={{ fontSize: "0.9rem", color: "#666" }}>
                       {t("overview.connectedTo")}: <code style={{ fontSize: "0.85rem" }}>{bootstrapUrl}</code>
+                    </div>
+                    {/* Show network mode toggle even when connected */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.5rem", background: "#f5f5f5", borderRadius: "4px" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.9rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={isMainnetMode}
+                          onChange={(e) => {
+                            const newMainnetMode = e.target.checked;
+                            setIsMainnetMode(newMainnetMode);
+                            
+                            // Set network mode in localStorage to force mainnet networkId
+                            if (newMainnetMode) {
+                              localStorage.setItem("indexerchain_force_mainnet", "true");
+                              setBootstrapUrl(DEFAULT_MAINNET_SIGNALING);
+                              // Show warning that page needs to be refreshed
+                              alert(locale === "zh" 
+                                ? "已切换到主网模式。请先断开连接，然后刷新页面以使网络ID更改生效。\n\n注意：切换到主网后，您将连接到主网节点，但本地链数据可能需要重置。"
+                                : "Switched to mainnet mode. Please disconnect first, then refresh the page for the network ID change to take effect.\n\nNote: After switching to mainnet, you will connect to mainnet nodes, but local chain data may need to be reset.");
+                            } else {
+                              localStorage.removeItem("indexerchain_force_mainnet");
+                              setBootstrapUrl("ws://localhost:8080");
+                              // Show warning that page needs to be refreshed
+                              alert(locale === "zh"
+                                ? "已切换到开发模式。请先断开连接，然后刷新页面以使网络ID更改生效。"
+                                : "Switched to dev mode. Please disconnect first, then refresh the page for the network ID change to take effect.");
+                            }
+                          }}
+                        />
+                        <span>{t("network.mainnetMode")}</span>
+                      </label>
                     </div>
                     <button className="btn btn-secondary" onClick={handleDisconnectP2P}>
                       {t("network.disconnect")}

@@ -26,6 +26,17 @@ const STATE_SYNC_INTERVAL_MS = 1000; // Leader broadcasts state every 1 second
 const FOLLOWER_SYNC_CHECK_INTERVAL_MS = 2000; // Followers check for updates every 2 seconds
 const SYNC_TIMEOUT_MS = 5000; // Sync timeout: 5 seconds
 
+// Phase 38: localStorage keys for shared state across tabs
+const STORAGE_KEY_PREFIX = "indexerchain.localState.";
+const STORAGE_KEYS = {
+  HEIGHT: STORAGE_KEY_PREFIX + "height",
+  TIP_HASH: STORAGE_KEY_PREFIX + "tipHash",
+  STATE_COMMITMENT: STORAGE_KEY_PREFIX + "stateCommitment",
+  SNAPSHOT_META: STORAGE_KEY_PREFIX + "snapshotMeta",
+  RECENT_HEADERS: STORAGE_KEY_PREFIX + "recentHeaders",
+  LAST_UPDATED: STORAGE_KEY_PREFIX + "lastUpdated",
+};
+
 export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   epoch: number; // Block height (local epoch)
@@ -131,6 +142,9 @@ export class LocalStateCoordinator {
   async init(chainContext: ChainContext): Promise<void> {
     this.chainContext = chainContext;
     
+    // Phase 38: Load shared state from localStorage (if available)
+    this.loadSharedStateFromStorage();
+    
     // Get initial state
     const tip = chainContext.storage.getTip();
     if (tip) {
@@ -138,6 +152,9 @@ export class LocalStateCoordinator {
       this.currentTipHash = tip.hash;
       this.currentStateCommitment = tip.header.stateCommitment || "";
       this.currentFinalizedHeight = 0; // Will be updated from finality manager if available
+      
+      // Phase 38: Save to localStorage for other tabs
+      this.saveSharedStateToStorage();
     }
     
     // Start state sync based on role
@@ -147,6 +164,15 @@ export class LocalStateCoordinator {
     this.instanceCoordinator.onRoleChange(() => {
       this.startStateSync(); // Restart sync with new role
     });
+    
+    // Phase 38: Listen for storage events (cross-tab updates)
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", (e) => {
+        if (e.key && e.key.startsWith(STORAGE_KEY_PREFIX)) {
+          this.handleStorageEvent(e);
+        }
+      });
+    }
   }
 
   /**
@@ -202,6 +228,26 @@ export class LocalStateCoordinator {
     // Get latest snapshot meta
     const latestSnapshot = getLatestSnapshotMeta();
     
+    // Phase 38: Get recent headers (last 500) for fast sync
+    const recentHeaders: any[] = [];
+    let currentBlock = tip;
+    const allBlocks = this.chainContext.storage.getAllBlocks();
+    for (let i = 0; i < 500 && currentBlock; i++) {
+      recentHeaders.push(currentBlock.header);
+      const prevHash = currentBlock.header.prevHash;
+      if (prevHash) {
+        const prevBlock = allBlocks.find(b => b.hash === prevHash);
+        if (prevBlock) {
+          currentBlock = prevBlock;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    recentHeaders.reverse(); // Oldest to newest
+    
     const message: StateUpdateMessage = {
       type: "STATE_UPDATE",
       epoch: this.currentEpoch,
@@ -212,6 +258,9 @@ export class LocalStateCoordinator {
     };
     
     this.broadcastChannel.postMessage(message);
+    
+    // Phase 38: Save to localStorage for other tabs (including recent headers)
+    this.saveSharedStateToStorage(recentHeaders);
     
     // Also broadcast wallet state
     this.broadcastWalletState();
@@ -626,6 +675,44 @@ export class LocalStateCoordinator {
     const localTipHash = tip?.hash || "";
     const localStateCommitment = tip?.header.stateCommitment || "";
     
+    // If we're the LEADER, we're always consistent with ourselves
+    // The consistency check is only meaningful for FOLLOWER instances
+    if (this.instanceCoordinator.getRole() === "LEADER") {
+      // As LEADER, we're the source of truth - always consistent
+      const isConsistent = true;
+      this.consistencyCheckCallbacks.forEach(cb => {
+        try {
+          cb(isConsistent, {
+            tipHashMatch: true,
+            stateCommitmentMatch: true,
+            heightMatch: true,
+          });
+        } catch (error) {
+          console.error("[LocalStateSync] Consistency check callback error:", error);
+        }
+      });
+      return isConsistent;
+    }
+    
+    // For FOLLOWER instances, check consistency with leader
+    // Only check if we have leader state (leaderEpoch > 0)
+    if (this.leaderEpoch === 0) {
+      // No leader state yet - can't check consistency
+      const isConsistent = true; // Not inconsistent yet, just waiting
+      this.consistencyCheckCallbacks.forEach(cb => {
+        try {
+          cb(isConsistent, {
+            tipHashMatch: true,
+            stateCommitmentMatch: true,
+            heightMatch: true,
+          });
+        } catch (error) {
+          console.error("[LocalStateSync] Consistency check callback error:", error);
+        }
+      });
+      return isConsistent;
+    }
+    
     // Check tip hash match
     const tipHashMatch = localTipHash === this.leaderTipHash;
     
@@ -738,6 +825,119 @@ export class LocalStateCoordinator {
         console.error("[LocalStateSync] State sync callback error:", error);
       }
     });
+  }
+
+  /**
+   * Phase 38: Save shared state to localStorage
+   */
+  private saveSharedStateToStorage(recentHeaders?: any[]): void {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    
+    try {
+      localStorage.setItem(STORAGE_KEYS.HEIGHT, String(this.currentEpoch));
+      localStorage.setItem(STORAGE_KEYS.TIP_HASH, this.currentTipHash);
+      localStorage.setItem(STORAGE_KEYS.STATE_COMMITMENT, this.currentStateCommitment);
+      localStorage.setItem(STORAGE_KEYS.LAST_UPDATED, String(Date.now()));
+      
+      // Save snapshot meta if available
+      const latestSnapshot = getLatestSnapshotMeta();
+      if (latestSnapshot) {
+        localStorage.setItem(STORAGE_KEYS.SNAPSHOT_META, JSON.stringify(latestSnapshot));
+      }
+      
+      // Save recent headers if provided
+      if (recentHeaders && recentHeaders.length > 0) {
+        // Only save last 500 headers to avoid localStorage size limits
+        const headersToSave = recentHeaders.slice(-500);
+        localStorage.setItem(STORAGE_KEYS.RECENT_HEADERS, JSON.stringify(headersToSave));
+      }
+    } catch (error) {
+      // localStorage might be full or disabled - ignore silently
+      console.debug("[LocalStateSync] Failed to save to localStorage:", error);
+    }
+  }
+
+  /**
+   * Phase 38: Load shared state from localStorage
+   */
+  private loadSharedStateFromStorage(): void {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    
+    try {
+      const storedHeight = localStorage.getItem(STORAGE_KEYS.HEIGHT);
+      const storedTipHash = localStorage.getItem(STORAGE_KEYS.TIP_HASH);
+      const storedStateCommitment = localStorage.getItem(STORAGE_KEYS.STATE_COMMITMENT);
+      const storedLastUpdated = localStorage.getItem(STORAGE_KEYS.LAST_UPDATED);
+      
+      if (storedHeight && storedTipHash) {
+        const height = parseInt(storedHeight, 10);
+        const lastUpdated = storedLastUpdated ? parseInt(storedLastUpdated, 10) : 0;
+        
+        // Only use stored state if it's recent (within 5 minutes)
+        const age = Date.now() - lastUpdated;
+        if (age < 5 * 60 * 1000) {
+          this.currentEpoch = height;
+          this.currentTipHash = storedTipHash;
+          this.currentStateCommitment = storedStateCommitment || "";
+          
+          console.log(`[LocalStateSync] Loaded shared state from localStorage: height=${height}, tipHash=${storedTipHash.substring(0, 16)}...`);
+        } else {
+          console.log(`[LocalStateSync] Stored state is too old (${Math.round(age / 1000)}s), ignoring`);
+        }
+      }
+    } catch (error) {
+      console.debug("[LocalStateSync] Failed to load from localStorage:", error);
+    }
+  }
+
+  /**
+   * Phase 38: Handle storage events (cross-tab updates)
+   */
+  private handleStorageEvent(event: StorageEvent): void {
+    if (!this.chainContext || this.instanceCoordinator.getRole() === "LEADER") {
+      // Leader doesn't need to react to storage events (it's the source)
+      return;
+    }
+    
+    try {
+      if (event.key === STORAGE_KEYS.HEIGHT || event.key === STORAGE_KEYS.TIP_HASH) {
+        // State was updated in another tab, check if we need to sync
+        const storedHeight = localStorage.getItem(STORAGE_KEYS.HEIGHT);
+        const storedTipHash = localStorage.getItem(STORAGE_KEYS.TIP_HASH);
+        
+        if (storedHeight && storedTipHash) {
+          const height = parseInt(storedHeight, 10);
+          const tip = this.chainContext.storage.getTip();
+          const localHeight = tip?.header.height ?? 0;
+          const localTipHash = tip?.hash || "";
+          
+          if (height > localHeight || storedTipHash !== localTipHash) {
+            console.log(`[LocalStateSync] Detected state update in another tab: height ${localHeight} -> ${height}`);
+            // Trigger local fast sync
+            this.triggerLocalFastSync();
+          }
+        }
+      }
+    } catch (error) {
+      console.debug("[LocalStateSync] Failed to handle storage event:", error);
+    }
+  }
+
+  /**
+   * Phase 38: Get recent headers from localStorage (for fast sync)
+   */
+  getRecentHeadersFromStorage(): any[] | null {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.RECENT_HEADERS);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (error) {
+      console.debug("[LocalStateSync] Failed to load recent headers from localStorage:", error);
+    }
+    return null;
   }
 
   /**

@@ -640,10 +640,10 @@ export async function appendMinedBlock(
         const { getLocalInstanceCoordinator } = await import("./localInstance.js");
         const coordinator = getLocalInstanceCoordinator();
         if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
-          // Get recent headers (last 100) for fast sync
+          // Phase 38: Get recent headers (last 500) for fast sync
           const recentHeaders: any[] = [];
           let currentBlock = block;
-          for (let i = 0; i < 100 && currentBlock; i++) {
+          for (let i = 0; i < 500 && currentBlock; i++) {
             recentHeaders.push(currentBlock.header);
             const prevHash = currentBlock.header.prevHash;
             if (prevHash) {

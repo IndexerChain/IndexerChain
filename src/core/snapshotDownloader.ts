@@ -81,7 +81,14 @@ export class SnapshotDownloader {
     if (!this.p2pNode) return;
     
     // Handle SNAPSHOT_META responses
-    this.p2pNode.onMessage("SNAPSHOT_META", (data: { metas: SnapshotMeta[] }, sender: string) => {
+    this.p2pNode.onMessage("SNAPSHOT_META", (data: { metas: SnapshotMeta[]; nodeId?: string }, sender: string) => {
+      if (!data || !data.metas || !Array.isArray(data.metas)) {
+        console.warn("[SnapshotDownloader] Invalid SNAPSHOT_META response:", data);
+        return;
+      }
+      
+      console.log(`[SnapshotDownloader] Received ${data.metas.length} snapshot metadata from ${sender.substring(0, 16)}...`);
+      
       // Update ranker with available snapshots
       for (const meta of data.metas) {
         // Estimate latency (could be improved with actual ping)

@@ -60,7 +60,7 @@ export class SignalingRoom {
         latestHeight: this.bootstrapState.latestHeight,
         latestHeader: this.bootstrapState.latestHeader,
         latestHeaderHash: this.bootstrapState.latestHeaderHash,
-        recentHeaders: this.bootstrapState.recentHeaders.slice(-100), // Only save last 100 for efficiency
+        recentHeaders: this.bootstrapState.recentHeaders.slice(-500), // Phase 38: Save last 500 for fast sync
         latestSnapshotMeta: this.bootstrapState.latestSnapshotMeta,
         lastUpdated: this.bootstrapState.lastUpdated,
         stateCommitment: this.bootstrapState.stateCommitment,
@@ -133,7 +133,7 @@ export class SignalingRoom {
               latestHeight: this.bootstrapState.latestHeight,
               latestHeader: this.bootstrapState.latestHeader,
               latestHeaderHash: this.bootstrapState.latestHeaderHash,
-              recentHeaders: this.bootstrapState.recentHeaders.slice(-100), // Last 100 headers
+              recentHeaders: this.bootstrapState.recentHeaders.slice(-500), // Phase 38: Last 500 headers for fast sync
               latestSnapshotMeta: this.bootstrapState.latestSnapshotMeta,
               updatedAt: this.bootstrapState.lastUpdated,
               stateCommitment: this.bootstrapState.stateCommitment,
@@ -177,7 +177,7 @@ export class SignalingRoom {
             latestHeight: this.bootstrapState.latestHeight,
             latestHeader: this.bootstrapState.latestHeader,
             latestHeaderHash: this.bootstrapState.latestHeaderHash,
-            recentHeaders: data.wantHeaders ? this.bootstrapState.recentHeaders.slice(-(data.headerCount || 200)) : undefined,
+            recentHeaders: data.wantHeaders ? this.bootstrapState.recentHeaders.slice(-(data.headerCount || 500)) : undefined,
             latestSnapshotMeta: data.wantSnapshotMeta ? this.bootstrapState.latestSnapshotMeta : undefined,
             stateCommitment: this.bootstrapState.stateCommitment,
             trustLevel: this.bootstrapState.trustLevel,
@@ -227,12 +227,12 @@ export class SignalingRoom {
           this.bootstrapState.stateCommitment = stateCommitment || header?.stateCommitment || null;
           this.bootstrapState.trustLevel = 'root-only'; // Phase 37: Default to root-only, can be upgraded to 'local-majority' if verified by multiple peers
           
-          // Update recent headers
+          // Phase 38: Update recent headers (keep last 500 for faster sync)
           if (recentHeaders && Array.isArray(recentHeaders)) {
-            this.bootstrapState.recentHeaders = recentHeaders.slice(-200);
+            this.bootstrapState.recentHeaders = recentHeaders.slice(-500);
           } else if (header) {
             this.bootstrapState.recentHeaders.push(header);
-            if (this.bootstrapState.recentHeaders.length > 200) {
+            if (this.bootstrapState.recentHeaders.length > 500) {
               this.bootstrapState.recentHeaders.shift();
             }
           }
@@ -252,7 +252,7 @@ export class SignalingRoom {
               latestHeight: this.bootstrapState.latestHeight,
               latestHeader: this.bootstrapState.latestHeader,
               latestHeaderHash: this.bootstrapState.latestHeaderHash,
-              recentHeaders: this.bootstrapState.recentHeaders.slice(-100), // Last 100 for efficiency
+              recentHeaders: this.bootstrapState.recentHeaders.slice(-500), // Phase 38: Last 500 for fast sync
               latestSnapshotMeta: this.bootstrapState.latestSnapshotMeta,
               updatedAt: this.bootstrapState.lastUpdated,
               stateCommitment: this.bootstrapState.stateCommitment,

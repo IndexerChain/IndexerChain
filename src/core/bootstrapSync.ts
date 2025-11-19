@@ -108,46 +108,73 @@ export class BootstrapSyncManager {
       };
     }
 
-    // Step 1: Fast set tip if we're close (within 200 blocks)
+    // Phase 38: Fast set tip if we're close (within 500 blocks)
     const heightDiff = response.latestHeight - localHeight;
     
-    if (heightDiff > 0 && heightDiff <= 200 && response.recentHeaders) {
+    if (heightDiff > 0 && heightDiff <= 500 && response.recentHeaders) {
       // Fast sync using recent headers
-      console.log(`[Phase 32] Fast syncing using ${response.recentHeaders.length} recent headers`);
+      console.log(`[Phase 38] Fast syncing using ${response.recentHeaders.length} recent headers (height diff: ${heightDiff})`);
       actions.push(`Fast sync: ${heightDiff} blocks behind`);
       
       try {
-        // Verify and apply headers sequentially
+        // Phase 38: Add headers to header cache for fast relay
+        const { globalHeaderCache } = await import("./headerCache.js");
+        const { hashBlockHeader } = await import("./crypto.js");
+        
+        // Verify and cache headers sequentially
         let currentTip = localTip;
-        let applied = 0;
+        let cached = 0;
+        const headersToRequest: number[] = [];
         
         for (const header of response.recentHeaders) {
           if (header.height <= localHeight) continue;
           
-          // Verify header chain
+          // Verify header chain continuity
           if (currentTip && header.prevHash && currentTip.hash && header.prevHash !== currentTip.hash) {
-            console.warn(`[Phase 32] Header chain broken at height ${header.height}`);
+            console.warn(`[Phase 38] Header chain broken at height ${header.height}, stopping fast sync`);
             break;
           }
           
-          // Create a minimal block for verification (we'll request full blocks later)
-          // For now, we'll just update our tip reference
-          // In a real implementation, we'd request full blocks for headers we don't have
-          // Note: We don't actually have the full block hash here, so we skip updating currentTip
-          applied++;
+          // Compute header hash and add to cache
+          try {
+            const headerHash = await hashBlockHeader(header);
+            if (!globalHeaderCache.hasHeader(headerHash)) {
+              globalHeaderCache.addHeader(header, headerHash, false); // false = body not received yet
+              cached++;
+              headersToRequest.push(header.height);
+            }
+            
+            // Update currentTip reference for next iteration
+            // We'll use the header hash as the block hash reference
+            currentTip = {
+              header,
+              hash: headerHash,
+              transactions: [], // Empty for now, will be filled when block body is received
+            } as any;
+          } catch (error) {
+            console.warn(`[Phase 38] Failed to cache header at height ${header.height}:`, error);
+            break;
+          }
         }
         
-        if (applied > 0) {
-          actions.push(`Applied ${applied} headers`);
+        if (cached > 0) {
+          actions.push(`Cached ${cached} headers for fast sync`);
+          
+          // Phase 38: Trigger block body requests for cached headers
+          if (this.chainContext.p2p && headersToRequest.length > 0) {
+            const minHeight = Math.min(...headersToRequest);
+            const maxHeight = Math.max(...headersToRequest);
+            this.chainContext.p2p.broadcast("REQUEST_BLOCKS", {
+              fromHeight: minHeight,
+              toHeight: maxHeight,
+            });
+            actions.push(`Requested block bodies for heights ${minHeight}-${maxHeight}`);
+          }
         }
       } catch (error) {
-        console.error(`[Phase 32] Error during fast sync:`, error);
-        return {
-          success: false,
-          synced: false,
-          error: error instanceof Error ? error.message : "Fast sync failed",
-          actions,
-        };
+        console.error(`[Phase 38] Error during fast sync:`, error);
+        // Don't fail bootstrap - continue with normal sync
+        actions.push(`Fast sync failed: ${error instanceof Error ? error.message : "Unknown error"}`);
       }
     }
 

@@ -10,6 +10,8 @@
  * - Automatic chain synchronization
  */
 
+import { logger } from "./logger.js";
+
 // Types imported as needed
 
 /**
@@ -132,7 +134,7 @@ export class BrowserP2PNode implements P2PNode {
    */
   async connect(bootstrapUrl: string): Promise<void> {
     if (this.isConnected) {
-      console.warn("Already connected to P2P network");
+      logger.warn("Already connected to P2P network");
       return;
     }
 
@@ -160,7 +162,7 @@ export class BrowserP2PNode implements P2PNode {
 
         this.ws.onopen = () => {
           clearTimeout(timeout);
-          console.log("Connected to signaling server");
+          logger.debug("Connected to signaling server");
           this.isConnected = true;
 
           // Send join message
@@ -173,7 +175,7 @@ export class BrowserP2PNode implements P2PNode {
           // Some signal servers may not automatically send peer list
           setTimeout(() => {
             this.requestPeers();
-            console.log("[P2P] Requested peers from signaling server");
+            logger.debug("[P2P] Requested peers from signaling server");
           }, 500); // Small delay to ensure join message is processed
 
           // Process queued messages
@@ -185,23 +187,23 @@ export class BrowserP2PNode implements P2PNode {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            console.log(`[P2P] Received signaling message:`, message.type, message);
+            logger.debug(`[P2P] Received signaling message:`, message.type, message);
             
             // Phase 32: Check if this is a BOOTSTRAP_RESPONSE and handle it directly
             if (message.type === 'BOOTSTRAP_RESPONSE') {
-              console.log(`[Phase 32] Direct handling of BOOTSTRAP_RESPONSE from WebSocket`);
+              logger.debug(`[Phase 32] Direct handling of BOOTSTRAP_RESPONSE from WebSocket`);
               this.handleSignalingMessage(message);
             } else {
               this.handleSignalingMessage(message);
             }
           } catch (error) {
-            console.error("Failed to parse signaling message:", error);
+            logger.error("Failed to parse signaling message:", error);
           }
         };
 
         this.ws.onerror = (error) => {
           clearTimeout(timeout);
-          console.error("WebSocket error:", error);
+          logger.error("WebSocket error:", error);
           const errorMessage =
             this.ws?.readyState === WebSocket.CONNECTING
               ? `Failed to connect to signaling server at ${bootstrapUrl}.\n\nPlease ensure:\n1. The signaling server is running\n2. The URL is correct\n3. Check the server logs for errors`
@@ -211,7 +213,7 @@ export class BrowserP2PNode implements P2PNode {
 
         this.ws.onclose = (event) => {
           clearTimeout(timeout);
-          console.log("Disconnected from signaling server", event.code, event.reason);
+          logger.debug("Disconnected from signaling server", event.code, event.reason);
           this.isConnected = false;
           this.ws = null;
 
@@ -269,14 +271,14 @@ export class BrowserP2PNode implements P2PNode {
           peer.dataChannel.close();
         } catch (error) {
           // Ignore errors when closing (channel might already be closed)
-          console.log(`[P2P] Data channel already closed for peer ${peer.id.substring(0, 16)}...`);
+          logger.debug(`[P2P] Data channel already closed for peer ${peer.id.substring(0, 16)}...`);
         }
       }
       try {
         peer.connection.close();
       } catch (error) {
         // Ignore errors when closing (connection might already be closed)
-        console.log(`[P2P] Connection already closed for peer ${peer.id.substring(0, 16)}...`);
+        logger.debug(`[P2P] Connection already closed for peer ${peer.id.substring(0, 16)}...`);
       }
     }
     this.peers.clear();
@@ -309,7 +311,7 @@ export class BrowserP2PNode implements P2PNode {
         try {
           peer.dataChannel.send(JSON.stringify(message));
         } catch (error) {
-          console.error(`Failed to send message to peer ${peer.id}:`, error);
+          logger.error(`Failed to send message to peer ${peer.id}:`, error);
         }
       }
     }
@@ -321,7 +323,7 @@ export class BrowserP2PNode implements P2PNode {
   sendToPeer(peerId: string, type: P2PMessageType, payload: any): void {
     const peer = this.peers.get(peerId);
     if (!peer || !peer.connected || !peer.dataChannel || peer.dataChannel.readyState !== "open") {
-      console.warn(`[P2P] Cannot send message to peer ${peerId}: peer not connected`);
+      logger.warn(`[P2P] Cannot send message to peer ${peerId}: peer not connected`);
       return;
     }
 
@@ -336,7 +338,7 @@ export class BrowserP2PNode implements P2PNode {
     try {
       peer.dataChannel.send(JSON.stringify(message));
     } catch (error) {
-      console.error(`Failed to send message to peer ${peerId}:`, error);
+      logger.error(`Failed to send message to peer ${peerId}:`, error);
     }
   }
 
@@ -365,10 +367,10 @@ export class BrowserP2PNode implements P2PNode {
    */
   private sendSignalingMessage(message: any): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log(`[P2P] Sending signaling message:`, message.type, message);
+      logger.debug(`[P2P] Sending signaling message:`, message.type, message);
       this.ws.send(JSON.stringify(message));
     } else {
-      console.warn(`[P2P] Cannot send signaling message: WebSocket not open (readyState: ${this.ws?.readyState})`);
+      logger.warn(`[P2P] Cannot send signaling message: WebSocket not open (readyState: ${this.ws?.readyState})`);
     }
   }
 
@@ -389,7 +391,7 @@ export class BrowserP2PNode implements P2PNode {
     switch (message.type) {
       case "JOIN_ACK":
         // Phase 37: Handle JOIN_ACK with rootTip
-        console.log(`[P2P] Received JOIN_ACK:`, {
+        logger.debug(`[P2P] Received JOIN_ACK:`, {
           peerCount: message.peers?.length || 0,
           hasRootTip: !!message.rootTip,
           rootTipHeight: message.rootTip?.latestHeight || 0,
@@ -397,11 +399,11 @@ export class BrowserP2PNode implements P2PNode {
         
         // Handle peers list (same as "peers" message)
         const joinAckPeerIds: string[] = message.peers || [];
-        console.log(`[P2P] Processing ${joinAckPeerIds.length} peers from JOIN_ACK`);
+        logger.debug(`[P2P] Processing ${joinAckPeerIds.length} peers from JOIN_ACK`);
         
         for (const peerId of joinAckPeerIds) {
           if (peerId !== this.nodeId && !this.peers.has(peerId)) {
-            console.log(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
+            logger.debug(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
             this.initiatePeerConnection(peerId);
           }
         }
@@ -415,7 +417,7 @@ export class BrowserP2PNode implements P2PNode {
                 const quorumManager = getQuorumManager();
                 quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
               } catch (error) {
-                console.warn("[P2P] Failed to set IP hash:", error);
+                logger.warn("[P2P] Failed to set IP hash:", error);
               }
             })();
           }
@@ -423,7 +425,7 @@ export class BrowserP2PNode implements P2PNode {
         
         // Handle rootTip - forward to bootstrap sync manager
         if (message.rootTip && message.rootTip.latestHeight > 0) {
-          console.log(`[P2P] JOIN_ACK contains rootTip (height: ${message.rootTip.latestHeight}), forwarding to bootstrap handlers`);
+          logger.debug(`[P2P] JOIN_ACK contains rootTip (height: ${message.rootTip.latestHeight}), forwarding to bootstrap handlers`);
           
           // Phase 37: Store rootTip info for debug overlay
           if (typeof window !== "undefined") {
@@ -440,13 +442,13 @@ export class BrowserP2PNode implements P2PNode {
               handler({ rootTip: message.rootTip }, "signal-server");
             }
           } else {
-            console.warn(`[P2P] ⚠️ No handlers registered for ROOT_TIP_UPDATE - bootstrap sync may not work`);
+            logger.warn(`[P2P] ⚠️ No handlers registered for ROOT_TIP_UPDATE - bootstrap sync may not work`);
           }
         }
         break;
 
       case "peers":
-        console.log(`[P2P] Received peers list:`, {
+        logger.debug(`[P2P] Received peers list:`, {
           peerCount: message.peers?.length || 0,
           peers: message.peers || [],
           hasIPHashes: !!message.peerIPHashes,
@@ -463,7 +465,7 @@ export class BrowserP2PNode implements P2PNode {
                 const quorumManager = getQuorumManager();
                 quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
               } catch (error) {
-                console.warn("[P2P] Failed to set IP hash:", error);
+                logger.warn("[P2P] Failed to set IP hash:", error);
               }
             })();
           }
@@ -482,7 +484,7 @@ export class BrowserP2PNode implements P2PNode {
                   quorumManager.setPeerIPHash(peerId, ipHash as string);
                 }
               } catch (error) {
-                console.warn("[P2P] Failed to set peer IP hashes:", error);
+                logger.warn("[P2P] Failed to set peer IP hashes:", error);
               }
             })();
           }
@@ -491,20 +493,20 @@ export class BrowserP2PNode implements P2PNode {
         // Original peer list handling
         // Received list of peers, initiate WebRTC connections
         const peerIds: string[] = message.peers || [];
-        console.log(`[P2P] Processing ${peerIds.length} peers, current connections: ${this.peers.size}`);
+        logger.debug(`[P2P] Processing ${peerIds.length} peers, current connections: ${this.peers.size}`);
         
         if (peerIds.length === 0) {
-          console.warn("[P2P] ⚠️ Received empty peer list - no other nodes online or signal server issue");
+          logger.warn("[P2P] ⚠️ Received empty peer list - no other nodes online or signal server issue");
         }
         
         for (const peerId of peerIds) {
           if (peerId !== this.nodeId && !this.peers.has(peerId)) {
-            console.log(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
+            logger.debug(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
             this.initiatePeerConnection(peerId);
           } else if (peerId === this.nodeId) {
-            console.log(`[P2P] Skipping self: ${peerId.substring(0, 16)}...`);
+            logger.debug(`[P2P] Skipping self: ${peerId.substring(0, 16)}...`);
           } else if (this.peers.has(peerId)) {
-            console.log(`[P2P] Already connected/connecting to: ${peerId.substring(0, 16)}...`);
+            logger.debug(`[P2P] Already connected/connecting to: ${peerId.substring(0, 16)}...`);
           }
         }
         break;
@@ -529,7 +531,7 @@ export class BrowserP2PNode implements P2PNode {
         // When signal server notifies us about a new peer, initiate connection
         const newPeerId = message.peerId;
         if (newPeerId && newPeerId !== this.nodeId && !this.peers.has(newPeerId)) {
-          console.log(`[P2P] Signal server notified about new peer: ${newPeerId.substring(0, 16)}..., initiating connection`);
+          logger.debug(`[P2P] Signal server notified about new peer: ${newPeerId.substring(0, 16)}..., initiating connection`);
           this.initiatePeerConnection(newPeerId);
         }
         break;
@@ -538,7 +540,7 @@ export class BrowserP2PNode implements P2PNode {
         // Phase 37: Handle peer disconnection notification
         const leftPeerId = message.peerId;
         if (leftPeerId && this.peers.has(leftPeerId)) {
-          console.log(`[P2P] Signal server notified that peer left: ${leftPeerId.substring(0, 16)}...`);
+          logger.debug(`[P2P] Signal server notified that peer left: ${leftPeerId.substring(0, 16)}...`);
           const peerInfo = this.peers.get(leftPeerId);
           if (peerInfo) {
             if (peerInfo.dataChannel) {
@@ -546,14 +548,14 @@ export class BrowserP2PNode implements P2PNode {
                 peerInfo.dataChannel.close();
               } catch (error) {
                 // Ignore errors when closing (channel might already be closed)
-                console.log(`[P2P] Data channel already closed for peer ${leftPeerId.substring(0, 16)}...`);
+                logger.debug(`[P2P] Data channel already closed for peer ${leftPeerId.substring(0, 16)}...`);
               }
             }
             try {
               peerInfo.connection.close();
             } catch (error) {
               // Ignore errors when closing (connection might already be closed)
-              console.log(`[P2P] Connection already closed for peer ${leftPeerId.substring(0, 16)}...`);
+              logger.debug(`[P2P] Connection already closed for peer ${leftPeerId.substring(0, 16)}...`);
             }
             this.peers.delete(leftPeerId);
           }
@@ -562,7 +564,7 @@ export class BrowserP2PNode implements P2PNode {
 
       // Phase 32: Handle bootstrap response from signal server
       case "BOOTSTRAP_RESPONSE":
-        console.log(`[Phase 32] Received BOOTSTRAP_RESPONSE from signal server:`, {
+        logger.debug(`[Phase 32] Received BOOTSTRAP_RESPONSE from signal server:`, {
           latestHeight: message.latestHeight,
           hasHeader: !!message.latestHeader,
           hasSnapshotMeta: !!message.latestSnapshotMeta,
@@ -573,18 +575,18 @@ export class BrowserP2PNode implements P2PNode {
         // Even if latestHeight is 0, forward to handlers (they will handle it appropriately)
         const handlers = this.messageHandlers.get("BOOTSTRAP_RESPONSE");
         if (handlers && handlers.size > 0) {
-          console.log(`[Phase 32] Forwarding BOOTSTRAP_RESPONSE to ${handlers.size} handler(s)`);
+          logger.debug(`[Phase 32] Forwarding BOOTSTRAP_RESPONSE to ${handlers.size} handler(s)`);
           for (const handler of handlers) {
             handler(message, "signal-server");
           }
         } else {
-          console.warn(`[Phase 32] ⚠️ No handlers registered for BOOTSTRAP_RESPONSE - bootstrap sync may not work`);
+          logger.warn(`[Phase 32] ⚠️ No handlers registered for BOOTSTRAP_RESPONSE - bootstrap sync may not work`);
         }
         break;
 
       // Phase 32: Handle root tip update from signal server
       case "ROOT_TIP_UPDATE":
-        console.log(`[Phase 32] Received ROOT_TIP_UPDATE from signal server:`, {
+        logger.debug(`[Phase 32] Received ROOT_TIP_UPDATE from signal server:`, {
           latestHeight: message.rootTip?.latestHeight || message.latestHeight,
           hasHeader: !!message.rootTip?.latestHeader || !!message.latestHeader,
           timestamp: message.timestamp,
@@ -593,17 +595,17 @@ export class BrowserP2PNode implements P2PNode {
         // Forward to message handlers
         const tipHandlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
         if (tipHandlers && tipHandlers.size > 0) {
-          console.log(`[Phase 32] Forwarding ROOT_TIP_UPDATE to ${tipHandlers.size} handler(s)`);
+          logger.debug(`[Phase 32] Forwarding ROOT_TIP_UPDATE to ${tipHandlers.size} handler(s)`);
           for (const handler of tipHandlers) {
             handler(message, "signal-server");
           }
         } else {
-          console.warn(`[Phase 32] ⚠️ No handlers registered for ROOT_TIP_UPDATE`);
+          logger.warn(`[Phase 32] ⚠️ No handlers registered for ROOT_TIP_UPDATE`);
         }
         break;
 
       default:
-        console.warn("Unknown signaling message type:", message.type);
+        logger.warn("Unknown signaling message type:", message.type);
     }
   }
 
@@ -615,7 +617,7 @@ export class BrowserP2PNode implements P2PNode {
     if (this.peers.has(peerId)) {
       const existingPeer = this.peers.get(peerId);
       const state = existingPeer?.connection.signalingState;
-      console.log(`[P2P] Already have connection to ${peerId.substring(0, 16)}... (state: ${state}), skipping`);
+      logger.debug(`[P2P] Already have connection to ${peerId.substring(0, 16)}... (state: ${state}), skipping`);
       return; // Already connected or connecting
     }
 
@@ -623,7 +625,7 @@ export class BrowserP2PNode implements P2PNode {
     // The node with the "smaller" nodeId creates the offer
     // This prevents both sides from creating offers simultaneously
     if (peerId < this.nodeId) {
-      console.log(`[P2P] Peer ${peerId.substring(0, 16)}... has smaller nodeId, waiting for their offer instead of creating one`);
+      logger.debug(`[P2P] Peer ${peerId.substring(0, 16)}... has smaller nodeId, waiting for their offer instead of creating one`);
       // Create connection but don't create offer - wait for the other side
       const connection = new RTCPeerConnection({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -657,16 +659,16 @@ export class BrowserP2PNode implements P2PNode {
 
       // Handle connection state changes
       connection.onconnectionstatechange = () => {
-        console.log(`[P2P] Connection state for ${peerId.substring(0, 16)}...: ${connection.connectionState}`);
+        logger.debug(`[P2P] Connection state for ${peerId.substring(0, 16)}...: ${connection.connectionState}`);
         if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
-          console.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
+          logger.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
         }
       };
 
       return; // Don't create offer, wait for the other side
     }
 
-    console.log(`[P2P] Creating WebRTC connection to ${peerId.substring(0, 16)}...`);
+    logger.debug(`[P2P] Creating WebRTC connection to ${peerId.substring(0, 16)}...`);
     const connection = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
@@ -691,14 +693,14 @@ export class BrowserP2PNode implements P2PNode {
     // Handle ICE candidates
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log(`[P2P] ICE candidate for ${peerId.substring(0, 16)}...:`, event.candidate.candidate?.substring(0, 50));
+        logger.debug(`[P2P] ICE candidate for ${peerId.substring(0, 16)}...:`, event.candidate.candidate?.substring(0, 50));
         this.sendSignalingMessage({
           type: "ice-candidate",
           to: peerId,
           candidate: event.candidate,
         });
       } else {
-        console.log(`[P2P] ICE gathering complete for ${peerId.substring(0, 16)}...`);
+        logger.debug(`[P2P] ICE gathering complete for ${peerId.substring(0, 16)}...`);
       }
     };
 
@@ -712,10 +714,10 @@ export class BrowserP2PNode implements P2PNode {
 
     // Create offer
     try {
-      console.log(`[P2P] Creating offer for ${peerId.substring(0, 16)}...`);
+      logger.debug(`[P2P] Creating offer for ${peerId.substring(0, 16)}...`);
       const offer = await connection.createOffer();
       await connection.setLocalDescription(offer);
-      console.log(`[P2P] Offer created, sending to signal server for ${peerId.substring(0, 16)}...`);
+      logger.debug(`[P2P] Offer created, sending to signal server for ${peerId.substring(0, 16)}...`);
 
       this.sendSignalingMessage({
         type: "offer",
@@ -723,7 +725,7 @@ export class BrowserP2PNode implements P2PNode {
         offer: offer,
       });
     } catch (error) {
-      console.error(`[P2P] ❌ Failed to create offer for ${peerId.substring(0, 16)}...:`, error);
+      logger.error(`[P2P] ❌ Failed to create offer for ${peerId.substring(0, 16)}...:`, error);
       this.peers.delete(peerId);
     }
   }
@@ -732,7 +734,7 @@ export class BrowserP2PNode implements P2PNode {
    * Handle incoming WebRTC offer
    */
   private async handleOffer(from: string, offer: RTCSessionDescriptionInit): Promise<void> {
-    console.log(`[P2P] Received offer from ${from.substring(0, 16)}...`);
+    logger.debug(`[P2P] Received offer from ${from.substring(0, 16)}...`);
     let peerInfo = this.peers.get(from);
 
     if (!peerInfo) {
@@ -771,7 +773,7 @@ export class BrowserP2PNode implements P2PNode {
       await peerInfo.connection.setRemoteDescription(offer);
       const answer = await peerInfo.connection.createAnswer();
       await peerInfo.connection.setLocalDescription(answer);
-      console.log(`[P2P] Created answer for ${from.substring(0, 16)}..., sending to signal server`);
+      logger.debug(`[P2P] Created answer for ${from.substring(0, 16)}..., sending to signal server`);
 
       this.sendSignalingMessage({
         type: "answer",
@@ -779,7 +781,7 @@ export class BrowserP2PNode implements P2PNode {
         answer: answer,
       });
     } catch (error) {
-      console.error(`Failed to handle offer from ${from}:`, error);
+      logger.error(`Failed to handle offer from ${from}:`, error);
     }
   }
 
@@ -789,7 +791,7 @@ export class BrowserP2PNode implements P2PNode {
   private async handleAnswer(from: string, answer: RTCSessionDescriptionInit): Promise<void> {
     const peerInfo = this.peers.get(from);
     if (!peerInfo) {
-      console.warn(`[P2P] Received answer from unknown peer: ${from.substring(0, 16)}...`);
+      logger.warn(`[P2P] Received answer from unknown peer: ${from.substring(0, 16)}...`);
       return;
     }
 
@@ -801,19 +803,19 @@ export class BrowserP2PNode implements P2PNode {
         // We're already the answerer (we received an offer and created an answer)
         // This answer is from the other side, which means they also received our offer
         // We should ignore this answer since we're already handling the connection from our side
-        console.log(`[P2P] Ignoring answer from ${from.substring(0, 16)}... - we're already the answerer (state: ${connectionState})`);
+        logger.debug(`[P2P] Ignoring answer from ${from.substring(0, 16)}... - we're already the answerer (state: ${connectionState})`);
         return;
       }
 
       // We're the offerer, so set the remote answer
       if (connectionState === "have-local-offer") {
         await peerInfo.connection.setRemoteDescription(answer);
-        console.log(`[P2P] Set remote answer from ${from.substring(0, 16)}... (state: ${connectionState})`);
+        logger.debug(`[P2P] Set remote answer from ${from.substring(0, 16)}... (state: ${connectionState})`);
       } else {
-        console.log(`[P2P] Ignoring answer from ${from.substring(0, 16)}... - unexpected state: ${connectionState}`);
+        logger.debug(`[P2P] Ignoring answer from ${from.substring(0, 16)}... - unexpected state: ${connectionState}`);
       }
     } catch (error) {
-      console.error(`[P2P] Failed to set remote description for ${from.substring(0, 16)}...:`, error);
+      logger.error(`[P2P] Failed to set remote description for ${from.substring(0, 16)}...:`, error);
     }
   }
 
@@ -829,7 +831,7 @@ export class BrowserP2PNode implements P2PNode {
       try {
         await peerInfo.connection.addIceCandidate(candidate);
       } catch (error) {
-        console.error(`Failed to add ICE candidate for ${from}:`, error);
+        logger.error(`Failed to add ICE candidate for ${from}:`, error);
       }
     }
   }
@@ -841,10 +843,10 @@ export class BrowserP2PNode implements P2PNode {
     peerInfo.dataChannel = dataChannel;
 
     dataChannel.onopen = () => {
-      console.log(`[P2P] ✅ Data channel opened with peer ${peerInfo.id.substring(0, 16)}...`);
+      logger.debug(`[P2P] ✅ Data channel opened with peer ${peerInfo.id.substring(0, 16)}...`);
       peerInfo.connected = true;
       peerInfo.lastSeen = Date.now();
-      console.log(`[P2P] Total connected peers: ${this.getPeerCount()}`);
+      logger.debug(`[P2P] Total connected peers: ${this.getPeerCount()}`);
       
       // Phase 30: Send network handshake when data channel opens
       // This will be handled by App.tsx after P2P connection is established
@@ -863,12 +865,12 @@ export class BrowserP2PNode implements P2PNode {
         const message: P2PMessage = JSON.parse(event.data);
         this.handlePeerMessage(message, peerInfo.id);
       } catch (error) {
-        console.error(`Failed to parse message from ${peerInfo.id}:`, error);
+        logger.error(`Failed to parse message from ${peerInfo.id}:`, error);
       }
     };
 
     dataChannel.onclose = () => {
-      console.log(`[P2P] Data channel closed with peer ${peerInfo.id.substring(0, 16)}...`);
+      logger.debug(`[P2P] Data channel closed with peer ${peerInfo.id.substring(0, 16)}...`);
       peerInfo.connected = false;
     };
 
@@ -886,21 +888,21 @@ export class BrowserP2PNode implements P2PNode {
           (errorReason === 'Close called' || errorReason.includes('User-Initiated Abort'))
         ) {
           // This is a normal close operation, not a real error
-          console.log(`[P2P] Data channel closed normally with peer ${peerInfo.id.substring(0, 16)}... (reason: ${errorReason})`);
+          logger.debug(`[P2P] Data channel closed normally with peer ${peerInfo.id.substring(0, 16)}... (reason: ${errorReason})`);
           peerInfo.connected = false;
           return;
         }
         
         // Check if channel is already closed
         if (dataChannel.readyState === 'closed') {
-          console.log(`[P2P] Data channel already closed with peer ${peerInfo.id.substring(0, 16)}..., ignoring error`);
+          logger.debug(`[P2P] Data channel already closed with peer ${peerInfo.id.substring(0, 16)}..., ignoring error`);
           peerInfo.connected = false;
           return;
         }
       }
       
       // Only log as error if it's a real error, not a normal close
-      console.error(`[P2P] Data channel error with peer ${peerInfo.id.substring(0, 16)}...:`, error);
+      logger.error(`[P2P] Data channel error with peer ${peerInfo.id.substring(0, 16)}...:`, error);
       peerInfo.connected = false;
     };
   }
@@ -939,9 +941,11 @@ export class BrowserP2PNode implements P2PNode {
     if (handlers) {
       for (const handler of handlers) {
         try {
-          handler(message.data, message.sender);
+          // Ensure data is defined - some messages might not have data field
+          const handlerData = message.data !== undefined ? message.data : message;
+          handler(handlerData, message.sender);
         } catch (error) {
-          console.error(`Error in message handler for ${message.type}:`, error);
+          logger.error(`Error in message handler for ${message.type}:`, error);
         }
       }
     }
@@ -960,10 +964,10 @@ export class BrowserP2PNode implements P2PNode {
    */
   requestPeers(): void {
     if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("[P2P] ⚠️ Cannot request peers: not connected to signaling server");
+      logger.warn("[P2P] ⚠️ Cannot request peers: not connected to signaling server");
       return;
     }
-    console.log("[P2P] Requesting peers from signaling server");
+    logger.debug("[P2P] Requesting peers from signaling server");
     this.sendSignalingMessage({
       type: "request-peers",
       nodeId: this.nodeId,

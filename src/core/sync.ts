@@ -145,6 +145,17 @@ export async function handleReceivedBlocks(
       continue;
     }
 
+    // Check if block is too far ahead (height gap > 1)
+    // This indicates missing blocks, which is normal when blocks are pruned
+    // We should skip verification and not ban the peer for this
+    if (block.header.height > localHeight + 1) {
+      const gap = block.header.height - localHeight;
+      console.log(`[Sync] ⚠️ Block ${block.header.height} is too far ahead (local: ${localHeight}, gap: ${gap}). Skipping - need to sync missing blocks first or use snapshot.`);
+      // Don't ban peer for this - it's normal when blocks are pruned
+      // Just skip this block and continue
+      continue;
+    }
+
     // Phase 6: Get all blocks for difficulty verification
     const allBlocks = context.storage.getAllBlocks();
     
@@ -165,6 +176,8 @@ export async function handleReceivedBlocks(
     
     if (!verification.valid) {
       // Phase 21: Record invalid block
+      // But don't ban for height mismatch if it's due to missing blocks (gap > 1)
+      // This is handled above, so if we get here, it's a real verification error
       if (sender && context.params.peerScoreEnabled) {
         const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
         const reputationManager = getGlobalPeerReputationManager(context.params);

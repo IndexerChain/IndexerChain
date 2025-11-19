@@ -99,8 +99,7 @@ export class StateCommitGossip {
     const quorumManager = getQuorumManager();
     const ourIPHash = quorumManager.getPeerIPHash(this.p2pNode.nodeId) || "";
 
-    const message = {
-      type: "STATE_COMMIT_GOSSIP",
+    const messageData = {
       height,
       stateCommitment,
       tipHash,
@@ -109,14 +108,27 @@ export class StateCommitGossip {
       timestamp: Date.now(),
     };
 
-    // Broadcast to all connected peers
-    const peers = Array.from(this.p2pNode.peers.values()).filter(p => p.connected);
-    for (const peer of peers) {
-      if (peer.dataChannel && peer.dataChannel.readyState === "open") {
-        try {
-          peer.dataChannel.send(JSON.stringify(message));
-        } catch (error) {
-          console.error(`[StateCommitGossip] Failed to send to peer ${peer.id}:`, error);
+    // Broadcast to all connected peers using P2P broadcast method
+    // This ensures proper message format (type + data)
+    if (this.p2pNode.broadcast) {
+      this.p2pNode.broadcast("STATE_COMMIT_GOSSIP", messageData);
+    } else {
+      // Fallback: send directly via dataChannel (legacy format)
+      const peers = Array.from(this.p2pNode.peers.values()).filter(p => p.connected);
+      for (const peer of peers) {
+        if (peer.dataChannel && peer.dataChannel.readyState === "open") {
+          try {
+            // Send in P2PMessage format
+            const message = {
+              type: "STATE_COMMIT_GOSSIP",
+              data: messageData,
+              sender: this.p2pNode.nodeId,
+              messageId: `${this.p2pNode.nodeId}_${Date.now()}_${Math.random()}`,
+            };
+            peer.dataChannel.send(JSON.stringify(message));
+          } catch (error) {
+            console.error(`[StateCommitGossip] Failed to send to peer ${peer.id}:`, error);
+          }
         }
       }
     }
