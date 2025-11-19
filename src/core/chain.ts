@@ -534,15 +534,20 @@ export async function appendMinedBlock(
     }
 
     // Phase 16: Update total minted after applying block
-    // Extract coinbase reward and add to total_minted
+    // Phase 42: Extract total coinbase reward from all operations (miner + referrals + fees)
     if (block.txs.length > 0) {
       const coinbaseTx = block.txs[0];
       if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
-        const rewardOp = coinbaseTx.ops[0];
-        if (rewardOp.type === "TRANSFER" && rewardOp.amount) {
-          const { IDCToUIDC } = await import("./idcEmission.js");
-          const rewardUIDC = IDCToUIDC(rewardOp.amount);
-          context.indexState.incrementTotalMinted(rewardUIDC);
+        const { IDCToUIDC } = await import("./idcEmission.js");
+        // Sum all TRANSFER operations in coinbase transaction
+        let totalRewardUIDC = 0n;
+        for (const op of coinbaseTx.ops) {
+          if (op.type === "TRANSFER" && op.amount) {
+            totalRewardUIDC += IDCToUIDC(op.amount);
+          }
+        }
+        if (totalRewardUIDC > 0n) {
+          context.indexState.incrementTotalMinted(totalRewardUIDC);
         }
       }
     }

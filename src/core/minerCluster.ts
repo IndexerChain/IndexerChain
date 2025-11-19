@@ -469,7 +469,7 @@ export class MinerCluster {
     this.updateClusterStats();
 
     // Started cluster mining
-    console.log(`[Phase 18] Cluster mining started with ${this.workers.length} workers`);
+    // Production: No console logs
   }
 
   /**

@@ -27,6 +27,9 @@ interface MiningMainCardProps {
   pendingInviteAddress?: string | null;
   currentReferrerAddress?: string | null;
   onInviteCodeSubmit?: (code: string) => void;
+  // Auto-mining props
+  autoMining?: boolean;
+  onAutoMiningChange?: (enabled: boolean) => void;
 }
 
 export function MiningMainCard({
@@ -45,6 +48,8 @@ export function MiningMainCard({
   pendingInviteAddress,
   currentReferrerAddress,
   onInviteCodeSubmit,
+  autoMining = false,
+  onAutoMiningChange,
 }: MiningMainCardProps) {
   const [miningGuardResult, setMiningGuardResult] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -224,9 +229,11 @@ export function MiningMainCard({
   // Only allow mining if:
   // 1. MiningGuard says it's ok AND
   // 2. Quorum score is sufficient (unless in First Year mode, Genesis mode with ≥2 independent peers)
+  // 3. Auto-mining is not enabled (if auto-mining is enabled, manual start is disabled)
   const canMine = miningGuardResult?.ok && 
                   !isMining && 
                   !clusterMining && 
+                  !autoMining && // Disable manual start if auto-mining is enabled
                   (isFirstYearMode || hasSufficientQuorum || (isGenesisMode && hasGenesisPeers));
   
   const isFollowerBlocked = localRole === "FOLLOWER" && chainContext?.params?.networkId === "IXC_MAINNET_V1";
@@ -254,29 +261,18 @@ export function MiningMainCard({
   };
 
   const handleButtonClick = () => {
-    console.log("[MiningMainCard] Button clicked", {
-      isMining,
-      clusterMining,
-      canMine,
-      isFollowerBlocked,
-      miningGuardResult: miningGuardResult?.ok,
-      quorumScore: miningGuardResult?.details?.quorumScore,
-      requiredQuorumScore: miningGuardResult?.details?.requiredQuorumScore,
-    });
+    // Production: No console logs
     
     if (isMining || clusterMining) {
       onStopMining();
-    } else if (canMine && !isFollowerBlocked) {
+    } else if (canMine && !isFollowerBlocked && !autoMining) {
       onStartMining();
     } else {
       // Show feedback when button is clicked but mining cannot start
-      if (!canMine) {
-        console.warn("[MiningMainCard] Cannot start mining:", {
-          reason: miningGuardResult?.reason,
-          quorumScore: miningGuardResult?.details?.quorumScore,
-          requiredQuorumScore: miningGuardResult?.details?.requiredQuorumScore,
-          tooltip,
-        });
+      if (autoMining) {
+        alert(isZh ? "自动挖矿已启用，系统会在链准备就绪时自动开始挖矿。" : "Auto mining is enabled. The system will automatically start mining when the chain is ready.");
+      } else if (!canMine) {
+        // Production: No console logs
         // Optionally show an alert or toast message
         if (tooltip) {
           alert(tooltip);
@@ -391,7 +387,7 @@ export function MiningMainCard({
         
         <button
           onClick={handleButtonClick}
-          // Don't disable the button - allow click to show feedback
+          disabled={autoMining && !isMining && !clusterMining} // Disable if auto-mining is enabled and not currently mining
           style={{
             width: "100%",
             padding: "1rem 2rem",
@@ -399,29 +395,31 @@ export function MiningMainCard({
             fontWeight: "bold",
             borderRadius: "8px",
             border: "none",
-            background: canMine || isMining || clusterMining
+            background: (canMine && !autoMining) || isMining || clusterMining
               ? status.color
               : "#6c757d",
             color: "white",
-            cursor: "pointer",
+            cursor: (autoMining && !isMining && !clusterMining) ? "not-allowed" : "pointer",
             transition: "all 0.2s",
-            opacity: canMine || isMining || clusterMining || isFollowerBlocked ? 1 : 0.7,
+            opacity: (canMine && !autoMining) || isMining || clusterMining || isFollowerBlocked ? 1 : 0.7,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: "0.5rem",
           }}
           onMouseEnter={(e) => {
-            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked) {
+            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && !autoMining) {
               e.currentTarget.style.opacity = "0.9";
             }
           }}
           onMouseLeave={(e) => {
-            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked) {
+            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && !autoMining) {
               e.currentTarget.style.opacity = "0.7";
             }
           }}
-          title={tooltip || undefined}
+          title={autoMining && !isMining && !clusterMining 
+            ? (isZh ? "自动挖矿已启用，系统会自动开始挖矿" : "Auto mining is enabled, the system will automatically start mining")
+            : (tooltip || undefined)}
         >
           {isMining || clusterMining ? (
             <>
@@ -435,6 +433,69 @@ export function MiningMainCard({
             </>
           )}
         </button>
+        
+        {/* Auto-Mining Toggle */}
+        {onAutoMiningChange && (
+          <div
+            style={{
+              marginTop: "1rem",
+              padding: "0.75rem 1rem",
+              background: "rgba(255, 255, 255, 0.9)",
+              borderRadius: "6px",
+              border: "1px solid #e0e0e0",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span style={{ fontSize: "1.2rem" }}>⚙️</span>
+              <div>
+                <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: "#333" }}>
+                  {isZh ? "自动挖矿" : "Auto Mining"}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
+                  {isZh 
+                    ? "启用后，当链准备就绪时自动开始挖矿" 
+                    : "Automatically start mining when chain is ready"}
+                </div>
+              </div>
+            </div>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                cursor: "pointer",
+                userSelect: "none",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={autoMining}
+                onChange={(e) => {
+                  if (onAutoMiningChange) {
+                    onAutoMiningChange(e.target.checked);
+                  }
+                }}
+                style={{
+                  width: "1.2rem",
+                  height: "1.2rem",
+                  cursor: "pointer",
+                  marginRight: "0.5rem",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "0.9rem",
+                  color: autoMining ? "#28a745" : "#666",
+                  fontWeight: autoMining ? "bold" : "normal",
+                }}
+              >
+                {autoMining ? (isZh ? "已启用" : "Enabled") : (isZh ? "已禁用" : "Disabled")}
+              </span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Quick Status Hint */}

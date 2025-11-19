@@ -1114,6 +1114,12 @@ function App() {
     behindBy: 0,
     progress: 0,
   });
+  
+  // Ref to access latest syncStatus in intervals (always up-to-date)
+  const syncStatusRef = useRef(syncStatus);
+  useEffect(() => {
+    syncStatusRef.current = syncStatus;
+  }, [syncStatus]);
 
   // Phase 36: Initialize state commit gossip, lock manager, drift detector, and repair manager
   useEffect(() => {
@@ -1358,8 +1364,7 @@ function App() {
       }
       
       if (blocks.length > 0) {
-        // Log when sending blocks to help debug sync
-        console.log(`[Sync] 📤 Sending ${blocks.length} blocks (height ${actualFromHeight}-${actualToHeight}) to ${sender.substring(0, 16)}...`);
+        // Production: No console logs
         // Send blocks directly to the requesting peer if sendToPeer is available
         if (p2p.sendToPeer) {
           // Phase 43: Include requestId if this is part of parallel sync
@@ -1370,8 +1375,7 @@ function App() {
           p2p.broadcast("BLOCKS", { blocks, requestId: request.requestId || `${sender}_${Date.now()}` });
         }
       } else {
-        // Log when we can't provide blocks (helpful for debugging)
-        console.log(`[Sync] ⚠️ Cannot provide blocks ${request.fromHeight}-${request.toHeight} (local: ${localHeight}, min: ${minHeight}, available: ${actualFromHeight}-${actualToHeight})`);
+        // Production: No console logs
       }
     });
 
@@ -1393,15 +1397,15 @@ function App() {
       const result = await handleReceivedBlocks(data.blocks, chainContext, sender);
       
       // Always update UI even if no blocks were appended (blocks may already exist)
-      const oldTip = chainContext.storage.getTip();
-      const oldHeight = oldTip?.header?.height ?? 0;
       const newTip = chainContext.storage.getTip();
       const newHeight = newTip?.header.height ?? 0;
       
       if (result.success && result.appended > 0) {
-        // Always log when blocks are appended to help debug sync
-        console.log(`[Sync] ✅ Appended ${result.appended} blocks. New height: ${newHeight} (was ${oldHeight})`);
-        setChainContext({ ...chainContext }); // Trigger re-render
+        // Production: No console logs
+        // Use functional update to avoid unnecessary re-renders
+        if (result.appended > 0) {
+          setChainContext((prev) => prev ? { ...prev } : prev);
+        }
         
         // Phase 32: Auto-scroll console to bottom when new blocks arrive
         if (typeof window !== "undefined") {
@@ -1450,7 +1454,10 @@ function App() {
             };
           }
           // Just update localHeight if we can't infer networkHeight
-          return { ...prev, localHeight: newHeight };
+          const newStatus = { ...prev, localHeight: newHeight };
+          // Update ref immediately so auto-sync interval can access it
+          syncStatusRef.current = newStatus;
+          return newStatus;
         });
       } else if (result.success && result.appended === 0) {
         // Even if no blocks were appended, update UI to reflect current state
@@ -1465,7 +1472,7 @@ function App() {
         
         // Update sync status to reflect current state
         setSyncStatus(prev => {
-          // Store sync status in window for auto-sync interval to access
+          // Store sync status in window for auto-sync interval to access (backward compatibility)
           (window as any).lastSyncStatus = {
             networkHeight: prev.networkHeight,
             localHeight: newHeight,
@@ -1473,19 +1480,22 @@ function App() {
           
           if (prev.networkHeight > 0) {
             const behindBy = prev.networkHeight - newHeight;
-            return {
+            const newStatus = {
               ...prev,
               localHeight: newHeight,
               behindBy,
               isSyncing: behindBy > 0,
               progress: prev.networkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / prev.networkHeight) * 100)) : 0,
             };
+            // Update ref immediately so auto-sync interval can access it
+            syncStatusRef.current = newStatus;
+            return newStatus;
           }
           // Try to infer networkHeight from received blocks
           if (maxReceivedHeight > newHeight) {
             const inferredNetworkHeight = maxReceivedHeight;
             const behindBy = inferredNetworkHeight - newHeight;
-            return {
+            const newStatus = {
               ...prev,
               localHeight: newHeight,
               networkHeight: inferredNetworkHeight,
@@ -1493,13 +1503,16 @@ function App() {
               isSyncing: behindBy > 0,
               progress: inferredNetworkHeight > 0 ? Math.min(100, Math.max(0, (newHeight / inferredNetworkHeight) * 100)) : 0,
             };
+            // Update ref immediately so auto-sync interval can access it
+            syncStatusRef.current = newStatus;
+            return newStatus;
           }
           return { ...prev, localHeight: newHeight };
         });
         
         // If the highest received block is higher than what we have, request more
         if (maxReceivedHeight > newHeight) {
-          console.log(`[Sync] Received blocks up to height ${maxReceivedHeight}, but we're at ${newHeight}, requesting more...`);
+          // Production: No console logs
           p2p.broadcast("REQUEST_BLOCKS", {
             fromHeight: newHeight + 1,
             toHeight: maxReceivedHeight,
@@ -1585,10 +1598,18 @@ function App() {
       const localHeight = localTip?.header.height ?? -1;
       const now = Date.now();
       
-      // Query network height periodically (every ~10 seconds) if we have peers
-      // Suppress frequent auto-sync logs - only query occasionally
-      if (peerCount > 0 && now % 10000 < 3000) {
-        p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
+      // Get current syncStatus from ref (always up-to-date)
+      const currentSyncStatus = syncStatusRef.current;
+      
+      // Query network height periodically (every ~5 seconds) if we have peers
+      // More frequent queries for faster initial sync
+      if (peerCount > 0) {
+        const lastQueryKey = "lastGlobalViewQuery";
+        const lastQueryTime = (window as any)[lastQueryKey] || 0;
+        if (now - lastQueryTime > 5000) { // Query every 5 seconds
+          (window as any)[lastQueryKey] = now;
+          p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
+        }
       }
       
       // Request blocks if we have peers
@@ -1596,14 +1617,14 @@ function App() {
         // Check if we have a pending block request from when we had no peers
         if (typeof window !== "undefined" && (window as any).pendingBlockRequest) {
           const pending = (window as any).pendingBlockRequest;
-          console.log(`[Auto-Sync] Executing pending block request: ${pending.fromHeight}-${pending.toHeight}`);
+          // Production: No console logs
           p2p.broadcast("REQUEST_BLOCKS", pending);
           delete (window as any).pendingBlockRequest;
         }
         
         // Check if we're behind network height
-        const syncStatus = (window as any).lastSyncStatus || { networkHeight: 0, localHeight: 0 };
-        const networkHeight = syncStatus.networkHeight || 0;
+        // Use syncStatus from ref (always up-to-date) as primary source
+        const networkHeight = currentSyncStatus.networkHeight || 0;
         const behindBy = networkHeight > 0 ? networkHeight - localHeight : 0;
         
         // Only request blocks if we're actually behind
@@ -1621,13 +1642,12 @@ function App() {
           if (now - lastRequestTime > 3000) {
             (window as any)[lastRequestKey] = now;
             const peerCount = p2p.getPeerCount();
-            console.log(`[Auto-Sync] 🔄 Local: ${localHeight}, Network: ${networkHeight}, Behind: ${behindBy}, Peers: ${peerCount}, Requesting blocks ${localHeight + 1}-${targetHeight}`);
+            // Production: No console logs
             if (peerCount === 0) {
-              console.warn(`[Auto-Sync] ⚠️ No peers! Cannot sync. Will retry when peers connect.`);
+              // Production: No console logs
             } else {
-              // Log which peers we're requesting from
-              const peerIds = Array.from(p2p.peers.keys());
-              console.log(`[Auto-Sync] 📤 Requesting from ${peerIds.length} peer(s): ${peerIds.map(id => id.substring(0, 16) + '...').join(', ')}`);
+              // Production: No console logs
+              // const peerIds = Array.from(p2p.peers.keys()); // Unused in production
               p2p.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: targetHeight,
@@ -1647,14 +1667,20 @@ function App() {
               }
             }
           }
-        } else if (localHeight === 0 || localHeight < 100) {
+        } else if ((localHeight === 0 || localHeight < 100) && networkHeight === 0) {
           // Initial sync: request aggressively even without network height
+          // Only do this if we don't have networkHeight yet (to avoid duplicate requests)
           const requestRange = 500;
-          logger.debug(`[Auto-Sync] Initial sync: requesting blocks from ${localHeight + 1} to ${localHeight + requestRange}`);
-          p2p.broadcast("REQUEST_BLOCKS", {
-            fromHeight: localHeight + 1,
-            toHeight: localHeight + requestRange,
-          });
+          // Production: No console logs
+          const lastRequestKey = `lastBlockRequest_${localHeight + 1}_${localHeight + requestRange}`;
+          const lastRequestTime = (window as any)[lastRequestKey] || 0;
+          if (now - lastRequestTime > 5000) { // Request every 5 seconds for initial sync
+            (window as any)[lastRequestKey] = now;
+            p2p.broadcast("REQUEST_BLOCKS", {
+              fromHeight: localHeight + 1,
+              toHeight: localHeight + requestRange,
+            });
+          }
         }
       } else {
         // No peers - try to request peers and bootstrap again periodically
@@ -1667,7 +1693,7 @@ function App() {
           
           // Also try bootstrap again (in case Worker state was updated)
           if (typeof (p2p as any).sendToSignalServer === 'function') {
-            logger.debug(`[Auto-Sync] No peers, requesting peers and bootstrap data again...`);
+            // Production: No console logs
             (p2p as any).sendToSignalServer("REQUEST_BOOTSTRAP", {
               requestId: `${Date.now()}_${Math.random()}`,
               wantSnapshotMeta: true,
@@ -1926,10 +1952,18 @@ function App() {
           const finalNetworkHeight = Math.max(networkHeight, prev.networkHeight);
           const finalBehindBy = finalNetworkHeight - localHeight;
           
-          // Store sync status in window for auto-sync interval to access
+          // Store sync status in window for auto-sync interval to access (backward compatibility)
           (window as any).lastSyncStatus = {
             networkHeight: finalNetworkHeight,
             localHeight: localHeight,
+          };
+          // Also update ref immediately so auto-sync interval can access it
+          syncStatusRef.current = {
+            isSyncing: finalBehindBy > 0,
+            localHeight,
+            networkHeight: finalNetworkHeight,
+            behindBy: finalBehindBy,
+            progress: finalNetworkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / finalNetworkHeight) * 100)) : 0,
           };
           
           return {
@@ -1954,9 +1988,9 @@ function App() {
           if (now - lastRequest > 2000) {
             (window as any)[requestKey] = now;
             const peerCount = p2p.getPeerCount();
-            console.log(`[Sync] 🔄 Requesting ${requestRange} blocks to catch up (from ${localHeight + 1} to ${targetHeight}, network: ${networkHeight}, peers: ${peerCount})`);
+            // Production: No console logs
             if (peerCount === 0) {
-              console.warn(`[Sync] ⚠️ No peers available! Cannot sync. Please check connection.`);
+              // Production: No console logs
             } else {
               // Phase 43: Use chunk-based sync to only request missing blocks
               const chunkBasedSyncManager = getChunkBasedSyncManager();
@@ -2177,7 +2211,7 @@ function App() {
         // Also request blocks aggressively if we're at a low height
         // Even without peers, we'll request so that when peers connect, they can respond
         if (localHeight < 100) {
-          logger.debug(`[Phase 32] Requesting blocks aggressively for initial sync (local height: ${localHeight})`);
+          // Production: No console logs
           if (peerCount > 0) {
             p2p.broadcast("REQUEST_BLOCKS", {
               fromHeight: localHeight + 1,
@@ -4051,7 +4085,7 @@ function App() {
       // These are normal states during initial sync, not errors
       const localTip = chainContext.storage.getTip();
       if (guardResult.code === "NOT_SYNCED" && (localTip?.header.height === 0 || !bootstrapComplete)) {
-        console.log(`[Mining] Not ready to mine yet: ${message} (this is normal during initial sync)`);
+        // Production: No console logs
         // Don't set error - this is informational, not an error
         // The mining button will be disabled based on miningGuardResult
         return;
@@ -4080,9 +4114,12 @@ function App() {
         allBlocks,
         chainContext.params,
         minerAddr as any,
-        chainContext.indexState
+        chainContext.indexState,
+        chainContext.p2p || undefined, // Phase 44: Pass P2P node for IP sharing weight
+        chainContext // Phase 44: Pass chain context for IP sharing weight
       );
 
+      // Set mining state immediately after candidate block is built successfully
       setIsMining(true);
       setError("");
       // Removed: setMiningHash, setMiningNonce (replaced by MiningLiveStatsCard)
@@ -4210,7 +4247,10 @@ function App() {
           // This prevents immediate restart and gives time for state to stabilize
         },
         onStopped: (event) => {
-          setIsMining(false);
+          // Only reset mining state if not "replaced" (replaced means we're restarting with new block)
+          if (event.reason !== "replaced") {
+            setIsMining(false);
+          }
           if (event.reason === "error") {
             setError(event.errorMessage || "Mining error occurred");
           } else if (event.reason === "user") {
@@ -4221,14 +4261,17 @@ function App() {
             }
           }
           // "replaced" reason means we're restarting with a new block
-          // Don't auto-restart here - the new block will trigger a new mining session
+          // Don't reset state or auto-restart here - the new block will trigger a new mining session
           // if auto-mining is enabled
         },
       });
     } catch (err) {
       setIsMining(false);
       setError(err instanceof Error ? err.message : "Failed to start mining");
-      console.error("Failed to start mining:", err);
+      // Production: Only log errors in development
+      if (process.env.NODE_ENV === 'development') {
+        console.error("Failed to start mining:", err);
+      }
     }
   };
 
@@ -4346,7 +4389,7 @@ function App() {
         // Handle cluster mining restart (always restart if cluster mining was active)
         // This ensures continuous mining when user clicks "Start Cluster Mining"
         if (currentClusterMining && !isClusterRestartingRef.current) {
-          console.log("[App] Tip changed during cluster mining, restarting cluster mining...");
+          // Production: No console logs
           
           // Clear any pending restart timeout
           if (clusterRestartTimeoutRef.current) {
@@ -5219,6 +5262,7 @@ function App() {
                     bootstrapComplete={bootstrapComplete}
                     nodeAddress={nodeAddress}
                     isMining={isMining}
+                    autoMining={autoMining}
                     onStartMining={handleStartMining}
                     onStopMining={handleStopMining}
                     onViewDetails={() => setActiveTab("network")}
@@ -6287,6 +6331,10 @@ function App() {
                     isMining={isMining}
                     clusterMining={clusterMining}
                     miningMode={miningMode}
+                    autoMining={autoMining}
+                    onAutoMiningChange={(enabled) => {
+                      setAutoMining(enabled);
+                    }}
                     onStartMining={() => {
                       // Check if first time - show onboarding
                       // Phase 39: Use ref to check immediately (avoids async state update issue)

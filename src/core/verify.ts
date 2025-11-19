@@ -18,6 +18,7 @@ import {
   getCappedBlockReward,
   estimateTxFee,
   uIDCToIDC,
+  IDCToUIDC,
   IDC_MAX_SUPPLY,
 } from "./idcEmission.js";
 
@@ -127,15 +128,17 @@ export async function verifyBlock(
     };
   }
 
-  if (coinbaseTx.ops.length !== 1 || coinbaseTx.ops[0].type !== "TRANSFER") {
-    return {
-      valid: false,
-      error: "Coinbase transaction must contain exactly one TRANSFER operation",
-    };
+  // Phase 42: Coinbase transaction may contain multiple operations:
+  // - Miner reward (with multipliers: IP reputation, session duration, active booster, IP sharing weight)
+  // - Referral rewards (if any)
+  // - Transaction fees
+  // Calculate total reward from all operations
+  let totalCoinbaseRewardIDC = 0;
+  for (const op of coinbaseTx.ops) {
+    if (op.type === "TRANSFER" && op.amount) {
+      totalCoinbaseRewardIDC += op.amount;
+    }
   }
-
-  const coinbaseOp = coinbaseTx.ops[0];
-  const coinbaseRewardIDC = coinbaseOp.amount || 0;
 
   // Phase 16: Verify coinbase reward matches emission schedule
   if (prevBlock && allBlocks && params) {
@@ -157,24 +160,29 @@ export async function verifyBlock(
       }
     }
     
-    // Calculate expected block reward
+    // Calculate expected block reward (raw reward, before multipliers)
+    // Phase 41-44: Actual reward may be less due to multipliers (IP sharing weight, etc.)
     const expectedBlockRewardUIDC = getCappedBlockReward(block.header.height, totalMinted);
     const expectedTotalRewardUIDC = expectedBlockRewardUIDC + expectedFeesUIDC;
     const expectedTotalRewardIDC = uIDCToIDC(expectedTotalRewardUIDC);
     
-    // Allow small floating point rounding differences (0.000001 IDC tolerance)
+    // Phase 41-44: Allow actual reward to be less than or equal to expected reward
+    // (because multipliers like IP sharing weight can reduce the reward)
+    // But it should not exceed the expected reward
     const tolerance = 0.000001;
-    const diff = Math.abs(coinbaseRewardIDC - expectedTotalRewardIDC);
+    const diff = totalCoinbaseRewardIDC - expectedTotalRewardIDC;
     
     if (diff > tolerance) {
+      // Actual reward exceeds expected (should not happen)
       return {
         valid: false,
-        error: `Coinbase reward mismatch: expected ${expectedTotalRewardIDC.toFixed(6)} IDC (block: ${uIDCToIDC(expectedBlockRewardUIDC).toFixed(6)}, fees: ${uIDCToIDC(expectedFeesUIDC).toFixed(6)}), got ${coinbaseRewardIDC.toFixed(6)}`,
+        error: `Coinbase reward exceeds expected: expected ${expectedTotalRewardIDC.toFixed(6)} IDC (block: ${uIDCToIDC(expectedBlockRewardUIDC).toFixed(6)}, fees: ${uIDCToIDC(expectedFeesUIDC).toFixed(6)}), got ${totalCoinbaseRewardIDC.toFixed(6)}`,
       };
     }
     
-    // Verify total supply cap
-    const newTotalMinted = totalMinted + expectedTotalRewardUIDC;
+    // Verify total supply cap (use actual reward, not expected)
+    const actualTotalRewardUIDC = IDCToUIDC(totalCoinbaseRewardIDC);
+    const newTotalMinted = totalMinted + actualTotalRewardUIDC;
     if (newTotalMinted > IDC_MAX_SUPPLY) {
       return {
         valid: false,
@@ -183,7 +191,7 @@ export async function verifyBlock(
     }
   } else {
     // Fallback: if we can't verify emission schedule, at least check it's positive
-    if (coinbaseRewardIDC < 0) {
+    if (totalCoinbaseRewardIDC < 0) {
       return {
         valid: false,
         error: "Coinbase reward must be non-negative",

@@ -342,7 +342,7 @@ export class MiningGuard {
         const driftCheck = driftDetector.checkDrift();
         stateDriftCritical = driftCheck.hasDrift && driftCheck.severity === "critical";
       } catch (e) {
-        logger.debug("[Phase 45 First Year] State drift check failed, assuming no critical drift:", e);
+        // Production: No console logs
       }
       
       // Phase 45: Get dynamic required quorum score (first year = 40)
@@ -385,7 +385,7 @@ export class MiningGuard {
       
       // Phase 45: All first year requirements met
       if (bootstrapComplete && !stateDriftCritical) {
-        logger.info(`[Phase 45 First Year] ✅ Allowing mining (SAFE): ${quorumStatus.independentPeerCount} independent peers, Quorum ${quorumStatus.totalScore} ≥ ${firstYearRequiredQuorumScore}, bootstrap complete, no critical drift`);
+        // Production: No console logs
         miningMode = "SAFE";
         // Skip all StateLock/Finality checks for first year (but Quorum score is checked above)
         // Continue to wallet/network checks, then return success

@@ -25,7 +25,7 @@ export class MiningEpochManager {
     // Generate unique epoch ID: epoch_{height}_{random}
     const random = crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
     this.currentEpochId = `epoch_${blockHeight}_${random}`;
-    console.log(`[MiningEpoch] New epoch created: ${this.currentEpochId.substring(0, 32)}... (height=${blockHeight})`);
+    // Production: No console logs
     return this.currentEpochId;
   }
 
@@ -55,9 +55,7 @@ export class MiningEpochManager {
    * Reset current epoch (called when mining stops)
    */
   reset(): void {
-    if (this.currentEpochId) {
-      console.log(`[MiningEpoch] Epoch reset: ${this.currentEpochId.substring(0, 32)}...`);
-    }
+    // Production: No console logs
     this.currentEpochId = null;
   }
 

@@ -445,15 +445,12 @@ export async function buildCandidateBlock(
     const finalSnapshot = tempState.toSnapshot();
     stateCommitment = await computeSnapshotStateHash(finalSnapshot);
     
-    // Debug: Log state commitment computation details
-    console.log(`[Phase 15] State commitment computed:`, {
-      height,
-      totalMintedBefore: tempState.getTotalMinted().toString(),
-      txCount: allTxs.length,
-      stateCommitment: stateCommitment.substring(0, 16) + "...",
-    });
+    // Production: No console logs
   } catch (error) {
-    console.error(`[Phase 15] Failed to compute stateCommitment:`, error);
+    // Production: Only log errors in development
+    if (process.env.NODE_ENV === 'development') {
+      console.error(`[Phase 15] Failed to compute stateCommitment:`, error);
+    }
     // Continue without stateCommitment for backward compatibility
   }
 

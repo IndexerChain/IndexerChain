@@ -174,7 +174,10 @@ export class MinerClient {
       // Handle worker errors
       // Phase 37-E: Worker crash detection
       this.worker.onerror = (error) => {
-        console.error("[MinerClient] Worker error:", error);
+        // Production: Only log errors in development
+        if (process.env.NODE_ENV === 'development') {
+          console.error("[MinerClient] Worker error:", error);
+        }
         // Notify stopped handlers with error reason
         this.isMining = false;
         this.stopStatsUpdate();
@@ -185,19 +188,6 @@ export class MinerClient {
             miningEpochId: this.currentEpochId ?? undefined,
           });
         });
-        console.error("Worker error details:", {
-          message: error.message,
-          filename: error.filename,
-          lineno: error.lineno,
-          colno: error.colno,
-        });
-        this.isMining = false;
-        this.stopStatsUpdate();
-        const stoppedEvent = {
-          reason: "error" as const,
-          errorMessage: error.message || "Worker error",
-        };
-        this.stoppedHandlers.forEach((handler) => handler(stoppedEvent));
       };
       
       // Log successful worker initialization
@@ -208,7 +198,10 @@ export class MinerClient {
         this.handleWorkerMessage(event.data);
       };
     } catch (error) {
-      console.error("Failed to create miner worker:", error);
+      // Production: Only log errors in development
+      if (process.env.NODE_ENV === 'development') {
+        console.error("Failed to create miner worker:", error);
+      }
       // Don't throw - allow retry later
       this.worker = null;
     }
@@ -219,7 +212,7 @@ export class MinerClient {
    */
   private ensureWorker(): void {
     if (!this.worker) {
-      console.log("Worker not initialized, attempting to create...");
+      // Production: No console logs
       this.initWorker();
       if (!this.worker) {
         throw new Error("Failed to initialize miner worker. Please refresh the page.");
@@ -246,19 +239,16 @@ export class MinerClient {
       case "PROGRESS":
         this.stats.hashesTried = event.hashesTried;
         this.updateHashRate(event.startedAt, event.hashesTried);
-        // Debug: Log first few progress events
-        if (event.hashesTried <= 10) {
-          logger.debug(`[MinerClient] Received PROGRESS: hashesTried=${event.hashesTried}, handlers=${this.progressHandlers.size}`);
-          if (this.progressHandlers.size === 0) {
-            console.warn(`[MinerClient] WARNING: No progress handlers registered! This will cause stats not to update.`);
-          }
-        }
+        // Production: No debug logs
         // Notify all progress handlers
         this.progressHandlers.forEach((handler) => {
           try {
             handler(event);
           } catch (error) {
-            console.error("[MinerClient] Error in progress handler:", error);
+            // Production: Only log errors in development
+            if (process.env.NODE_ENV === 'development') {
+              console.error("[MinerClient] Error in progress handler:", error);
+            }
           }
         });
         break;

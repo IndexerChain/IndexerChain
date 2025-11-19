@@ -23,6 +23,7 @@ interface MiningStatusBannerProps {
   onStopMining: () => void;
   onViewDetails: () => void;
   locale: string;
+  autoMining?: boolean; // Auto-mining status
 }
 
 export function MiningStatusBanner({
@@ -37,6 +38,7 @@ export function MiningStatusBanner({
   onStopMining,
   onViewDetails,
   locale,
+  autoMining = false,
 }: MiningStatusBannerProps) {
   const [status, setStatus] = useState<{
     state: "READY" | "SYNCING" | "BLOCKED";
@@ -156,7 +158,7 @@ export function MiningStatusBanner({
           label,
           color,
           summary,
-          canMine: result.ok && !isSyncing,
+          canMine: result.ok && !isSyncing && !autoMining, // Disable if auto-mining is enabled
           reason,
         });
       } catch (error) {
@@ -178,7 +180,7 @@ export function MiningStatusBanner({
     const interval = setInterval(updateStatus, 5000); // Update every 5 seconds
 
     return () => clearInterval(interval);
-  }, [chainContext, p2pNode, finalityManager, localRole, bootstrapComplete, nodeAddress, isZh]);
+  }, [chainContext, p2pNode, finalityManager, localRole, bootstrapComplete, nodeAddress, isZh, autoMining]);
 
   if (loading || !status) {
     return (
@@ -273,36 +275,41 @@ export function MiningStatusBanner({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                if (status.canMine) {
+                if (status.canMine && !autoMining) {
                   onStartMining();
+                } else if (autoMining) {
+                  // Show message if auto-mining is enabled
+                  alert(isZh ? "自动挖矿已启用，系统会在链准备就绪时自动开始挖矿。" : "Auto mining is enabled. The system will automatically start mining when the chain is ready.");
                 } else {
                   onViewDetails();
                 }
               }}
-              disabled={!status.canMine}
+              disabled={!status.canMine || autoMining}
               style={{
                 padding: "0.75rem 1.5rem",
                 fontSize: "1rem",
                 fontWeight: "bold",
                 color: "white",
-                background: status.canMine ? "#28a745" : "#6c757d",
+                background: (status.canMine && !autoMining) ? "#28a745" : "#6c757d",
                 border: "none",
                 borderRadius: "6px",
-                cursor: status.canMine ? "pointer" : "not-allowed",
-                opacity: status.canMine ? 1 : 0.6,
+                cursor: (status.canMine && !autoMining) ? "pointer" : "not-allowed",
+                opacity: (status.canMine && !autoMining) ? 1 : 0.6,
                 transition: "all 0.2s",
               }}
               onMouseEnter={(e) => {
-                if (status.canMine) {
+                if (status.canMine && !autoMining) {
                   e.currentTarget.style.background = "#218838";
                 }
               }}
               onMouseLeave={(e) => {
-                if (status.canMine) {
+                if (status.canMine && !autoMining) {
                   e.currentTarget.style.background = "#28a745";
                 }
               }}
-              title={!status.canMine ? (isZh ? "点击查看详情：网络健康与挖矿诊断" : "Click to view details: Network Health & Mining Diagnostics") : undefined}
+              title={autoMining 
+                ? (isZh ? "自动挖矿已启用，系统会自动开始挖矿" : "Auto mining is enabled, the system will automatically start mining")
+                : (!status.canMine ? (isZh ? "点击查看详情：网络健康与挖矿诊断" : "Click to view details: Network Health & Mining Diagnostics") : undefined)}
             >
               {isZh ? "开始挖矿" : "Start Mining"}
             </button>

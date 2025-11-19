@@ -180,11 +180,11 @@ async function checkDutyCycle(): Promise<void> {
  */
 async function miningLoop(): Promise<void> {
   if (!isRunning || !currentHeader) {
-    console.log(`[Worker] Mining loop not starting: isRunning=${isRunning}, currentHeader=${!!currentHeader}`);
+    // Production: No console logs
     return;
   }
 
-  console.log(`[Worker] Mining loop started: height=${currentHeader.height}, difficulty=${currentDifficulty}, nonceStart=${nonceStart}, nonceEnd=${nonceEnd}`);
+  // Production: No console logs
   dutyCycleStartTime = performance.now();
 
   try {
@@ -194,7 +194,7 @@ async function miningLoop(): Promise<void> {
       // Phase 18: Check if nonce range is exhausted
       if (nonceEnd !== null && nonce >= nonceEnd) {
         // Nonce range exhausted, request new range
-        console.log(`[Worker] Nonce range exhausted: nonce=${nonce} >= nonceEnd=${nonceEnd}`);
+        // Production: No console logs
         isRunning = false;
         // Phase 37-A: Send EXHAUSTED event with epoch ID
         self.postMessage({
@@ -216,10 +216,7 @@ async function miningLoop(): Promise<void> {
       const hash = await hashBlockHeader(headerWithNonce);
       hashesTried++;
       
-      // Debug: Log first hash
-      if (hashesTried === 1) {
-        console.log(`[Worker] First hash computed: nonce=${nonce}, hash=${hash.substring(0, 16)}...`);
-      }
+      // Production: No debug logs
 
       // Check difficulty
       if (checkDifficulty(hash, currentDifficulty)) {
@@ -263,10 +260,7 @@ async function miningLoop(): Promise<void> {
           miningEpochId: currentMiningEpochId ?? undefined,
         } as MinerWorkerEvent);
         lastProgressTime = now;
-        // Debug: Log first few progress reports
-        if (hashesTried <= 10) {
-          console.log(`[Worker] Progress: hashesTried=${hashesTried}, nonce=${nonce}, hash=${hash.substring(0, 16)}...`);
-        }
+        // Production: No debug logs
       }
 
       // Yield control periodically to prevent blocking
@@ -276,7 +270,10 @@ async function miningLoop(): Promise<void> {
     }
   } catch (error) {
     // Phase 37-A: Send ERROR event with epoch ID
-    console.error("[Worker] Mining loop error:", error);
+    // Production: Only log errors in development
+    if (process.env.NODE_ENV === 'development') {
+      console.error("[Worker] Mining loop error:", error);
+    }
     self.postMessage({
       type: "ERROR",
       error: error instanceof Error ? error.message : "Unknown error",
@@ -319,9 +316,12 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
 
     // Start mining loop (will send PROGRESS after first hash)
     // Use setImmediate or setTimeout to ensure async loop starts
-    console.log(`[Worker] Starting mining loop: nonceStart=${nonceStart}, nonceEnd=${nonceEnd}, difficulty=${currentDifficulty}, dutyCycle=${dutyCycle}`);
+    // Production: No console logs
     miningLoop().catch((error) => {
-      console.error("[Worker] Mining loop promise rejected:", error);
+      // Production: Only log errors in development
+      if (process.env.NODE_ENV === 'development') {
+        console.error("[Worker] Mining loop promise rejected:", error);
+      }
       self.postMessage({
         type: "STOPPED",
         reason: "error",
@@ -332,7 +332,7 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
     // Phase 37-A: Check if STOP command matches current epoch (optional validation)
     // If epoch ID is provided and doesn't match, ignore the stop command
     if (command.miningEpochId && currentMiningEpochId && command.miningEpochId !== currentMiningEpochId) {
-      console.log(`[Worker] Ignoring STOP command from old epoch: ${command.miningEpochId.substring(0, 16)}... (current: ${currentMiningEpochId.substring(0, 16)}...)`);
+      // Production: No console logs
       return;
     }
     
