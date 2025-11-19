@@ -129,7 +129,27 @@ export class LocalInstanceCoordinator {
     const stored = localStorage.getItem(STORAGE_KEY_LEADER);
     if (stored) {
       try {
-        this.leaderInfo = JSON.parse(stored) as LeaderInfo;
+        const loadedInfo = JSON.parse(stored) as LeaderInfo;
+        
+        // Check if this leader was manually cleared
+        const clearedKey = `${STORAGE_KEY_LEADER}_cleared_${loadedInfo.instanceId}`;
+        const clearedTime = localStorage.getItem(clearedKey);
+        if (clearedTime) {
+          const timeSinceCleared = Date.now() - parseInt(clearedTime, 10);
+          // If cleared less than 10 seconds ago, ignore it
+          if (timeSinceCleared < 10000) {
+            console.log(`[LocalInstance] Ignoring stored leader ${loadedInfo.instanceId} - it was manually cleared ${timeSinceCleared}ms ago`);
+            this.leaderInfo = null;
+            localStorage.removeItem(STORAGE_KEY_LEADER);
+            localStorage.removeItem(clearedKey);
+            return;
+          } else {
+            // Clean up old flag
+            localStorage.removeItem(clearedKey);
+          }
+        }
+        
+        this.leaderInfo = loadedInfo;
         
         // Check if leader is still valid (not timed out)
         const age = Date.now() - this.leaderInfo.lastSeenAt;
@@ -154,12 +174,19 @@ export class LocalInstanceCoordinator {
   clearStaleLeader(force: boolean = false): void {
     if (this.leaderInfo) {
       const age = Date.now() - this.leaderInfo.lastSeenAt;
+      const oldInstanceId = this.leaderInfo.instanceId;
+      
       if (force || age > LEADER_TIMEOUT_MS) {
-        console.log(`[LocalInstance] ${force ? 'Force' : 'Manually'} clearing ${force && age <= LEADER_TIMEOUT_MS ? 'active' : 'stale'} leader ${this.leaderInfo.instanceId} (age: ${age}ms)`);
+        console.log(`[LocalInstance] ${force ? 'Force' : 'Manually'} clearing ${force && age <= LEADER_TIMEOUT_MS ? 'active' : 'stale'} leader ${oldInstanceId} (age: ${age}ms)`);
+        
+        // Clear leader info
         this.leaderInfo = null;
         if (typeof localStorage !== "undefined") {
           localStorage.removeItem(STORAGE_KEY_LEADER);
+          // Also set a flag to ignore any LEADER_STATUS messages from the old instance for a short time
+          localStorage.setItem(`${STORAGE_KEY_LEADER}_cleared_${oldInstanceId}`, Date.now().toString());
         }
+        
         // Trigger election to become leader
         this.performElection();
       } else {
@@ -234,6 +261,23 @@ export class LocalInstanceCoordinator {
    * Handle leader status update
    */
   private handleLeaderStatus(info: LeaderInfo): void {
+    // Check if this instance was manually cleared
+    if (typeof localStorage !== "undefined") {
+      const clearedKey = `${STORAGE_KEY_LEADER}_cleared_${info.instanceId}`;
+      const clearedTime = localStorage.getItem(clearedKey);
+      if (clearedTime) {
+        const timeSinceCleared = Date.now() - parseInt(clearedTime, 10);
+        // Ignore LEADER_STATUS from cleared instance for 10 seconds
+        if (timeSinceCleared < 10000) {
+          console.log(`[LocalInstance] Ignoring LEADER_STATUS from manually cleared instance ${info.instanceId} (cleared ${timeSinceCleared}ms ago)`);
+          return;
+        } else {
+          // Clean up the flag after 10 seconds
+          localStorage.removeItem(clearedKey);
+        }
+      }
+    }
+    
     const wasLeader = this.role === "LEADER";
     
     // Update leader info
