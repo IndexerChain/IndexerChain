@@ -153,9 +153,7 @@ export class BrowserChainStorage implements ChainStorage {
     if (pruned.length < this.blocks.length) {
       this.blocks = pruned;
       this.saveToPersistence();
-      console.log(
-        `[Phase 10] Pruned blocks before height ${pruneHeight}, kept ${pruned.length} blocks`
-      );
+      // Removed frequent log: Pruned blocks
     }
   }
 

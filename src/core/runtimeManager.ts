@@ -416,7 +416,19 @@ export class RuntimeManager {
     }
 
     if (issues.length > 0) {
-      console.warn("[RuntimeManager] Safety issues detected:", issues);
+      // Only log warnings periodically to reduce console spam
+      // Log every 10 seconds max for the same issues
+      const now = Date.now();
+      const lastWarningKey = `last_warning_${issues.join('_')}`;
+      const lastWarning = (typeof window !== "undefined" && (window as any)[lastWarningKey]) || 0;
+      
+      if (now - lastWarning > 10000) {
+        if (typeof window !== "undefined") {
+          (window as any)[lastWarningKey] = now;
+        }
+        console.warn("[RuntimeManager] Safety issues detected:", issues);
+      }
+      
       // Phase 37-D: Notify listeners to reduce profile if needed
       if (shouldReduceProfile) {
         this.notifyRuntimeChange();

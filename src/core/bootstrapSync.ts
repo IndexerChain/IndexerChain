@@ -131,7 +131,7 @@ export class BootstrapSyncManager {
             const gap = header.height - (currentTip.header?.height || localHeight);
             // If we're at genesis (height 0) and gap is large, this is normal - Worker only has recent headers
             if (localHeight === 0 && gap > 100) {
-              console.log(`[Phase 38] Starting sync from height ${header.height} (local is at genesis, Worker has recent headers from height ${header.height}). This is normal.`);
+              // Removed frequent log: Starting sync from height (now handled by UnifiedSyncManager)
               // Update currentTip to the first available header to continue syncing
               currentTip = {
                 header,
@@ -243,7 +243,7 @@ export class BootstrapSyncManager {
                 const gap = header.height - localHeight;
                 // Special case: if local height is 0 (genesis), this is normal - Worker only has recent headers
                 if (localHeight === 0 && gap > 100) {
-                  console.log(`[Phase 32] Starting sync from height ${header.height} (local is at genesis, Worker has recent headers from height ${header.height}). This is normal.`);
+                  // Removed frequent log: Starting sync from height (now handled by UnifiedSyncManager)
                   // Still allow sync to proceed from the available headers
                   validChain = false; // Mark as not connecting, but allow sync
                   // Don't break - allow sync from available headers

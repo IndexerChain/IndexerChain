@@ -83,13 +83,13 @@ export class SnapshotSeeder {
         : allMetas;
       
       if (filtered.length === 0) {
-        console.log(`[SnapshotSeeder] No snapshots available for target height ${targetHeight || 'any'}`);
+        // Removed frequent log: No snapshots available
         return;
       }
       
       // Send metadata directly to requesting peer if sendToPeer is available
       if (this.p2pNode && this.p2pNode.sendToPeer) {
-        console.log(`[SnapshotSeeder] Sending ${filtered.length} snapshot metadata to ${sender.substring(0, 16)}... (target: ${targetHeight || 'any'})`);
+        // Removed frequent log: Sending snapshot metadata
         this.p2pNode.sendToPeer(sender, "SNAPSHOT_META", {
           metas: filtered,
           nodeId: this.p2pNode.nodeId,

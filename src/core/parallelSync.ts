@@ -37,9 +37,9 @@ export interface ParallelSyncConfig {
 const DEFAULT_CONFIG: ParallelSyncConfig = {
   maxConcurrentPeers: 4,
   chunkSize: 50,
-  retryDelayMs: 2000,
-  maxRetries: 3,
-  timeoutMs: 30000,
+  retryDelayMs: 5000, // Increased from 2000 to reduce retry frequency
+  maxRetries: 2, // Reduced from 3 to fail faster and fallback to normal sync
+  timeoutMs: 60000, // Increased from 30000 to 60s for slow connections
 };
 
 export class ParallelSyncManager {
@@ -195,9 +195,13 @@ export class ParallelSyncManager {
     }
 
     // Chunk timed out - retry with another peer
-    logger.warn(`[ParallelSync] Chunk ${chunk.fromHeight}-${chunk.toHeight} from peer ${peerId.substring(0, 16)}... timed out, retrying...`);
-    
     const retryCount = this.getChunkRetryCount(peerId, chunk.fromHeight);
+    
+    // Only log warning on first retry to reduce log spam
+    if (retryCount === 0) {
+      logger.debug(`[ParallelSync] Chunk ${chunk.fromHeight}-${chunk.toHeight} from peer ${peerId.substring(0, 16)}... timed out, retrying...`);
+    }
+    
     if (retryCount < this.config.maxRetries) {
       this.incrementChunkRetry(peerId, chunk.fromHeight);
       
@@ -208,9 +212,27 @@ export class ParallelSyncManager {
         setTimeout(() => {
           this.sendChunkRequest(newPeerId, chunk, requestId);
         }, this.config.retryDelayMs);
+      } else {
+        // No more peers available - fallback to normal sync for this chunk
+        logger.debug(`[ParallelSync] Chunk ${chunk.fromHeight}-${chunk.toHeight} failed: no available peers. Will be handled by normal sync.`);
+        // Remove from active request tracking - let normal sync handle it
+        if (this.p2pNode) {
+          this.p2pNode.broadcast("REQUEST_BLOCKS", {
+            fromHeight: chunk.fromHeight,
+            toHeight: chunk.toHeight,
+          });
+        }
       }
     } else {
-      logger.error(`[ParallelSync] Chunk ${chunk.fromHeight}-${chunk.toHeight} failed after ${retryCount} retries`);
+      // Max retries reached - fallback to normal sync
+      logger.debug(`[ParallelSync] Chunk ${chunk.fromHeight}-${chunk.toHeight} failed after ${retryCount} retries. Falling back to normal sync.`);
+      // Remove from active request tracking - let normal sync handle it
+      if (this.p2pNode) {
+        this.p2pNode.broadcast("REQUEST_BLOCKS", {
+          fromHeight: chunk.fromHeight,
+          toHeight: chunk.toHeight,
+        });
+      }
     }
   }
 

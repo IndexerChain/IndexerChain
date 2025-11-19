@@ -65,7 +65,9 @@ export type P2PMessageType =
   | "BOOTSTRAP_RESPONSE" // Response with bootstrap data
   | "ROOT_TIP_UPDATE" // Root node broadcasts latest tip update
   // Phase 36: State Commit Gossip
-  | "STATE_COMMIT_GOSSIP";
+  | "STATE_COMMIT_GOSSIP"
+  // Phase 46+: P2P RootTip Gossip (decentralized rootTip propagation)
+  | "ROOT_TIP_GOSSIP";
 
 /**
  * P2P message structure
@@ -534,6 +536,7 @@ export class BrowserP2PNode implements P2PNode {
     switch (message.type) {
       case "JOIN_ACK":
         // Phase 37: Handle JOIN_ACK with rootTip
+        logger.info(`[P2P] 🔔 Received JOIN_ACK: peers=${message.peers?.length || 0}, rootTip.height=${message.rootTip?.latestHeight || 0}, hasHeader=${!!message.rootTip?.latestHeader}, recentHeaders=${message.rootTip?.recentHeaders?.length || 0}`);
         logger.debug(`[P2P] Received JOIN_ACK:`, {
           peerCount: message.peers?.length || 0,
           hasRootTip: !!message.rootTip,
@@ -592,8 +595,12 @@ export class BrowserP2PNode implements P2PNode {
         }
         
         // Handle rootTip - forward to bootstrap sync manager
-        if (message.rootTip && message.rootTip.latestHeight > 0) {
-          logger.debug(`[P2P] JOIN_ACK contains rootTip (height: ${message.rootTip.latestHeight}), forwarding to bootstrap handlers`);
+        if (message.rootTip) {
+          logger.info(`[P2P] 📦 JOIN_ACK contains rootTip: height=${message.rootTip.latestHeight}, hasHeader=${!!message.rootTip.latestHeader}, recentHeaders=${message.rootTip.recentHeaders?.length || 0}`);
+          
+          if (message.rootTip.latestHeight > 0) {
+            logger.info(`[P2P] ✅ RootTip has valid height, forwarding to bootstrap handlers`);
+          }
           
           // Phase 37: Store rootTip info for debug overlay
           if (typeof window !== "undefined") {

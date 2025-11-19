@@ -347,6 +347,8 @@ export async function handleRootTipUpdate(
   rootTip: RootTip,
   isMiner: boolean = false
 ): Promise<UnifiedSyncResult> {
+  logger.info(`[UnifiedSync] handleRootTipUpdate called: rootHeight=${rootTip.latestHeight}, rootHash=${rootTip.latestHeaderHash.substring(0, 16)}...`);
+  
   const localTip = chainContext.storage.getTip();
   if (!localTip) {
     // No local chain, use warp sync
@@ -379,6 +381,49 @@ export async function handleRootTipUpdate(
   const localTipHash = localTip.hash;
   const rootHeight = rootTip.latestHeight;
   const rootTipHash = rootTip.latestHeaderHash;
+
+  // Special case: If local is at genesis (height 0) and network is far ahead,
+  // try Warp Sync first, but fallback to Chunk Sync if Warp Sync is not applicable
+  if (localHeight === 0 && rootHeight >= 100) {
+    logger.info(`[UnifiedSync] Local is at genesis, network at ${rootHeight}, trying warp sync first`);
+    const warpSyncManager = getWarpSyncManager();
+    warpSyncManager.init(chainContext, p2pNode);
+    
+    // Check if warp sync is applicable (gap >= 1000)
+    if (warpSyncManager.canWarpSync(localHeight, rootHeight)) {
+      // Convert recentHeaders to BlockHeader[] if needed
+      const recentHeadersForWarp = rootTip.recentHeaders?.filter((h): h is BlockHeader => 
+        "version" in h || "prevHash" in h
+      ) as BlockHeader[] | undefined;
+      const warpResult = await warpSyncManager.performWarpSync({
+        latestHeight: rootTip.latestHeight,
+        latestHeader: rootTip.latestHeader,
+        latestHeaderHash: rootTip.latestHeaderHash,
+        recentHeaders: recentHeadersForWarp,
+        latestSnapshotMeta: rootTip.latestSnapshotMeta,
+        stateCommitment: rootTip.stateCommitment,
+      });
+      
+      if (warpResult.success && warpResult.synced) {
+        return {
+          success: warpResult.success,
+          synced: warpResult.synced,
+          method: "warp" as const,
+          fromHeight: warpResult.fromHeight,
+          toHeight: warpResult.toHeight,
+          error: warpResult.error,
+        };
+      }
+      // Warp sync failed or not synced, fall through to Chunk Sync
+      logger.info(`[UnifiedSync] Warp sync not applicable or failed, falling back to chunk sync`);
+    } else {
+      logger.info(`[UnifiedSync] Warp sync not applicable (gap ${rootHeight - localHeight} < 1000), using chunk sync`);
+    }
+    
+    // Fallback: Use Chunk Sync for genesis state
+    // This ensures we can sync even if gap < 1000
+    return await chunkSync(chainContext, p2pNode, 1, rootHeight);
+  }
 
   // Step 1: StateLock highest priority
   const stateLockManager = getStateLockManager();

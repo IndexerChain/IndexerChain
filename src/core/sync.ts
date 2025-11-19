@@ -18,6 +18,7 @@ import {
 } from "./blockRelay.js";
 import { globalHeaderCache } from "./headerCache.js";
 import { hashBlockHeader } from "./crypto.js";
+import { logger } from "./logger.js";
 
 /**
  * Synchronize chain with peers
@@ -156,46 +157,29 @@ export async function handleReceivedBlocks(
       if (block.header.height !== localHeight + 1) {
         const gap = block.header.height - localHeight;
         if (gap > 1) {
-          // Special case: if local height is 0 (genesis) and Worker has headers from a higher height,
-          // allow starting from Worker's headers even if they don't connect to genesis
-          if (localHeight === 0 && gap > 100) {
-            // Check if this block matches Worker's recent headers
-            const workerRecentHeaders = typeof window !== "undefined" ? ((window as any).lastRootTipRecentHeaders || []) : [];
-            const matchingHeader = workerRecentHeaders.find((h: any) => h.height === block.header.height);
-            
-            if (matchingHeader) {
-              // Verify the block hash matches the header hash from Worker
-              const { hashBlockHeader } = await import("./crypto.js");
-              const blockHeaderHash = await hashBlockHeader(block.header);
-              const expectedHash = matchingHeader.hash || (await hashBlockHeader(matchingHeader));
+          // Special case: if local height is 0 (genesis) and we receive a block > 1,
+          // we cannot directly append it because chainStorage requires consecutive heights.
+          // Instead, we should request missing blocks from height 1, or use Warp Sync.
+          if (localHeight === 0 && gap > 1) {
+            // Request missing blocks from height 1 to block.header.height - 1
+            if (context.p2p) {
+              // Only request if we haven't requested this range recently
+              const requestKey = `genesis_sync_${block.header.height}`;
+              const lastRequest = (typeof window !== "undefined" && (window as any)[requestKey]) || 0;
+              const now = Date.now();
               
-              if (blockHeaderHash === expectedHash) {
-                // This block matches Worker's header - allow it even though it doesn't connect to genesis
-                console.log(`[Sync] Allowing block ${block.header.height} from Worker headers (local is at genesis, gap: ${gap} blocks)`);
-                // This block is valid, process it
-                expectedNextHeight = block.header.height + 1;
-              } else {
-                // Hash mismatch - skip this block
-                console.warn(`[Sync] Block ${block.header.height} hash mismatch with Worker header, skipping`);
-                continue;
-              }
-            } else {
-              // Not in Worker headers - skip it
-              console.warn(`[Sync] Block ${block.header.height} not in Worker headers, skipping`);
-              continue;
-            }
-          } else {
-            // If local height is 0 and we receive a block > 1, we need to request from height 1
-            if (localHeight === 0 && block.header.height > 1) {
-              // Request missing blocks from height 1
-              if (context.p2p) {
+              if (now - lastRequest > 5000) { // Request every 5 seconds max
+                if (typeof window !== "undefined") {
+                  (window as any)[requestKey] = now;
+                }
+                logger.info(`[Sync] Local is at genesis, requesting blocks from height 1 to ${block.header.height - 1}`);
                 context.p2p.broadcast("REQUEST_BLOCKS", {
                   fromHeight: 1,
                   toHeight: block.header.height - 1,
                 });
               }
             }
-            // Skip blocks that are too far ahead - will be requested later
+            // Skip this block - we need to sync from height 1 first
             continue;
           }
         } else if (gap < 1) {
@@ -220,25 +204,12 @@ export async function handleReceivedBlocks(
     // Phase 6: Get all blocks for difficulty verification
     const allBlocks = context.storage.getAllBlocks();
     
-    // Special case: if local is at genesis (height 0) and this block is from Worker headers,
-    // we need to handle it specially because it won't connect to genesis
-    let allowFromWorkerHeaders = false;
-    if (localHeight === 0 && block.header.height > 100) {
-      const workerRecentHeaders = typeof window !== "undefined" ? ((window as any).lastRootTipRecentHeaders || []) : [];
-      const matchingHeader = workerRecentHeaders.find((h: any) => h.height === block.header.height);
-      
-      if (matchingHeader) {
-        // Verify the block hash matches the header hash from Worker
-        const { hashBlockHeader } = await import("./crypto.js");
-        const blockHeaderHash = await hashBlockHeader(block.header);
-        const expectedHash = matchingHeader.hash || (await hashBlockHeader(matchingHeader));
-        
-        if (blockHeaderHash === expectedHash) {
-          // This block matches Worker's header - allow it even though it doesn't connect to genesis
-          console.log(`[Sync] Allowing block ${block.header.height} from Worker headers (local is at genesis, will skip prevHash check in verification)`);
-          allowFromWorkerHeaders = true;
-        }
-      }
+    // CRITICAL: If local is at genesis (height 0) and block height > 1,
+    // we cannot append it directly because chainStorage requires consecutive heights.
+    // Skip it and let UnifiedSyncManager or Warp Sync handle it.
+    if (localHeight === 0 && block.header.height > 1) {
+      logger.debug(`[Sync] Skipping block ${block.header.height} - local is at genesis, need to sync from height 1 first`);
+      continue;
     }
     
     // Phase 21: Check if sender is banned
@@ -252,29 +223,8 @@ export async function handleReceivedBlocks(
 
     // Verify block (with difficulty verification)
     const startTime = Date.now();
-    let verification;
-    
-    // Special handling for blocks from Worker headers when local is at genesis
-    if (allowFromWorkerHeaders && localHeight === 0) {
-      // For blocks from Worker headers, skip prevHash check
-      // We've already verified the block hash matches Worker's header
-      // Still verify other aspects (merkle root, difficulty, etc.) but skip prevHash
-      const { verifyBlock } = await import("./verify.js");
-      // Pass null as prevBlock to skip prevHash check
-      verification = await verifyBlock(block, null, allBlocks, context.params);
-      // If verification fails only due to prevHash, allow it
-      if (!verification.valid && verification.error?.includes("prevHash")) {
-        // Create a modified verification that allows the block
-        // We'll do basic checks manually
-        const { hashBlockHeader } = await import("./crypto.js");
-        const blockHash = await hashBlockHeader(block.header);
-        if (blockHash === block.hash) {
-          verification = { valid: true };
-        }
-      }
-    } else {
-      verification = await verifyBlock(block, localTip, allBlocks, context.params);
-    }
+    const { verifyBlock } = await import("./verify.js");
+    const verification = await verifyBlock(block, localTip, allBlocks, context.params);
     
     const latencyMs = Date.now() - startTime;
     
@@ -287,7 +237,7 @@ export async function handleReceivedBlocks(
         const reputationManager = getGlobalPeerReputationManager(context.params);
         reputationManager.onInvalidBlockFrom(sender);
       }
-      console.error(`[Sync] Block ${block.header.height} verification failed: ${verification.error}`);
+      logger.warn(`[Sync] Block ${block.header.height} verification failed: ${verification.error}`);
       // Continue processing other blocks instead of returning immediately
       // This allows us to append valid blocks even if some fail
       continue;
@@ -320,7 +270,7 @@ export async function handleReceivedBlocks(
       // This ensures we continue processing consecutive blocks correctly
       expectedNextHeight = block.header.height + 1;
     } catch (error) {
-      console.error(`[Sync] ❌ Failed to append block ${block.header.height}:`, error);
+      logger.error(`[Sync] ❌ Failed to append block ${block.header.height}:`, error);
       // Continue processing other blocks instead of returning immediately
       // Don't update expectedNextHeight on error - we'll skip this block
       continue;

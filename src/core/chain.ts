@@ -641,41 +641,43 @@ export async function appendMinedBlock(
       context.p2p.broadcast("NEW_BLOCK", block);
       
       // Phase 32: Update root tip on signal server (if this is a LEADER instance)
+      // Phase 46+: Also prepare rootTip for P2P gossip
       if (typeof window !== "undefined") {
         const { getLocalInstanceCoordinator } = await import("./localInstance.js");
         const coordinator = getLocalInstanceCoordinator();
-        if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
-          // Phase 38: Get recent headers (last 500) for fast sync
-          const recentHeaders: any[] = [];
-          let currentBlock = block;
-          for (let i = 0; i < 500 && currentBlock; i++) {
-            recentHeaders.push(currentBlock.header);
-            const prevHash = currentBlock.header.prevHash;
-            if (prevHash) {
-              // Try to get previous block from storage
-              const allBlocks = context.storage.getAllBlocks();
-              const prevBlock = allBlocks.find(b => b.hash === prevHash);
-              if (prevBlock) {
-                currentBlock = prevBlock;
-              } else {
-                break;
-              }
+        
+        // Phase 38: Get recent headers (last 500) for fast sync
+        const recentHeaders: any[] = [];
+        let currentBlock = block;
+        for (let i = 0; i < 500 && currentBlock; i++) {
+          recentHeaders.push(currentBlock.header);
+          const prevHash = currentBlock.header.prevHash;
+          if (prevHash) {
+            // Try to get previous block from storage
+            const allBlocks = context.storage.getAllBlocks();
+            const prevBlock = allBlocks.find(b => b.hash === prevHash);
+            if (prevBlock) {
+              currentBlock = prevBlock;
             } else {
               break;
             }
+          } else {
+            break;
           }
-          recentHeaders.reverse(); // Oldest to newest
-          
-          // Get latest snapshot meta if available
-          let latestSnapshotMeta = null;
-          try {
-            const { getLatestSnapshotMeta } = await import("./snapshot.js");
-            latestSnapshotMeta = getLatestSnapshotMeta();
-          } catch (error) {
-            // Snapshot not available, continue without it
-          }
-          
-          // Phase 37: Send UPDATE_ROOT_TIP with stateCommitment for verification
+        }
+        recentHeaders.reverse(); // Oldest to newest
+        
+        // Get latest snapshot meta if available
+        let latestSnapshotMeta = null;
+        try {
+          const { getLatestSnapshotMeta } = await import("./snapshot.js");
+          latestSnapshotMeta = getLatestSnapshotMeta();
+        } catch (error) {
+          // Snapshot not available, continue without it
+        }
+        
+        // Phase 37: Send UPDATE_ROOT_TIP to signal server (if LEADER and signal server available)
+        if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
           (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", {
             header: block.header,
             headerHash: block.hash,
@@ -685,7 +687,33 @@ export async function appendMinedBlock(
             stateCommitment: block.header.stateCommitment, // Phase 37: Include stateCommitment for Worker verification
             // Note: finalityCert can be added here if available from finalityManager
           });
-          console.log(`[Phase 32] Updated root tip on signal server: height=${block.header.height}, recentHeaders=${recentHeaders.length}, hasSnapshot=${!!latestSnapshotMeta}`);
+          // Removed frequent log: Updated root tip on signal server
+        }
+        
+        // Phase 46+: P2P RootTip Gossip - Broadcast rootTip via P2P network
+        // This ensures rootTip propagation even if signal servers are unavailable
+        try {
+          const { getRootTipGossipManager } = await import("./rootTipGossip.js");
+          const gossipManager = getRootTipGossipManager();
+          gossipManager.init(context.p2p);
+          
+          // Build rootTip for gossip
+          const rootTipForGossip = {
+            latestHeight: block.header.height,
+            latestHeader: block.header,
+            latestHeaderHash: block.hash,
+            recentHeaders: recentHeaders,
+            latestSnapshotMeta: latestSnapshotMeta,
+            stateCommitment: block.header.stateCommitment || null,
+            trustLevel: "root-only" as const,
+            updatedAt: Date.now(),
+          };
+          
+          // Gossip to P2P network (original sender = true, we mined this block)
+          await gossipManager.gossipRootTip(rootTipForGossip, true);
+        } catch (error) {
+          // Don't fail block append if gossip fails
+          // Silently continue - gossip is optional enhancement
         }
       }
     }

@@ -137,14 +137,14 @@ self.addEventListener('message', (event) => {
       performKeepalive();
     }, KEEPALIVE_INTERVAL);
     
-    console.log('[Service Worker] Keepalive started');
+    // Removed frequent log: Keepalive started
   } else if (type === 'stop-keepalive') {
     // Stop periodic keepalive
     if (keepaliveInterval) {
       clearInterval(keepaliveInterval);
       keepaliveInterval = null;
     }
-    console.log('[Service Worker] Keepalive stopped');
+    // Removed frequent log: Keepalive stopped
   } else if (type === 'ping') {
     // Respond to ping from main thread
     event.ports[0].postMessage({ type: 'pong', timestamp: Date.now() });
