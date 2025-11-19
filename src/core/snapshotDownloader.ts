@@ -207,7 +207,17 @@ export class SnapshotDownloader {
     const sources = await this.ranker.getTopSources(finalConfig.maxParallelPeers, snapshotMeta.height);
     
     if (sources.length === 0) {
-      throw new Error("No available sources for snapshot");
+      // Check if we have any peers connected
+      const peerCount = this.p2pNode && 'peers' in this.p2pNode ? this.p2pNode.peers.size : 0;
+      const connectedPeers = peerCount > 0 && this.p2pNode && 'peers' in this.p2pNode
+        ? Array.from(this.p2pNode.peers.values()).filter(p => p.connected && p.dataChannel && p.dataChannel.readyState === 'open').length
+        : 0;
+      
+      if (connectedPeers === 0) {
+        throw new Error("No peers connected. Please wait for peers to connect before downloading snapshot.");
+      } else {
+        throw new Error(`No available sources for snapshot at height ${snapshotMeta.height}. ${connectedPeers} peer(s) connected but none have this snapshot.`);
+      }
     }
     
     // Create assembler

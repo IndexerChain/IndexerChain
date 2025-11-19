@@ -1885,16 +1885,33 @@ function App() {
                     
                     setTimeout(async () => {
                       try {
+                        // Check peer count before attempting download
+                        const peerCount = p2p.peers ? p2p.peers.size : 0;
+                        const connectedPeers = peerCount > 0 ? Array.from(p2p.peers.values()).filter(p => p.connected && p.dataChannel && p.dataChannel.readyState === 'open').length : 0;
+                        
+                        if (connectedPeers === 0) {
+                          // No peers connected
+                          const errorMsg = locale === "zh" 
+                            ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\nCloudflare Worker 有快照，但没有对等节点连接，无法下载。\n\n解决方案：\n1. 等待对等节点连接（通常需要几秒钟）\n2. 检查 P2P 网络连接状态\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
+                            : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nCloudflare Worker has snapshot, but no peers connected to download it.\n\nSolutions:\n1. Wait for peers to connect (usually takes a few seconds)\n2. Check P2P network connection status\n3. Or reset chain data to start fresh (in Advanced tab)`;
+                          setError(errorMsg);
+                          return;
+                        }
+                        
                         await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
                           // Snapshot download progress
                         });
                         setError(""); // Clear error on success
                       } catch (error) {
                         console.error(`[Sync] ❌ Failed to download snapshot from Worker:`, error);
-                        const errorMsg = locale === "zh" 
-                          ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败。\n\n解决方案：\n1. 检查网络连接\n2. 等待有快照的对等节点连接\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
-                          : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed.\n\nSolutions:\n1. Check network connection\n2. Wait for peers with snapshots to connect\n3. Or reset chain data to start fresh (in Advanced tab)`;
-                        setError(errorMsg);
+                        const errorMsg = error instanceof Error ? error.message : String(error);
+                        const peerCount = p2p.peers ? p2p.peers.size : 0;
+                        const connectedPeers = peerCount > 0 ? Array.from(p2p.peers.values()).filter(p => p.connected && p.dataChannel && p.dataChannel.readyState === 'open').length : 0;
+                        
+                        let detailedError = locale === "zh" 
+                          ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败：${errorMsg}\n\n当前状态：\n- 对等节点数量：${connectedPeers}\n\n解决方案：\n1. 等待更多对等节点连接（通常需要几秒钟）\n2. 检查网络连接\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
+                          : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed: ${errorMsg}\n\nCurrent status:\n- Connected peers: ${connectedPeers}\n\nSolutions:\n1. Wait for more peers to connect (usually takes a few seconds)\n2. Check network connection\n3. Or reset chain data to start fresh (in Advanced tab)`;
+                        setError(detailedError);
                       }
                     }, 500);
                   } else {
