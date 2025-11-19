@@ -880,8 +880,6 @@ export class LocalStateCoordinator {
           this.currentEpoch = height;
           this.currentTipHash = storedTipHash;
           this.currentStateCommitment = storedStateCommitment || "";
-          
-          logger.debug(`[LocalStateSync] Loaded shared state from localStorage: height=${height}, tipHash=${storedTipHash.substring(0, 16)}...`);
         } else {
           logger.debug(`[LocalStateSync] Stored state is too old (${Math.round(age / 1000)}s), ignoring`);
         }

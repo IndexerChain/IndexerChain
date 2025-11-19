@@ -89,7 +89,6 @@ export class StateRepairManager {
     const now = Date.now();
     const timeSinceLastRepair = now - this.lastRepairAttempt;
     if (timeSinceLastRepair < this.repairCooldownMs) {
-      console.warn(`[Phase 36] Repair cooldown active (${Math.ceil((this.repairCooldownMs - timeSinceLastRepair) / 1000)}s remaining)`);
       return;
     }
 

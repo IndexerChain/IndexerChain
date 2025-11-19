@@ -145,7 +145,6 @@ export async function handleReceivedBlocks(
 
     // Skip if we already have this block
     if (block.header.height <= localHeight) {
-      console.log(`[Sync] Skipping block ${block.header.height} (already have it, local height: ${localHeight})`);
       continue;
     }
 

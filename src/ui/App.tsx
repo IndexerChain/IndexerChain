@@ -1054,7 +1054,6 @@ function App() {
       const driftCheckInterval = setInterval(() => {
         const driftCheck = driftDetector.checkDrift();
         if (driftCheck.hasDrift && driftCheck.severity === "critical" && !repairManager.isRepairing()) {
-          console.warn("[Phase 36] Critical drift detected, starting repair...");
           repairManager.startRepair(
             driftCheck,
             () => {
@@ -1292,15 +1291,6 @@ function App() {
     // Phase 21: Pass sender for peer reputation tracking
     // Phase 43: Support parallel sync with requestId
     p2p.onMessage("BLOCKS", async (data: { blocks: Block[]; requestId?: string }, sender: string) => {
-      // Always log when receiving blocks to help debug sync issues
-      if (data.blocks && data.blocks.length > 0) {
-        const firstHeight = data.blocks[0]?.header?.height ?? '?';
-        const lastHeight = data.blocks[data.blocks.length - 1]?.header?.height ?? '?';
-        const localTip = chainContext.storage.getTip();
-        const localHeight = localTip?.header?.height ?? -1;
-        console.log(`[Sync] 📦 Received ${data.blocks.length} blocks from ${sender.substring(0, 16)}... (heights: ${firstHeight}-${lastHeight}, local: ${localHeight})`);
-      }
-      
       if (!data.blocks || data.blocks.length === 0) {
         console.warn("[Sync] ⚠️ Received empty BLOCKS message from", sender.substring(0, 16));
         return;

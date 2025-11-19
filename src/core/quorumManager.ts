@@ -522,32 +522,6 @@ export class QuorumManager {
     
     if (hasChanged) {
       this.lastLoggedStatus = currentStatus;
-      logger.debug("[QuorumManager] Quorum status check:", {
-        peerCount: peers.length,
-        independentPeerCount,
-        totalScore,
-        peerIPHashes: Array.from(peerIPHashes),
-        peerMetrics: peerMetrics.map(m => ({
-          peerId: m.peerId.substring(0, 16),
-          ipHash: m.ipHash || "none",
-          score: m.quorumScore,
-          breakdown: {
-            ipIndependence: m.scoreBreakdown.ipIndependence,
-            availability: m.scoreBreakdown.availability,
-            heightReliability: m.scoreBreakdown.heightReliability,
-            latency: m.scoreBreakdown.latency,
-            finalityParticipation: m.scoreBreakdown.finalityParticipation,
-            gsnContribution: m.scoreBreakdown.gsnContribution,
-          },
-          details: {
-            onlineDuration: Math.floor(m.onlineDuration / 1000) + "s",
-            reportedHeight: m.reportedHeight,
-            avgLatencyMs: m.avgLatencyMs,
-            finalityVotesSent: m.finalityVotesSent,
-            snapshotChunksServed: m.snapshotChunksServed,
-          },
-        })),
-      });
     }
     
     // Warning if independent peer count is 0 but peers exist (always log warnings)
@@ -653,12 +627,6 @@ export class QuorumManager {
       
       if (hasChanged) {
         this.lastLoggedAdmission = currentAdmission;
-        logger.debug(`[QuorumManager] Admission status check:`, {
-          stage,
-          peerCount: quorumStatus.peerCount,
-          independentPeerCount: quorumStatus.independentPeerCount,
-          totalScore: quorumStatus.totalScore,
-        });
       }
     }
     

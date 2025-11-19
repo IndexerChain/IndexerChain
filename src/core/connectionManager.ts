@@ -214,7 +214,6 @@ export class ConnectionManager {
     const interval = setInterval(() => {
       try {
         sendPingFn();
-        logger.debug(`[ConnectionManager] Sent heartbeat to peer ${peerId.substring(0, 16)}...`);
       } catch (error) {
         logger.warn(`[ConnectionManager] Failed to send heartbeat to ${peerId.substring(0, 16)}...:`, error);
         // Record missed heartbeat on error
