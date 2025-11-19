@@ -1753,6 +1753,70 @@ function App() {
       const localHeight = localTip?.header.height ?? -1;
       const networkHeight = payload.latestHeight || 0;
       
+      // 🔥 Hard Reorg: Check for fork if we have recent headers
+      if (payload.latestHeaderHash && payload.recentHeaders && payload.recentHeaders.length > 0) {
+        try {
+          const { checkForFork, performHardReorg } = await import("../core/hardReorg.js");
+          const forkResult = checkForFork(chainContext, payload.latestHeaderHash, payload.recentHeaders, networkHeight);
+          
+          if (forkResult) {
+            logger.warn(`[HardReorg] 🚨 Fork detected from BOOTSTRAP_RESPONSE! ${forkResult.reason}`);
+            logger.warn(`[HardReorg] Local: height=${forkResult.localHeight}, hash=${forkResult.localTipHash.substring(0, 16)}...`);
+            logger.warn(`[HardReorg] Root: height=${forkResult.rootHeight}, hash=${forkResult.rootTipHash.substring(0, 16)}...`);
+            logger.warn(`[HardReorg] Will rewind to height ${forkResult.rewindHeight}`);
+            
+            // Stop mining immediately
+            if (isMining) {
+              logger.warn(`[HardReorg] Stopping mining due to fork detection`);
+              handleStopMining();
+            }
+            if (clusterMining) {
+              logger.warn(`[HardReorg] Stopping cluster mining due to fork detection`);
+              handleStopClusterMining();
+            }
+            
+            // Perform hard reorg
+            const reorgResult = await performHardReorg(chainContext, forkResult.rewindHeight);
+            
+            if (reorgResult.success) {
+              logger.info(`[HardReorg] ✅ Hard reorg completed: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}`);
+              
+              // Update chain context to trigger re-render
+              setChainContext({ ...chainContext });
+              
+              // Set error message to inform user
+              setError(
+                locale === "zh"
+                  ? `⚠️ 检测到分叉链，已自动重组：删除了 ${reorgResult.removedBlocks} 个区块，回滚到高度 ${forkResult.rewindHeight}。正在重新同步...`
+                  : `⚠️ Fork detected and auto-reorged: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}. Resyncing...`
+              );
+              
+              // Trigger resync
+              if (networkHeight > forkResult.rewindHeight) {
+                logger.info(`[HardReorg] Triggering resync from height ${forkResult.rewindHeight + 1} to ${networkHeight}`);
+                p2p.broadcast("REQUEST_BLOCKS", {
+                  fromHeight: forkResult.rewindHeight + 1,
+                  toHeight: networkHeight,
+                });
+              }
+            } else {
+              logger.error(`[HardReorg] ❌ Hard reorg failed: ${reorgResult.error}`);
+              setError(
+                locale === "zh"
+                  ? `❌ 链重组失败: ${reorgResult.error}。建议手动重置链。`
+                  : `❌ Chain reorg failed: ${reorgResult.error}. Consider manual chain reset.`
+              );
+            }
+            
+            // Don't continue with normal bootstrap sync if we just did a reorg
+            return;
+          }
+        } catch (error) {
+          logger.error(`[HardReorg] Error checking for fork:`, error);
+          // Continue with normal processing
+        }
+      }
+      
       // Check if Worker has snapshot meta and we need it
       if (payload.latestSnapshotMeta && networkHeight > localHeight) {
         const heightDiff = networkHeight - localHeight;
@@ -1921,6 +1985,70 @@ function App() {
       const localHeight = localTip?.header.height ?? -1;
       
       logger.debug(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
+      
+      // 🔥 Hard Reorg: Check for fork if we have recent headers
+      if (rootHeaderHash && recentHeaders && recentHeaders.length > 0) {
+        try {
+          const { checkForFork, performHardReorg } = await import("../core/hardReorg.js");
+          const forkResult = checkForFork(chainContext, rootHeaderHash, recentHeaders, rootHeight);
+          
+          if (forkResult) {
+            logger.warn(`[HardReorg] 🚨 Fork detected! ${forkResult.reason}`);
+            logger.warn(`[HardReorg] Local: height=${forkResult.localHeight}, hash=${forkResult.localTipHash.substring(0, 16)}...`);
+            logger.warn(`[HardReorg] Root: height=${forkResult.rootHeight}, hash=${forkResult.rootTipHash.substring(0, 16)}...`);
+            logger.warn(`[HardReorg] Will rewind to height ${forkResult.rewindHeight}`);
+            
+            // Stop mining immediately
+            if (isMining) {
+              logger.warn(`[HardReorg] Stopping mining due to fork detection`);
+              handleStopMining();
+            }
+            if (clusterMining) {
+              logger.warn(`[HardReorg] Stopping cluster mining due to fork detection`);
+              handleStopClusterMining();
+            }
+            
+            // Perform hard reorg
+            const reorgResult = await performHardReorg(chainContext, forkResult.rewindHeight);
+            
+            if (reorgResult.success) {
+              logger.info(`[HardReorg] ✅ Hard reorg completed: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}`);
+              
+              // Update chain context to trigger re-render
+              setChainContext({ ...chainContext });
+              
+              // Set error message to inform user
+              setError(
+                locale === "zh"
+                  ? `⚠️ 检测到分叉链，已自动重组：删除了 ${reorgResult.removedBlocks} 个区块，回滚到高度 ${forkResult.rewindHeight}。正在重新同步...`
+                  : `⚠️ Fork detected and auto-reorged: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}. Resyncing...`
+              );
+              
+              // Trigger resync
+              if (rootHeight > forkResult.rewindHeight) {
+                logger.info(`[HardReorg] Triggering resync from height ${forkResult.rewindHeight + 1} to ${rootHeight}`);
+                p2p.broadcast("REQUEST_BLOCKS", {
+                  fromHeight: forkResult.rewindHeight + 1,
+                  toHeight: rootHeight,
+                });
+              }
+            } else {
+              logger.error(`[HardReorg] ❌ Hard reorg failed: ${reorgResult.error}`);
+              setError(
+                locale === "zh"
+                  ? `❌ 链重组失败: ${reorgResult.error}。建议手动重置链。`
+                  : `❌ Chain reorg failed: ${reorgResult.error}. Consider manual chain reset.`
+              );
+            }
+            
+            // Don't continue with normal bootstrap sync if we just did a reorg
+            return;
+          }
+        } catch (error) {
+          logger.error(`[HardReorg] Error checking for fork:`, error);
+          // Continue with normal processing
+        }
+      }
       
       // Phase 37: Store rootTip info for debug overlay
       // Phase 38: Also store snapshot meta for later use
