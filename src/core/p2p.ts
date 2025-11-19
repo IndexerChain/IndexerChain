@@ -890,9 +890,27 @@ export class BrowserP2PNode implements P2PNode {
 
       // Handle connection state changes
       connection.onconnectionstatechange = () => {
-        logger.debug(`[P2P] Connection state for ${peerId.substring(0, 16)}...: ${connection.connectionState}`);
+        // Phase 47: Reduce log spam for connection failures
+        // Connection failures are normal in P2P networks (NAT, firewall, etc.)
+        // Only log if this is a new failure (not already logged)
         if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
-          logger.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
+          const failureKey = `connection_failure_${peerId}`;
+          const lastFailureLog = (typeof window !== "undefined" && (window as any)[failureKey]) || 0;
+          const now = Date.now();
+          
+          // Only log once per peer per 30 seconds to reduce spam
+          if (now - lastFailureLog > 30000) {
+            if (typeof window !== "undefined") {
+              (window as any)[failureKey] = now;
+            }
+            logger.debug(`[P2P] Connection ${connection.connectionState} for ${peerId.substring(0, 16)}... (this is normal in P2P networks)`);
+          }
+        } else if (connection.connectionState === "connected") {
+          // Clear failure log on successful connection
+          const failureKey = `connection_failure_${peerId}`;
+          if (typeof window !== "undefined") {
+            delete (window as any)[failureKey];
+          }
         }
       };
 
@@ -937,9 +955,27 @@ export class BrowserP2PNode implements P2PNode {
 
     // Handle connection state changes
     connection.onconnectionstatechange = () => {
-      // Removed debug log: Connection state changes
+      // Phase 47: Reduce log spam for connection failures
+      // Connection failures are normal in P2P networks (NAT, firewall, etc.)
+      // Only log if this is a new failure (not already logged)
       if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
-        console.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
+        const failureKey = `connection_failure_${peerId}`;
+        const lastFailureLog = (typeof window !== "undefined" && (window as any)[failureKey]) || 0;
+        const now = Date.now();
+        
+        // Only log once per peer per 30 seconds to reduce spam
+        if (now - lastFailureLog > 30000) {
+          if (typeof window !== "undefined") {
+            (window as any)[failureKey] = now;
+          }
+          logger.debug(`[P2P] Connection ${connection.connectionState} for ${peerId.substring(0, 16)}... (this is normal in P2P networks)`);
+        }
+      } else if (connection.connectionState === "connected") {
+        // Clear failure log on successful connection
+        const failureKey = `connection_failure_${peerId}`;
+        if (typeof window !== "undefined") {
+          delete (window as any)[failureKey];
+        }
       }
     };
 
