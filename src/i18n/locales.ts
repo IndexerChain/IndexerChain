@@ -146,6 +146,10 @@ export interface Translations {
     globalPoolDesc: string;
     requiresHigherQuorum: string;
     followerMiningDisabled: string;
+    currentMiningMode: string;
+    soloMining: string;
+    localClusterMining: string;
+    globalPoolMining: string;
   };
 
   // Network (expanded)
@@ -773,6 +777,10 @@ export const translations: Record<Locale, Translations> = {
       globalPoolDesc: "加入全局矿池，与其他节点协作挖矿",
       requiresHigherQuorum: "需要更高的 Quorum 分数",
       followerMiningDisabled: "⚠️ 此实例为 FOLLOWER（只读模式），所有挖矿模式已禁用",
+      currentMiningMode: "当前挖矿方式",
+      soloMining: "单机挖矿 (Solo)",
+      localClusterMining: "本地集群 (Cluster)",
+      globalPoolMining: "全局矿池 (Global Pool)",
     },
     network: {
       title: "🌐 网络",
@@ -1362,6 +1370,10 @@ export const translations: Record<Locale, Translations> = {
       globalPoolDesc: "Join global pool, collaborate with other nodes",
       requiresHigherQuorum: "Requires higher Quorum score",
       followerMiningDisabled: "⚠️ This instance is FOLLOWER (read-only), all mining modes are disabled",
+      currentMiningMode: "Current Mining Mode",
+      soloMining: "Solo Mining",
+      localClusterMining: "Local Cluster",
+      globalPoolMining: "Global Pool",
     },
     network: {
       title: "🌐 Network",

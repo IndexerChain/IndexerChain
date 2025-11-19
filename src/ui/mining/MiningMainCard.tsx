@@ -8,6 +8,7 @@ import { useState, useEffect } from "react";
 import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard } from "../../core/miningGuard.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 interface MiningMainCardProps {
   chainContext: ChainContext | null;
@@ -41,6 +42,7 @@ export function MiningMainCard({
   const [miningGuardResult, setMiningGuardResult] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [tooltip, setTooltip] = useState<string>("");
+  const { t } = useI18n();
 
   const isZh = locale === "zh";
 
@@ -253,6 +255,50 @@ export function MiningMainCard({
 
       {/* Main Action Button */}
       <div style={{ position: "relative" }}>
+        {/* Current Mining Mode Display (when mining) */}
+        {(isMining || clusterMining) && (
+          <div
+            style={{
+              marginBottom: "0.75rem",
+              padding: "0.75rem 1rem",
+              background: "rgba(255, 255, 255, 0.9)",
+              borderRadius: "6px",
+              border: "1px solid #e0e0e0",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span style={{ fontSize: "1.2rem" }}>⛏️</span>
+              <div>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.25rem" }}>
+                  {t("mining.currentMiningMode")}
+                </div>
+                <div style={{ fontSize: "1rem", fontWeight: "bold", color: "#333" }}>
+                  {miningMode === "solo"
+                    ? t("mining.soloMining")
+                    : miningMode === "cluster"
+                    ? t("mining.localClusterMining")
+                    : t("mining.globalPoolMining")}
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                padding: "0.25rem 0.75rem",
+                background: status.color,
+                color: "white",
+                borderRadius: "12px",
+                fontSize: "0.75rem",
+                fontWeight: "bold",
+              }}
+            >
+              {status.label}
+            </div>
+          </div>
+        )}
+        
         <button
           onClick={handleButtonClick}
           disabled={!canMine && !isMining && !clusterMining && !isFollowerBlocked}
@@ -272,6 +318,10 @@ export function MiningMainCard({
               : "not-allowed",
             transition: "all 0.2s",
             opacity: canMine || isMining || clusterMining || isFollowerBlocked ? 1 : 0.6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "0.5rem",
           }}
           onMouseEnter={() => {
             if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && tooltip) {
@@ -280,7 +330,17 @@ export function MiningMainCard({
           }}
           title={tooltip || undefined}
         >
-          {getButtonLabel()}
+          {isMining || clusterMining ? (
+            <>
+              <span>⏹️</span>
+              {getButtonLabel()}
+            </>
+          ) : (
+            <>
+              <span>▶️</span>
+              {getButtonLabel()}
+            </>
+          )}
         </button>
       </div>
 
