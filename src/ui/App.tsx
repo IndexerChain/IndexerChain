@@ -499,6 +499,7 @@ function App() {
   // Tab navigation state
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [showAdvancedTabs, setShowAdvancedTabs] = useState<boolean>(false); // Advanced tabs collapsed by default
+  const [showMobileMenu, setShowMobileMenu] = useState<boolean>(false); // Mobile menu state
   
   // Auto-expand advanced tabs if user navigates to an advanced tab
   // Auto-collapse when navigating away from advanced tabs
@@ -3665,62 +3666,239 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", maxWidth: "1400px", margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center", 
+          width: "100%", 
+          maxWidth: "1400px", 
+          margin: "0 auto",
+          flexWrap: "wrap",
+          gap: "1rem"
+        }}>
+          <div style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            gap: "1rem",
+            flex: "1",
+            minWidth: 0
+          }}>
             <img 
               src="/logo/logo.png" 
               alt="IndexerChain Logo" 
               style={{ 
-                height: "48px", 
-                width: "auto",
-                objectFit: "contain"
+                height: "48px",
+                width: "48px",
+                objectFit: "contain",
+                flexShrink: 0
               }}
             />
-            <div>
-              <h1 style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <div style={{ minWidth: 0, flex: "1" }}>
+              <h1 style={{ 
+                margin: 0, 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "0.5rem",
+                fontSize: "clamp(1.25rem, 4vw, 2.5rem)",
+                lineHeight: "1.2"
+              }}>
                 {t("common.appTitle")}
               </h1>
-              <p className="subtitle" style={{ margin: 0 }}>{t("common.appSubtitle")}</p>
+              <p className="subtitle" style={{ 
+                margin: 0,
+                fontSize: "clamp(0.75rem, 2vw, 1rem)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              }}>
+                {t("common.appSubtitle")}
+              </p>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <div style={{ 
+            display: "flex", 
+            gap: "0.5rem", 
+            alignItems: "center",
+            flexShrink: 0
+          }}>
+            {/* Mobile Menu Toggle */}
             <button
-              onClick={() => setLocale("zh")}
-              style={{
-                padding: "0.5rem 1rem",
-                background: locale === "zh" ? "#667eea" : "rgba(255, 255, 255, 0.2)",
-                color: locale === "zh" ? "white" : "white",
-                border: "1px solid rgba(255, 255, 255, 0.3)",
-                borderRadius: "4px",
-                cursor: "pointer",
-                fontWeight: locale === "zh" ? "bold" : "normal",
-              }}
+              className="mobile-menu-toggle"
+              onClick={() => setShowMobileMenu(true)}
+              aria-label="Open menu"
             >
-              {t("common.chinese")}
+              ☰
             </button>
-            <button
-              onClick={() => setLocale("en")}
-              style={{
-                padding: "0.5rem 1rem",
-                background: locale === "en" ? "#667eea" : "rgba(255, 255, 255, 0.2)",
-                color: locale === "en" ? "white" : "white",
-                border: "1px solid rgba(255, 255, 255, 0.3)",
-                borderRadius: "4px",
-                cursor: "pointer",
-                fontWeight: locale === "en" ? "bold" : "normal",
-              }}
-            >
-              {t("common.english")}
-            </button>
+            {/* Language Switcher */}
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button
+                onClick={() => setLocale("zh")}
+                style={{
+                  padding: "0.5rem 1rem",
+                  background: locale === "zh" ? "#667eea" : "rgba(255, 255, 255, 0.2)",
+                  color: "white",
+                  border: "1px solid rgba(255, 255, 255, 0.3)",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: locale === "zh" ? "bold" : "normal",
+                  fontSize: "clamp(0.75rem, 2vw, 0.9rem)",
+                  minHeight: "44px",
+                  minWidth: "44px",
+                  whiteSpace: "nowrap"
+                }}
+              >
+                {t("common.chinese")}
+              </button>
+              <button
+                onClick={() => setLocale("en")}
+                style={{
+                  padding: "0.5rem 1rem",
+                  background: locale === "en" ? "#667eea" : "rgba(255, 255, 255, 0.2)",
+                  color: "white",
+                  border: "1px solid rgba(255, 255, 255, 0.3)",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: locale === "en" ? "bold" : "normal",
+                  fontSize: "clamp(0.75rem, 2vw, 0.9rem)",
+                  minHeight: "44px",
+                  minWidth: "44px",
+                  whiteSpace: "nowrap"
+                }}
+              >
+                {t("common.english")}
+              </button>
+            </div>
           </div>
         </div>
       </header>
+
+      {/* Mobile Tab Menu */}
+      <div 
+        className={`mobile-tab-menu ${showMobileMenu ? "active" : ""}`}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setShowMobileMenu(false);
+          }
+        }}
+      >
+        <div className="mobile-tab-menu-content">
+          <div className="mobile-tab-menu-header">
+            <h2 style={{ margin: 0, fontSize: "1.25rem" }}>{t("common.appTitle")}</h2>
+            <button
+              className="mobile-tab-menu-close"
+              onClick={() => setShowMobileMenu(false)}
+              aria-label="Close menu"
+            >
+              ×
+            </button>
+          </div>
+          <button
+            className={`mobile-tab-button ${activeTab === "overview" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("overview");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.overview")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "mining" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("mining");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.mining")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "wallet" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("wallet");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.wallet")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "transactions" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("transactions");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.transactions")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "network" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("network");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.network")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "storage" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("storage");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.storage")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "advanced" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("advanced");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.advanced")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "token" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("token");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.token")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "privacy" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("privacy");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.privacy")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "tools" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("tools");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.tools")}
+          </button>
+          <button
+            className={`mobile-tab-button ${activeTab === "runtime" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("runtime");
+              setShowMobileMenu(false);
+            }}
+          >
+            {t("tabs.runtime")}
+          </button>
+        </div>
+      </div>
 
       <main className="app-main">
         {/* Status Banner */}
         {chainContext && (
           <div style={{
-            padding: "1rem",
+            padding: "clamp(0.75rem, 2vw, 1rem)",
             marginBottom: "1.5rem",
             borderRadius: "8px",
             background: isP2PConnected && nodeAddress ? "#d4edda" : "#fff3cd",
@@ -3731,17 +3909,36 @@ function App() {
             flexWrap: "wrap",
             gap: "1rem"
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "1.5rem" }}>
+            <div style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: "clamp(0.5rem, 2vw, 1rem)", 
+              flexWrap: "wrap",
+              flex: "1",
+              minWidth: 0
+            }}>
+              <span style={{ 
+                fontSize: "clamp(1.25rem, 4vw, 1.5rem)",
+                flexShrink: 0
+              }}>
                 {isP2PConnected && nodeAddress ? "✅" : "⚠️"}
               </span>
-              <div>
-                <strong style={{ fontSize: "1rem", display: "block", marginBottom: "0.25rem" }}>
+              <div style={{ minWidth: 0, flex: "1" }}>
+                <strong style={{ 
+                  fontSize: "clamp(0.9rem, 2.5vw, 1rem)", 
+                  display: "block", 
+                  marginBottom: "0.25rem",
+                  wordBreak: "break-word"
+                }}>
                   {isP2PConnected && nodeAddress 
                     ? t("banner.systemReady")
                     : t("banner.configRequired")}
                 </strong>
-                <div style={{ fontSize: "0.9rem", color: "#666" }}>
+                <div style={{ 
+                  fontSize: "clamp(0.8rem, 2vw, 0.9rem)", 
+                  color: "#666",
+                  wordBreak: "break-word"
+                }}>
                   {isP2PConnected && nodeAddress 
                     ? t("banner.networkConnected", { count: peerCount, height })
                     : !isP2PConnected && !nodeAddress
@@ -3757,8 +3954,14 @@ function App() {
                 className="btn btn-primary"
                 onClick={() => {
                   setActiveTab("network");
+                  setShowMobileMenu(false);
                 }}
-                style={{ padding: "0.5rem 1rem" }}
+                style={{ 
+                  padding: "clamp(0.5rem, 2vw, 0.75rem) clamp(0.75rem, 3vw, 1rem)",
+                  minHeight: "44px",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0
+                }}
               >
                 {t("banner.configNetwork")}
               </button>
@@ -3784,14 +3987,23 @@ function App() {
               whiteSpace: "pre-line",
               maxWidth: "100%",
               wordBreak: "break-word",
-              padding: "1.5rem",
-              marginBottom: "1rem"
+              padding: "clamp(1rem, 3vw, 1.5rem)",
+              marginBottom: "1rem",
+              fontSize: "clamp(0.9rem, 2.5vw, 1rem)"
             }}
           >
-            <strong style={{ fontSize: "1.2rem", display: "block", marginBottom: "0.75rem" }}>
+            <strong style={{ 
+              fontSize: "clamp(1rem, 3vw, 1.2rem)", 
+              display: "block", 
+              marginBottom: "0.75rem" 
+            }}>
               {error.includes("✅") ? "✅ Success:" : "❌ Chain Initialization Error:"}
             </strong>
-            <div style={{ marginBottom: "1rem", fontSize: "1rem", lineHeight: "1.6" }}>
+            <div style={{ 
+              marginBottom: "1rem", 
+              fontSize: "clamp(0.9rem, 2.5vw, 1rem)", 
+              lineHeight: "1.6" 
+            }}>
               {error}
             </div>
             {needsReset ? (
@@ -3808,8 +4020,8 @@ function App() {
                   className="btn btn-secondary"
                   onClick={handleResetChain}
                   style={{ 
-                    padding: "1.25rem 2.5rem",
-                    fontSize: "1.2rem",
+                    padding: "clamp(0.875rem, 2vw, 1.25rem) clamp(1.5rem, 4vw, 2.5rem)",
+                    fontSize: "clamp(0.95rem, 2.5vw, 1.2rem)",
                     fontWeight: "bold",
                     backgroundColor: "#dc3545",
                     color: "white",
@@ -3817,7 +4029,10 @@ function App() {
                     borderRadius: "8px",
                     cursor: "pointer",
                     display: "inline-block",
-                    minWidth: "300px",
+                    minWidth: "min(300px, 100%)",
+                    width: "100%",
+                    maxWidth: "100%",
+                    minHeight: "44px",
                     boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
                     transition: "all 0.2s"
                   }}
@@ -3832,7 +4047,14 @@ function App() {
                 >
                   🔄 Reset Chain (Clear All Data)
                 </button>
-                <p style={{ marginTop: "0.5rem", fontSize: "1rem", opacity: 0.95, maxWidth: "600px", lineHeight: "1.5" }}>
+                <p style={{ 
+                  marginTop: "0.5rem", 
+                  fontSize: "clamp(0.9rem, 2.5vw, 1rem)", 
+                  opacity: 0.95, 
+                  maxWidth: "100%", 
+                  lineHeight: "1.5",
+                  wordBreak: "break-word"
+                }}>
                   ⚠️ <strong>Warning:</strong> This will permanently delete all chain data and snapshots, then start fresh from genesis block.
                 </p>
               </div>
@@ -3928,7 +4150,7 @@ function App() {
 
         {/* Tab Navigation */}
         <div className="tab-container">
-          <div className="tab-nav">
+          <div className="tab-nav desktop-only">
             {/* P0-3: Core Tabs (Most Used) */}
             <button
               className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
@@ -3977,15 +4199,22 @@ function App() {
             </button>
             
             {/* P1-1: Advanced Tabs (Less Used) - Collapsible */}
-            <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem", alignItems: "center", paddingLeft: "0.5rem", borderLeft: "1px solid #e0e0e0" }}>
+            <div style={{ 
+              marginLeft: "auto", 
+              display: "flex", 
+              gap: "0.5rem", 
+              alignItems: "center", 
+              paddingLeft: "clamp(0.25rem, 1vw, 0.5rem)", 
+              borderLeft: "1px solid #e0e0e0"
+            }}>
               <button
                 onClick={(e) => {
                   e.preventDefault();
                   setShowAdvancedTabs(!showAdvancedTabs);
                 }}
                 style={{
-                  padding: "0.4rem 0.8rem",
-                  fontSize: "0.8rem",
+                  padding: "clamp(0.4rem, 1.5vw, 0.6rem) clamp(0.6rem, 2vw, 0.8rem)",
+                  fontSize: "clamp(0.75rem, 2vw, 0.8rem)",
                   color: showAdvancedTabs ? "#667eea" : "#999",
                   background: showAdvancedTabs ? "rgba(102, 126, 234, 0.1)" : "transparent",
                   border: `1px solid ${showAdvancedTabs ? "#667eea" : "#ddd"}`,
@@ -3994,6 +4223,8 @@ function App() {
                   whiteSpace: "nowrap",
                   transition: "all 0.2s ease",
                   fontWeight: showAdvancedTabs ? "500" : "400",
+                  minHeight: "44px",
+                  minWidth: "44px",
                 }}
                 onMouseEnter={(e) => {
                   if (!showAdvancedTabs) {
