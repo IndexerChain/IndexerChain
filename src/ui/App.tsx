@@ -73,6 +73,7 @@ import { MiningOnboardingDialog } from "./mining/MiningOnboardingDialog.js";
 import { MiningStatusBanner } from "./mining/MiningStatusBanner.js";
 import { GenesisQuorumBanner } from "./mining/GenesisQuorumBanner.js";
 import { MultiTerminalSyncNotice } from "./mining/MultiTerminalSyncNotice.js";
+import { QuorumScoreExplanation } from "./mining/QuorumScoreExplanation.js";
 import { QuickStatusDashboard } from "./components/QuickStatusDashboard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
 import "./index.css";
@@ -5280,23 +5281,12 @@ function App() {
                         miningGuardResult.details?.requiredQuorumScore !== undefined && (() => {
                           const passed = miningGuardResult.details.quorumScore >= miningGuardResult.details.requiredQuorumScore;
                           return (
-                            <li style={{ 
-                              marginBottom: "0.75rem",
-                              padding: "0.75rem",
-                              background: passed ? "rgba(40, 167, 69, 0.1)" : "rgba(220, 53, 69, 0.1)",
-                              borderRadius: "6px",
-                              border: `1px solid ${passed ? "#28a745" : "#dc3545"}`,
-                              color: passed ? "#155724" : "#721c24"
-                            }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                                <span style={{ fontSize: "1.2rem" }}>{passed ? "✅" : "❌"}</span>
-                                <span style={{ fontWeight: "bold" }}>
-                                  {locale === "zh"
-                                    ? `规则 2: Quorum 分数需要 ≥ ${miningGuardResult.details.requiredQuorumScore} (当前: ${miningGuardResult.details.quorumScore})`
-                                    : `Rule 2: Quorum score must be ≥ ${miningGuardResult.details.requiredQuorumScore} (current: ${miningGuardResult.details.quorumScore})`}
-                                </span>
-                              </div>
-                            </li>
+                            <QuorumScoreExplanation
+                              passed={passed}
+                              currentScore={miningGuardResult.details.quorumScore}
+                              requiredScore={miningGuardResult.details.requiredQuorumScore}
+                              locale={locale}
+                            />
                           );
                         })()}
                       {localRole === "FOLLOWER" && (

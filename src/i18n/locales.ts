@@ -432,6 +432,7 @@ export interface Translations {
       token: string;
       privacy: string;
       tools: string;
+      runtime: string;
     };
 
   // Banner
@@ -1051,6 +1052,7 @@ export const translations: Record<Locale, Translations> = {
       token: "🪙 代币",
       privacy: "🔒 隐私",
       tools: "🔧 工具",
+      runtime: "⚡ 运行时",
     },
     banner: {
       systemReady: "系统就绪，可以开始挖矿",
@@ -1644,6 +1646,7 @@ export const translations: Record<Locale, Translations> = {
       token: "🪙 Token",
       privacy: "🔒 Privacy",
       tools: "🔧 Tools",
+      runtime: "⚡ Runtime",
     },
     banner: {
       systemReady: "System ready, can start mining",
