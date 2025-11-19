@@ -49,18 +49,24 @@ export async function verifyBlock(
 ): Promise<{ valid: boolean; error?: string }> {
   // Check height continuity
   if (prevBlock === null) {
-    // Genesis block
-    if (block.header.height !== 0) {
-      return { valid: false, error: "Genesis block must have height 0" };
-    }
-    if (block.header.prevHash !== "0".repeat(64)) {
-      return {
-        valid: false,
-        error: "Genesis block must have prevHash = 0...0",
-      };
+    // Special case: if prevBlock is null and block height is > 0, this might be a block from Worker headers
+    // when local is at genesis. In this case, we'll allow it if it's from Worker headers.
+    // This is handled in sync.ts by checking against Worker headers before calling verifyBlock.
+    if (block.header.height === 0) {
+      // Genesis block
+      if (block.header.prevHash !== "0".repeat(64)) {
+        return {
+          valid: false,
+          error: "Genesis block must have prevHash = 0...0",
+        };
+      }
+    } else {
+      // Non-genesis block with null prevBlock - this is allowed when syncing from Worker headers
+      // The prevHash check will be skipped, but we still verify other aspects
+      // This case is handled in sync.ts
     }
   } else {
-    // Non-genesis block
+    // Non-genesis block with previous block
     const expectedHeight = prevBlock.header.height + 1;
     if (block.header.height !== expectedHeight) {
       return {

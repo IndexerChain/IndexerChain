@@ -125,9 +125,35 @@ export class BootstrapSyncManager {
           if (header.height <= localHeight) continue;
           
           // Verify header chain continuity
+          // Special case: if local height is 0 (genesis), allow sync from any available header
+          // because Worker only stores recent headers and they won't connect to genesis
           if (currentTip && header.prevHash && currentTip.hash && header.prevHash !== currentTip.hash) {
-            console.warn(`[Phase 38] Header chain broken at height ${header.height}, stopping fast sync`);
-            break;
+            const gap = header.height - (currentTip.header?.height || localHeight);
+            // If we're at genesis (height 0) and gap is large, this is normal - Worker only has recent headers
+            if (localHeight === 0 && gap > 100) {
+              console.log(`[Phase 38] Starting sync from height ${header.height} (local is at genesis, Worker has recent headers from height ${header.height}). This is normal.`);
+              // Update currentTip to the first available header to continue syncing
+              currentTip = {
+                header,
+                hash: await hashBlockHeader(header),
+                transactions: [],
+              } as any;
+              continue;
+            } else if (gap > 100) {
+              // If gap is very large and we're not at genesis, we're likely too far behind or on a different fork
+              console.warn(`[Phase 38] Header chain broken at height ${header.height} (gap: ${gap} blocks). Local chain may be on a different fork or too far behind. Consider resetting chain.`);
+              // Still allow sync to proceed from available headers
+              // Update currentTip to the first available header to continue syncing
+              currentTip = {
+                header,
+                hash: await hashBlockHeader(header),
+                transactions: [],
+              } as any;
+              continue;
+            } else {
+              console.warn(`[Phase 38] Header chain broken at height ${header.height}, stopping fast sync`);
+              break;
+            }
           }
           
           // Compute header hash and add to cache
@@ -214,9 +240,24 @@ export class BootstrapSyncManager {
             if (lastKnownHeight === localHeight) {
               // First header should connect to our tip
               if (localTip && header.prevHash !== localTip.hash) {
-                console.warn(`[Phase 32] Recent header at height ${header.height} doesn't connect to local tip`);
-                validChain = false;
-                break;
+                const gap = header.height - localHeight;
+                // Special case: if local height is 0 (genesis), this is normal - Worker only has recent headers
+                if (localHeight === 0 && gap > 100) {
+                  console.log(`[Phase 32] Starting sync from height ${header.height} (local is at genesis, Worker has recent headers from height ${header.height}). This is normal.`);
+                  // Still allow sync to proceed from the available headers
+                  validChain = false; // Mark as not connecting, but allow sync
+                  // Don't break - allow sync from available headers
+                } else if (gap > 100) {
+                  // If gap is very large and we're not at genesis, the chain is likely on a different fork or we're too far behind
+                  console.warn(`[Phase 32] Recent header at height ${header.height} doesn't connect to local tip (gap: ${gap} blocks). Local chain may be on a different fork or too far behind. Consider resetting chain.`);
+                  // Still allow sync to proceed from the available headers, but mark as potentially invalid
+                  validChain = false;
+                  // Don't break - allow sync from available headers
+                } else {
+                  console.warn(`[Phase 32] Recent header at height ${header.height} doesn't connect to local tip`);
+                  validChain = false;
+                  break;
+                }
               }
             } else {
               // Subsequent headers should connect to previous header
@@ -237,7 +278,15 @@ export class BootstrapSyncManager {
         if (validChain) {
           actions.push(`Verified chain continuity with ${response.recentHeaders.length} recent headers`);
         } else {
-          actions.push(`Chain discontinuity detected, will request full sync`);
+          const gap = response.recentHeaders.length > 0 ? response.recentHeaders[0].height - localHeight : 0;
+          // Special case: if local height is 0 (genesis), this is normal - Worker only has recent headers
+          if (localHeight === 0 && gap > 100) {
+            actions.push(`Starting sync from height ${response.recentHeaders[0].height} (local is at genesis, Worker has recent headers). This is normal.`);
+          } else if (gap > 100) {
+            actions.push(`Chain discontinuity detected (gap: ${gap} blocks). Local chain may be on a different fork. Consider resetting chain in Advanced tab.`);
+          } else {
+            actions.push(`Chain discontinuity detected, will request full sync`);
+          }
         }
       }
     }

@@ -11,6 +11,7 @@ import type { BrowserP2PNode } from "./p2p.js";
 import type { SnapshotMeta, SnapshotData, ChainParams } from "./types.js";
 import { SnapshotAssembler, type ChunkedSnapshotInfo, type SnapshotChunk } from "./snapshotChunker.js";
 import { SnapshotRanker } from "./snapshotRanker.js";
+import { logger } from "./logger.js";
 
 /**
  * Download configuration
@@ -203,8 +204,24 @@ export class SnapshotDownloader {
       throw new Error(`Snapshot ${snapshotId} is already being downloaded`);
     }
     
-    // Get top sources
-    const sources = await this.ranker.getTopSources(finalConfig.maxParallelPeers, snapshotMeta.height);
+    // Get top sources - first try exact height, then try any available snapshot
+    let sources = await this.ranker.getTopSources(finalConfig.maxParallelPeers, snapshotMeta.height);
+    
+    // If no sources at exact height, try to find any available snapshot (even lower height)
+    if (sources.length === 0) {
+      logger.debug(`[SnapshotDownloader] No sources for snapshot at height ${snapshotMeta.height}, trying to find any available snapshot...`);
+      sources = await this.ranker.getTopSources(finalConfig.maxParallelPeers); // No height filter
+      
+      // If we found sources with different height, use the best one
+      if (sources.length > 0) {
+        const bestSource = sources[0];
+        if (bestSource.snapshotMeta.height < snapshotMeta.height) {
+          logger.info(`[SnapshotDownloader] Using available snapshot at height ${bestSource.snapshotMeta.height} instead of requested ${snapshotMeta.height}`);
+          // Update snapshotMeta to use the available snapshot
+          snapshotMeta = bestSource.snapshotMeta;
+        }
+      }
+    }
     
     if (sources.length === 0) {
       // Check if we have any peers connected
@@ -216,7 +233,7 @@ export class SnapshotDownloader {
       if (connectedPeers === 0) {
         throw new Error("No peers connected. Please wait for peers to connect before downloading snapshot.");
       } else {
-        throw new Error(`No available sources for snapshot at height ${snapshotMeta.height}. ${connectedPeers} peer(s) connected but none have this snapshot.`);
+        throw new Error(`No available sources for snapshot at height ${snapshotMeta.height}. ${connectedPeers} peer(s) connected but none have any snapshots. Try requesting snapshot metadata from peers first.`);
       }
     }
     

@@ -21,7 +21,7 @@ import { SnapshotSeeder } from "../core/snapshotSeeder.js";
 import { BrowserP2PNode } from "../core/p2p.js";
 import { ShadowNodeClient, type ShadowState } from "../core/shadowNode.js";
 import { handleReceivedBlock, handleReceivedBlocks } from "../core/sync.js";
-import { HardReorgBanner, emitHardReorgEvent, recordReorgToHistory } from "./HardReorgBanner.js";
+import { HardReorgBanner } from "./HardReorgBanner.js";
 import { ActiveMinerDialog, type ActiveMinerInfo } from "./ActiveMinerDialog.js";
 import { getHeightSyncManager } from "../core/heightSyncManager.js";
 import { getParallelSyncManager } from "../core/parallelSync.js";
@@ -1898,20 +1898,56 @@ function App() {
                           return;
                         }
                         
-                        await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
-                          // Snapshot download progress
-                        });
-                        setError(""); // Clear error on success
+                        // First, request snapshot metadata from peers to discover available snapshots
+                        logger.debug(`[Sync] Requesting snapshot metadata from ${connectedPeers} peer(s) before downloading...`);
+                        try {
+                          const availableMetas = await snapshotDownloader.requestSnapshotMeta(workerSnapshotMeta.height);
+                          if (availableMetas && availableMetas.length > 0) {
+                            // Use the best available snapshot (closest to target height, but can be lower)
+                            const bestMeta = availableMetas
+                              .filter(m => m.height <= workerSnapshotMeta.height)
+                              .sort((a, b) => b.height - a.height)[0] || availableMetas[0];
+                            
+                            logger.debug(`[Sync] Found ${availableMetas.length} available snapshot(s), using height ${bestMeta.height}`);
+                            await snapshotDownloader.downloadSnapshot(bestMeta, {}, (_progress) => {
+                              // Snapshot download progress
+                            });
+                            setError(""); // Clear error on success
+                          } else {
+                            // No snapshots available from peers, try with Worker's snapshot meta anyway
+                            logger.debug(`[Sync] No snapshots found from peers, trying with Worker's snapshot meta...`);
+                            await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
+                              // Snapshot download progress
+                            });
+                            setError(""); // Clear error on success
+                          }
+                        } catch (metaError) {
+                          // If metadata request fails, try downloading with Worker's snapshot meta anyway
+                          logger.debug(`[Sync] Snapshot metadata request failed, trying direct download:`, metaError);
+                          await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
+                            // Snapshot download progress
+                          });
+                          setError(""); // Clear error on success
+                        }
                       } catch (error) {
                         console.error(`[Sync] ❌ Failed to download snapshot from Worker:`, error);
                         const errorMsg = error instanceof Error ? error.message : String(error);
                         const peerCount = p2p.peers ? p2p.peers.size : 0;
                         const connectedPeers = peerCount > 0 ? Array.from(p2p.peers.values()).filter(p => p.connected && p.dataChannel && p.dataChannel.readyState === 'open').length : 0;
                         
-                        let detailedError = locale === "zh" 
-                          ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败：${errorMsg}\n\n当前状态：\n- 对等节点数量：${connectedPeers}\n\n解决方案：\n1. 等待更多对等节点连接（通常需要几秒钟）\n2. 检查网络连接\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
-                          : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed: ${errorMsg}\n\nCurrent status:\n- Connected peers: ${connectedPeers}\n\nSolutions:\n1. Wait for more peers to connect (usually takes a few seconds)\n2. Check network connection\n3. Or reset chain data to start fresh (in Advanced tab)`;
-                        setError(detailedError);
+                        // If snapshot download fails but we have peers, allow fallback to block sync
+                        // Only show error if gap is very large (>= 200 blocks) and no peers have snapshots
+                        if (gap >= 200 && errorMsg.includes("No available sources")) {
+                          let detailedError = locale === "zh" 
+                            ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败：${errorMsg}\n\n当前状态：\n- 对等节点数量：${connectedPeers}\n- 对等节点没有快照\n\n系统将尝试通过区块同步来追赶（可能需要较长时间）。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）`
+                            : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed: ${errorMsg}\n\nCurrent status:\n- Connected peers: ${connectedPeers}\n- Peers don't have snapshots\n\nSystem will attempt to catch up via block sync (may take a while).\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)`;
+                          setError(detailedError);
+                        } else {
+                          // For smaller gaps or other errors, allow block sync to proceed
+                          logger.debug(`[Sync] Snapshot download failed, allowing block sync to proceed. Error: ${errorMsg}`);
+                          // Clear error to allow block sync
+                          setError("");
+                        }
                       }
                     }, 500);
                   } else {
@@ -1992,11 +2028,25 @@ function App() {
         });
         
         if (networkHeight > localHeight) {
+          // Special case: if local is at genesis (height 0) and Worker has recent headers from a higher height,
+          // start syncing from the lowest available header height instead of from 1
+          let syncFromHeight = localHeight + 1;
+          const workerRecentHeaders = typeof window !== "undefined" ? ((window as any).lastRootTipRecentHeaders || []) : [];
+          
+          if (localHeight === 0 && workerRecentHeaders.length > 0) {
+            // Find the minimum height from Worker's recent headers
+            const minWorkerHeight = Math.min(...workerRecentHeaders.map((h: any) => h.height || Infinity));
+            if (minWorkerHeight > 0 && minWorkerHeight < networkHeight) {
+              logger.debug(`[Sync] Local is at genesis, Worker has headers from height ${minWorkerHeight}, starting sync from ${minWorkerHeight} instead of 1`);
+              syncFromHeight = minWorkerHeight;
+            }
+          }
+          
           const requestRange = Math.min(behindBy, 500); // Request up to 500 blocks at a time
-          const targetHeight = Math.min(localHeight + requestRange, networkHeight);
+          const targetHeight = Math.min(syncFromHeight + requestRange - 1, networkHeight);
           
           // Check if we've requested this range recently (avoid duplicate requests)
-          const requestKey = `request_${localHeight + 1}_${targetHeight}`;
+          const requestKey = `request_${syncFromHeight}_${targetHeight}`;
           const lastRequest = (window as any)[requestKey] || 0;
           const now = Date.now();
           
@@ -2010,11 +2060,11 @@ function App() {
             } else {
               // Phase 43: Use chunk-based sync to only request missing blocks
               const chunkBasedSyncManager = getChunkBasedSyncManager();
-              const coverage = chunkBasedSyncManager.getBlockCoverage(localHeight + 1, targetHeight);
+              const coverage = chunkBasedSyncManager.getBlockCoverage(syncFromHeight, targetHeight);
               
               if (coverage.missing > 0) {
                 // Use chunk-based sync to only request missing blocks
-                const syncResult = await chunkBasedSyncManager.syncMissingBlocks(localHeight + 1, targetHeight);
+                const syncResult = await chunkBasedSyncManager.syncMissingBlocks(syncFromHeight, targetHeight);
                 
                 if (syncResult.success) {
                   logger.debug(`[ChunkBasedSync] ✅ Requested ${syncResult.requestedChunks.length} chunk(s), skipped ${syncResult.skippedBlocks} already-present blocks`);
@@ -2022,12 +2072,12 @@ function App() {
                   // Fallback to normal sync
                   logger.warn(`[ChunkBasedSync] Failed, falling back to normal sync`);
                   p2p.broadcast("REQUEST_BLOCKS", {
-                    fromHeight: localHeight + 1,
+                    fromHeight: syncFromHeight,
                     toHeight: targetHeight,
                   });
                 }
               } else {
-                logger.info(`[Sync] ✅ All blocks ${localHeight + 1}-${targetHeight} are already present, no sync needed`);
+                logger.info(`[Sync] ✅ All blocks ${syncFromHeight}-${targetHeight} are already present, no sync needed`);
               }
             }
           }
@@ -2061,6 +2111,12 @@ function App() {
         (window as any).lastBootstrapResponseTime = Date.now();
         (window as any).lastRootTipTrustLevel = payload.trustLevel || 'root-only';
         (window as any).lastRootTipStateCommitment = payload.stateCommitment || null;
+        
+        // Store recent headers to determine minimum available height
+        if (payload.recentHeaders && payload.recentHeaders.length > 0) {
+          (window as any).lastRootTipRecentHeaders = payload.recentHeaders;
+        }
+        
         if (payload.latestSnapshotMeta) {
           (window as any).lastRootTipSnapshotMeta = payload.latestSnapshotMeta;
         }
@@ -2293,6 +2349,25 @@ function App() {
           if (networkHeight > 0) {
             const behindBy = networkHeight - localHeight;
             
+            // Check if bootstrap actions suggest chain reset
+            const suggestsReset = result.actions.some(action => 
+              typeof action === 'string' && action.includes('Consider resetting chain')
+            );
+            
+            // Special case: if local height is 0 (genesis), don't show error - this is normal
+            // Worker only has recent headers, so they won't connect to genesis
+            if (suggestsReset && behindBy > 100 && localHeight > 0) {
+              // Large gap detected and chain discontinuity (but not at genesis) - suggest reset
+              const resetSuggestion = locale === "zh"
+                ? `⚠️ 链同步问题：本地高度 ${localHeight}，网络高度 ${networkHeight}（差距 ${behindBy} 个区块）。\n\n检测到链不连续，本地链可能在不同的分叉上或过于落后。\n\n建议：在 Advanced 标签页重置链数据，然后重新开始同步。`
+                : `⚠️ Chain sync issue: Local height ${localHeight}, network height ${networkHeight} (gap: ${behindBy} blocks).\n\nChain discontinuity detected. Local chain may be on a different fork or too far behind.\n\nRecommendation: Reset chain data in Advanced tab, then restart sync.`;
+              setError(resetSuggestion);
+            } else if (localHeight === 0 && behindBy > 100) {
+              // At genesis with large gap - this is normal, clear any previous errors
+              // System will sync from available headers or snapshots
+              setError("");
+            }
+            
             setSyncStatus({
               isSyncing: behindBy > 0,
               localHeight,
@@ -2352,15 +2427,15 @@ function App() {
       }
     });
 
-    // Phase 32: Handle ROOT_TIP_UPDATE from signal server
+    // Phase 46: Handle ROOT_TIP_UPDATE using Unified Sync Manager
     p2p.onMessage("ROOT_TIP_UPDATE", async (payload: any, _sender: string) => {
-      if (!chainContext) return;
+      if (!chainContext || !p2pNodeRef.current) return;
       
       // Check if there's a pending rootTip from JOIN_ACK that we should process first
       if (typeof window !== "undefined" && (window as any).pendingRootTipFromJoinAck) {
         const pendingRootTip = (window as any).pendingRootTipFromJoinAck;
         delete (window as any).pendingRootTipFromJoinAck;
-        logger.debug(`[Phase 32] Processing pending rootTip from JOIN_ACK`);
+        logger.debug(`[Phase 46] Processing pending rootTip from JOIN_ACK`);
         // Process the pending rootTip with the same logic below
         payload = { rootTip: pendingRootTip };
       }
@@ -2388,158 +2463,7 @@ function App() {
         });
       }
       
-      // Phase 43: Try incremental state sync if applicable (state mismatch but heights close)
-      const localStateCommit = localTip?.header.stateCommitment || "";
-      const networkStateCommit = rootTip.stateCommitment || "";
-      if (localStateCommit && networkStateCommit && localStateCommit !== networkStateCommit && 
-          localHeight > 0 && rootHeight - localHeight >= 100 && rootHeight - localHeight <= 1000) {
-        const incrementalStateSyncManager = getIncrementalStateSyncManager();
-        if (incrementalStateSyncManager.canIncrementalSync(localHeight, rootHeight, localStateCommit, networkStateCommit)) {
-          logger.info(`[IncrementalStateSync] 🚀 Attempting incremental state sync: ${localHeight} → ${rootHeight} (state mismatch detected)`);
-          const syncResult = await incrementalStateSyncManager.performIncrementalSync(rootHeight, networkStateCommit);
-          
-          if (syncResult.success && syncResult.synced) {
-            logger.info(`[IncrementalStateSync] ✅ Incremental state sync completed in ${syncResult.durationMs}ms: applied ${syncResult.appliedDeltas} delta(s)`);
-            // Update chain context to reflect new state
-            setChainContext({ ...chainContext });
-            // Continue with normal processing
-          } else if (syncResult.success && !syncResult.synced) {
-            logger.debug(`[IncrementalStateSync] Incremental sync not applicable, continuing with normal sync`);
-          } else {
-            logger.warn(`[IncrementalStateSync] Incremental sync failed: ${syncResult.error}, falling back to normal sync`);
-          }
-        }
-      }
-      
-      // Phase 43: Try warp sync if applicable (new node or large gap)
-      if (localHeight <= 0 || (rootHeight - localHeight >= 1000)) {
-        const warpSyncManager = getWarpSyncManager();
-        if (warpSyncManager.canWarpSync(localHeight, rootHeight)) {
-          logger.info(`[WarpSync] 🚀 Attempting warp sync: ${localHeight} → ${rootHeight}`);
-          const warpResult = await warpSyncManager.performWarpSync({
-            latestHeight: rootHeight,
-            latestHeader: rootHeader,
-            latestHeaderHash: rootHeaderHash || "",
-            recentHeaders: recentHeaders || [],
-            latestSnapshotMeta: snapshotMeta || undefined,
-            stateCommitment: rootTip.stateCommitment || undefined,
-          });
-          
-          if (warpResult.success && warpResult.synced) {
-            logger.info(`[WarpSync] ✅ Warp sync completed in ${warpResult.durationMs}ms: ${warpResult.fromHeight} → ${warpResult.toHeight}`);
-            // Update chain context to reflect new state
-            setChainContext({ ...chainContext });
-            // Update local height
-            const newTip = chainContext.storage.getTip();
-            const newHeight = newTip?.header.height ?? localHeight;
-            // Continue with normal processing if we're not at target height yet
-            if (newHeight < rootHeight) {
-              logger.info(`[WarpSync] Still need to sync ${rootHeight - newHeight} more blocks`);
-            } else {
-              logger.info(`[WarpSync] ✅ Fully synced to height ${rootHeight}`);
-              return; // Skip hard reorg check if we just warped
-            }
-          } else if (warpResult.success && !warpResult.synced) {
-            logger.debug(`[WarpSync] Warp sync not applicable, continuing with normal sync`);
-          } else {
-            logger.warn(`[WarpSync] Warp sync failed: ${warpResult.error}, falling back to normal sync`);
-          }
-        }
-      }
-      
-      logger.debug(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
-      
-      // 🔥 Hard Reorg: Check for fork if we have recent headers
-      // Sync 3.5: Only miners can trigger hard reorg. Non-miners never fork.
-      const isMiner = isMining || clusterMining;
-      if (!isMiner) {
-        logger.debug(`[HardReorg] Non-miner node: skipping fork check. Will only append blocks during sync.`);
-      }
-      if (rootHeaderHash && recentHeaders && recentHeaders.length > 0 && isMiner) {
-        try {
-          const { checkForFork, performHardReorg } = await import("../core/hardReorg.js");
-          const forkResult = checkForFork(chainContext, rootHeaderHash, recentHeaders, rootHeight, isMiner);
-          
-          if (forkResult) {
-            logger.warn(`[HardReorg] 🚨 Fork detected! ${forkResult.reason}`);
-            logger.warn(`[HardReorg] Local: height=${forkResult.localHeight}, hash=${forkResult.localTipHash.substring(0, 16)}...`);
-            logger.warn(`[HardReorg] Root: height=${forkResult.rootHeight}, hash=${forkResult.rootTipHash.substring(0, 16)}...`);
-            logger.warn(`[HardReorg] Will rewind to height ${forkResult.rewindHeight}`);
-            
-            // Stop mining immediately
-            if (isMining) {
-              logger.warn(`[HardReorg] Stopping mining due to fork detection`);
-              handleStopMining();
-            }
-            if (clusterMining) {
-              logger.warn(`[HardReorg] Stopping cluster mining due to fork detection`);
-              handleStopClusterMining();
-            }
-            
-            // Perform hard reorg
-            const reorgResult = await performHardReorg(chainContext, forkResult.rewindHeight);
-            
-            if (reorgResult.success) {
-              logger.info(`[HardReorg] ✅ Hard reorg completed: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}`);
-              
-              // Phase 42: Emit hard reorg UX event
-              const oldHeight = forkResult.localHeight;
-              const newHeight = forkResult.rewindHeight;
-              
-              emitHardReorgEvent({
-                from: oldHeight,
-                to: newHeight,
-                rolledBack: reorgResult.removedBlocks,
-                timestamp: Date.now(),
-                cause: forkResult.reason,
-              });
-              
-              recordReorgToHistory({
-                from: oldHeight,
-                to: newHeight,
-                rolledBack: reorgResult.removedBlocks,
-                timestamp: Date.now(),
-                cause: forkResult.reason,
-              });
-              
-              // Update chain context to trigger re-render
-              setChainContext({ ...chainContext });
-              
-              // Set error message to inform user
-              setError(
-                locale === "zh"
-                  ? `⚠️ 检测到分叉链，已自动重组：删除了 ${reorgResult.removedBlocks} 个区块，回滚到高度 ${forkResult.rewindHeight}。正在重新同步...`
-                  : `⚠️ Fork detected and auto-reorged: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}. Resyncing...`
-              );
-              
-              // Trigger resync
-              if (rootHeight > forkResult.rewindHeight) {
-                logger.info(`[HardReorg] Triggering resync from height ${forkResult.rewindHeight + 1} to ${rootHeight}`);
-                p2p.broadcast("REQUEST_BLOCKS", {
-                  fromHeight: forkResult.rewindHeight + 1,
-                  toHeight: rootHeight,
-                });
-              }
-            } else {
-              logger.error(`[HardReorg] ❌ Hard reorg failed: ${reorgResult.error}`);
-              setError(
-                locale === "zh"
-                  ? `❌ 链重组失败: ${reorgResult.error}。建议手动重置链。`
-                  : `❌ Chain reorg failed: ${reorgResult.error}. Consider manual chain reset.`
-              );
-            }
-            
-            // Don't continue with normal bootstrap sync if we just did a reorg
-            return;
-          }
-        } catch (error) {
-          logger.error(`[HardReorg] Error checking for fork:`, error);
-          // Continue with normal processing
-        }
-      }
-      
       // Phase 37: Store rootTip info for debug overlay
-      // Phase 38: Also store snapshot meta for later use
       if (typeof window !== "undefined" && rootHeight > 0) {
         (window as any).lastRootTipHeight = rootHeight;
         (window as any).lastRootTipHash = rootHeaderHash || "";
@@ -2549,49 +2473,96 @@ function App() {
         if (snapshotMeta) {
           (window as any).lastRootTipSnapshotMeta = snapshotMeta;
         }
-      }
-      
-      // Use BootstrapSyncManager to handle the update
-      if (rootHeight > 0 && rootHeader && rootHeaderHash) {
-        try {
-          const { BootstrapSyncManager } = await import("../core/bootstrapSync.js");
-          const bootstrapManager = new BootstrapSyncManager(chainContext);
-          
-          // Convert to BootstrapResponse format
-          const bootstrapResponse = {
-            requestId: `root_tip_update_${Date.now()}`,
-            latestHeight: rootHeight,
-            latestHeader: rootHeader,
-            latestHeaderHash: rootHeaderHash,
-            recentHeaders: recentHeaders,
-            latestSnapshotMeta: snapshotMeta,
-            timestamp: Date.now(),
-          };
-          
-          const result = await bootstrapManager.processBootstrapResponse(bootstrapResponse);
-          if (result.success) {
-            logger.debug(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE: ${result.actions.join(", ")}`);
-            if (result.newHeight) {
-              logger.debug(`[Phase 32] Synced to height ${result.newHeight}`);
-            }
-            // Phase 37: Mark bootstrap as complete after successful sync
-            setBootstrapComplete(true);
-            logger.debug(`[Phase 37] Bootstrap sync from ROOT_TIP_UPDATE successful, marking bootstrapComplete=true`);
-          }
-        } catch (error) {
-          console.error(`[Phase 32] Error processing ROOT_TIP_UPDATE:`, error);
+        if (recentHeaders) {
+          (window as any).lastRootTipRecentHeaders = recentHeaders;
         }
       }
       
-      // Also trigger block request if we're still behind (fallback)
-      if (rootHeight > localHeight) {
-        const heightDiff = rootHeight - localHeight;
-        if (heightDiff > 200) { // Only request if significantly behind
-          logger.debug(`[Phase 32] Root tip update: behind by ${heightDiff} blocks, requesting sync`);
-          p2p.broadcast("REQUEST_BLOCKS", {
-            fromHeight: localHeight + 1,
-            toHeight: rootHeight,
-          });
+      // Phase 46: Use Unified Sync Manager
+      try {
+        const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
+        const isMiner = isMining || clusterMining;
+        
+        logger.info(`[Phase 46] Processing ROOT_TIP_UPDATE: local=${localHeight}, root=${rootHeight}, isMiner=${isMiner}`);
+        
+        const syncResult = await handleRootTipUpdate(
+          chainContext,
+          p2pNodeRef.current,
+          {
+            latestHeight: rootHeight,
+            latestHeader: rootHeader,
+            latestHeaderHash: rootHeaderHash || "",
+            recentHeaders: recentHeaders || [],
+            latestSnapshotMeta: snapshotMeta,
+            stateCommitment: rootTip.stateCommitment || undefined,
+          },
+          isMiner
+        );
+        
+        if (syncResult.success) {
+          if (syncResult.synced) {
+            logger.info(`[Phase 46] ✅ Unified sync completed: ${syncResult.method} sync from ${syncResult.fromHeight} → ${syncResult.toHeight}`);
+            
+            // Update chain context to trigger re-render
+            setChainContext({ ...chainContext });
+            
+            // If we did a rollback (fork detected), stop mining and show message
+            if (syncResult.method === "chunk" && syncResult.fromHeight < localHeight) {
+              // This indicates a rollback happened
+              if (isMining) {
+                logger.warn(`[Phase 46] Stopping mining due to fork detection and rollback`);
+                handleStopMining();
+              }
+              if (clusterMining) {
+                logger.warn(`[Phase 46] Stopping cluster mining due to fork detection and rollback`);
+                handleStopClusterMining();
+              }
+              
+              setError(
+                locale === "zh"
+                  ? `⚠️ 检测到分叉链，已自动修复并同步到高度 ${syncResult.toHeight}`
+                  : `⚠️ Fork detected and auto-fixed, synced to height ${syncResult.toHeight}`
+              );
+            }
+            
+            // Mark bootstrap as complete
+            setBootstrapComplete(true);
+          } else {
+            logger.debug(`[Phase 46] Unified sync: already up to date or not applicable`);
+          }
+        } else {
+          logger.warn(`[Phase 46] ❌ Unified sync failed: ${syncResult.error}`);
+          setError(
+            locale === "zh"
+              ? `⚠️ 同步失败: ${syncResult.error}`
+              : `⚠️ Sync failed: ${syncResult.error}`
+          );
+        }
+      } catch (error) {
+        logger.error(`[Phase 46] Error in unified sync:`, error);
+        // Fallback to old bootstrap sync logic
+        if (rootHeight > 0 && rootHeader && rootHeaderHash) {
+          try {
+            const { BootstrapSyncManager } = await import("../core/bootstrapSync.js");
+            const bootstrapManager = new BootstrapSyncManager(chainContext);
+            
+            const bootstrapResponse = {
+              requestId: `root_tip_update_${Date.now()}`,
+              latestHeight: rootHeight,
+              latestHeader: rootHeader,
+              latestHeaderHash: rootHeaderHash,
+              recentHeaders: recentHeaders,
+              latestSnapshotMeta: snapshotMeta,
+              timestamp: Date.now(),
+            };
+            
+            const result = await bootstrapManager.processBootstrapResponse(bootstrapResponse);
+            if (result.success) {
+              setBootstrapComplete(true);
+            }
+          } catch (fallbackError) {
+            console.error(`[Phase 46] Fallback bootstrap sync also failed:`, fallbackError);
+          }
         }
       }
     });

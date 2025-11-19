@@ -150,7 +150,9 @@ export function checkForFork(
         // If we found a common ancestor, we're on a fork and need to rewind
         if (commonAncestorHeight >= 0) {
           // Found common ancestor - rewind to that height (keep the common ancestor)
-          const targetRewindHeight = commonAncestorHeight;
+          // CRITICAL: Never rewind to 0 unless user manually clears
+          // Minimum rewind height is 1 (keep genesis)
+          const targetRewindHeight = Math.max(1, commonAncestorHeight);
           
           logger.warn(`[HardReorg] Fork detected: local tip hash ${localTipHash.substring(0, 16)}... not in recent headers (${recentHeaders.length} headers checked)`);
           
@@ -167,10 +169,12 @@ export function checkForFork(
         
         // If we reach here, we didn't find a common ancestor but local height is high enough
         // This could be a fork, but we'll be conservative and only rewind if local height is significant
+        // CRITICAL: Never rewind to 0 - minimum is 1 (keep genesis)
         if (localHeight >= 10) {
-          // Rewind to a safe point: either localHeight - 50, or 0 if localHeight < 50
-          const targetRewindHeight = Math.max(0, localHeight - 50);
-          logger.warn(`[HardReorg] No common ancestor found in recent blocks. Rewinding to safe height ${targetRewindHeight}`);
+          // Rewind to a safe point: either localHeight - 50, or 1 if localHeight < 51
+          // Never rewind to 0 - always keep at least genesis block
+          const targetRewindHeight = Math.max(1, localHeight - 50);
+          logger.warn(`[HardReorg] No common ancestor found in recent blocks. Rewinding to safe height ${targetRewindHeight} (never to 0)`);
           
           return {
             reorged: false, // Not yet reorged, just detected
@@ -213,10 +217,17 @@ export async function performHardReorg(
 
     const localHeight = localTip.header.height;
     
-    // Special case: If rewindHeight === 0 and localHeight === 0, there's nothing to rewind
-    // This can happen when chain is empty (only genesis) and fork detection tries to rewind to 0
-    if (rewindHeight === 0 && localHeight === 0) {
-      logger.info(`[HardReorg] Chain is already at height 0 (genesis only), no rewind needed`);
+    // CRITICAL: Never rewind to 0 unless user manually clears
+    // Minimum rewind height is 1 (keep genesis)
+    if (rewindHeight < 1) {
+      logger.warn(`[HardReorg] Rewind height ${rewindHeight} is invalid, using minimum height 1 (keep genesis)`);
+      rewindHeight = 1;
+    }
+    
+    // Special case: If rewindHeight === 1 and localHeight === 1, there's nothing to rewind
+    // (only genesis block remains)
+    if (rewindHeight === 1 && localHeight === 1) {
+      logger.info(`[HardReorg] Chain is already at height 1 (genesis only), no rewind needed`);
       return { success: true, removedBlocks: 0 };
     }
     
