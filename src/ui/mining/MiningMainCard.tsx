@@ -66,17 +66,28 @@ export function MiningMainCard({
       setMiningGuardResult(result);
       
       // Set tooltip for disabled state
+      const reasons = [];
+      
+      // Check if Quorum score is insufficient (even if result.ok is true)
+      if (result.details) {
+        const quorumScore = result.details.quorumScore ?? 0;
+        const requiredQuorumScore = result.details.requiredQuorumScore ?? 80;
+        const isGenesisMode = result.details.networkStage === "GENESIS_QUORUM";
+        const independentPeerCount = result.details.independentPeerCount ?? 0;
+        
+        // If Quorum score is insufficient and not in Genesis mode with enough peers
+        if (quorumScore < requiredQuorumScore && !(isGenesisMode && independentPeerCount >= 2)) {
+          reasons.push(
+            isZh
+              ? `Quorum分数不足: ${quorumScore} / ${requiredQuorumScore}（需要至少 ${requiredQuorumScore} 分才能挖矿）`
+              : `Insufficient Quorum Score: ${quorumScore} / ${requiredQuorumScore} (need at least ${requiredQuorumScore} to mine)`
+          );
+        }
+      }
+      
       if (!result.ok) {
-        const reasons = [];
         if (result.reason) reasons.push(result.reason);
         if (result.details) {
-          if (result.details.quorumScore !== undefined) {
-            reasons.push(
-              isZh
-                ? `Quorum分数: ${result.details.quorumScore} / ${result.details.requiredQuorumScore || 80}`
-                : `Quorum Score: ${result.details.quorumScore} / ${result.details.requiredQuorumScore || 80}`
-            );
-          }
           if (result.details.independentPeerCount !== undefined) {
             reasons.push(
               isZh
@@ -85,10 +96,9 @@ export function MiningMainCard({
             );
           }
         }
-        setTooltip(reasons.join("; "));
-      } else {
-        setTooltip("");
       }
+      
+      setTooltip(reasons.length > 0 ? reasons.join("; ") : "");
     } catch (error) {
       console.error("[MiningMainCard] Failed to check mining readiness:", error);
       setMiningGuardResult({
@@ -164,7 +174,23 @@ export function MiningMainCard({
   };
 
   const status = getStatus();
-  const canMine = miningGuardResult?.ok && !isMining && !clusterMining;
+  
+  // Check if Quorum score is sufficient for mining
+  // Even if canMineNow returns ok: true (e.g., in Genesis mode), we should still check Quorum
+  const quorumScore = miningGuardResult?.details?.quorumScore ?? 0;
+  const requiredQuorumScore = miningGuardResult?.details?.requiredQuorumScore ?? 80;
+  const hasSufficientQuorum = quorumScore >= requiredQuorumScore;
+  
+  // Only allow mining if:
+  // 1. MiningGuard says it's ok AND
+  // 2. Quorum score is sufficient (unless in Genesis mode with ≥2 independent peers)
+  const isGenesisMode = miningGuardResult?.details?.networkStage === "GENESIS_QUORUM";
+  const hasGenesisPeers = (miningGuardResult?.details?.independentPeerCount ?? 0) >= 2;
+  const canMine = miningGuardResult?.ok && 
+                  !isMining && 
+                  !clusterMining && 
+                  (hasSufficientQuorum || (isGenesisMode && hasGenesisPeers));
+  
   const isFollowerBlocked = localRole === "FOLLOWER" && chainContext?.params?.networkId === "IXC_MAINNET_V1";
 
   // Get button label
@@ -190,10 +216,36 @@ export function MiningMainCard({
   };
 
   const handleButtonClick = () => {
+    console.log("[MiningMainCard] Button clicked", {
+      isMining,
+      clusterMining,
+      canMine,
+      isFollowerBlocked,
+      miningGuardResult: miningGuardResult?.ok,
+      quorumScore: miningGuardResult?.details?.quorumScore,
+      requiredQuorumScore: miningGuardResult?.details?.requiredQuorumScore,
+    });
+    
     if (isMining || clusterMining) {
       onStopMining();
     } else if (canMine && !isFollowerBlocked) {
       onStartMining();
+    } else {
+      // Show feedback when button is clicked but mining cannot start
+      if (!canMine) {
+        console.warn("[MiningMainCard] Cannot start mining:", {
+          reason: miningGuardResult?.reason,
+          quorumScore: miningGuardResult?.details?.quorumScore,
+          requiredQuorumScore: miningGuardResult?.details?.requiredQuorumScore,
+          tooltip,
+        });
+        // Optionally show an alert or toast message
+        if (tooltip) {
+          alert(tooltip);
+        }
+      } else if (isFollowerBlocked) {
+        alert(isZh ? "此实例是 FOLLOWER，只有 LEADER 实例可以在主网挖矿。" : "This instance is a FOLLOWER. Only the LEADER instance can mine on mainnet.");
+      }
     }
   };
 
@@ -301,7 +353,7 @@ export function MiningMainCard({
         
         <button
           onClick={handleButtonClick}
-          disabled={!canMine && !isMining && !clusterMining && !isFollowerBlocked}
+          // Don't disable the button - allow click to show feedback
           style={{
             width: "100%",
             padding: "1rem 2rem",
@@ -313,19 +365,22 @@ export function MiningMainCard({
               ? status.color
               : "#6c757d",
             color: "white",
-            cursor: canMine || isMining || clusterMining || isFollowerBlocked
-              ? "pointer"
-              : "not-allowed",
+            cursor: "pointer",
             transition: "all 0.2s",
-            opacity: canMine || isMining || clusterMining || isFollowerBlocked ? 1 : 0.6,
+            opacity: canMine || isMining || clusterMining || isFollowerBlocked ? 1 : 0.7,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: "0.5rem",
           }}
-          onMouseEnter={() => {
-            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && tooltip) {
-              // Tooltip will be shown via title attribute
+          onMouseEnter={(e) => {
+            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked) {
+              e.currentTarget.style.opacity = "0.9";
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked) {
+              e.currentTarget.style.opacity = "0.7";
             }
           }}
           title={tooltip || undefined}

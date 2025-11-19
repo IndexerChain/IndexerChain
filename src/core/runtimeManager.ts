@@ -358,11 +358,33 @@ export class RuntimeManager {
         // Notify listeners of profile change
         this.notifyRuntimeChange();
       }
+      
+      // Phase 40: Enter low power mode but keep connections alive
+      this.enterLowPowerMode();
     } else {
       // Tab is in foreground - restore previous settings
       // Phase 37-D: Notify listeners to restore profile
       this.notifyRuntimeChange();
+      
+      // Phase 40: Exit low power mode
+      this.exitLowPowerMode();
     }
+  }
+  
+  /**
+   * Phase 40: Enter low power mode (reduce mining but keep connections)
+   */
+  enterLowPowerMode(): void {
+    console.debug("[RuntimeManager] Entering low power mode - connections will remain active");
+    // Connections remain active, only mining is reduced
+  }
+  
+  /**
+   * Phase 40: Exit low power mode
+   */
+  exitLowPowerMode(): void {
+    console.debug("[RuntimeManager] Exiting low power mode - restoring full operation");
+    // Full operation restored
   }
 
   private performSafetyCheck(): void {

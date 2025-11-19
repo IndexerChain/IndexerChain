@@ -11,6 +11,7 @@
  */
 
 import { logger } from "./logger.js";
+import { ConnectionManager, type ConnectionConfig } from "./connectionManager.js";
 
 // Types imported as needed
 
@@ -124,6 +125,9 @@ export class BrowserP2PNode implements P2PNode {
     new Map();
   private seenMessages: Set<string> = new Set();
   private readonly MESSAGE_TTL = 60000; // 1 minute
+  private connectionManager: ConnectionManager | null = null;
+  private currentBootstrapUrl: string | null = null;
+  private isManualDisconnect: boolean = false; // Track if disconnect was intentional
 
   constructor(nodeId: string) {
     this.nodeId = nodeId;
@@ -137,6 +141,10 @@ export class BrowserP2PNode implements P2PNode {
       logger.warn("Already connected to P2P network");
       return;
     }
+
+    // Phase 40: Save bootstrap URL for auto-reconnect
+    this.currentBootstrapUrl = bootstrapUrl;
+    this.isManualDisconnect = false;
 
     return new Promise((resolve, reject) => {
       try {
@@ -217,34 +225,45 @@ export class BrowserP2PNode implements P2PNode {
           this.isConnected = false;
           this.ws = null;
 
+          // Phase 40: Auto-reconnect if not manual disconnect
+          if (!this.isManualDisconnect && this.currentBootstrapUrl) {
+            logger.info("[P2P] Connection closed unexpectedly, will attempt auto-reconnect...");
+            if (this.connectionManager) {
+              this.connectionManager.startReconnect();
+            }
+          }
+
           // If connection was closed unexpectedly (not by us), reject the promise
           if (event.code !== 1000 && event.code !== 1001) {
             // 1000 = normal closure, 1001 = going away
             // Other codes indicate an error
             // 1006 = abnormal closure (server not running, network error, etc.)
-            if (!this.isConnected) {
+            if (!this.isConnected && !this.isManualDisconnect) {
               // Only reject if we're not already connected (i.e., during initial connection)
-              let errorMsg = `Connection failed (code: ${event.code}).\n\n`;
-              
-              if (event.code === 1006) {
-                errorMsg += `⚠️ Code 1006: Abnormal closure - The server is likely not running.\n\n`;
-                errorMsg += `📋 To fix this:\n`;
-                errorMsg += `1. Open a terminal/command prompt\n`;
-                errorMsg += `2. Navigate to the project directory\n`;
-                errorMsg += `3. Run: npm install ws\n`;
-                errorMsg += `4. Run: node signaling-server-example.js\n`;
-                errorMsg += `5. Wait for "Signaling server started on ws://localhost:8080"\n`;
-                errorMsg += `6. Then click Connect again\n\n`;
-                errorMsg += `💡 Quick start: Use ./start-server.sh (Mac/Linux) or start-server.bat (Windows)`;
-              } else {
-                errorMsg += `Possible causes:\n`;
-                errorMsg += `1. Signaling server is not running\n`;
-                errorMsg += `2. Network connectivity issues\n`;
-                errorMsg += `3. Server rejected the connection\n`;
-                errorMsg += `4. Firewall blocking the connection`;
+              // But don't reject if we have auto-reconnect enabled
+              if (!this.connectionManager) {
+                let errorMsg = `Connection failed (code: ${event.code}).\n\n`;
+                
+                if (event.code === 1006) {
+                  errorMsg += `⚠️ Code 1006: Abnormal closure - The server is likely not running.\n\n`;
+                  errorMsg += `📋 To fix this:\n`;
+                  errorMsg += `1. Open a terminal/command prompt\n`;
+                  errorMsg += `2. Navigate to the project directory\n`;
+                  errorMsg += `3. Run: npm install ws\n`;
+                  errorMsg += `4. Run: node signaling-server-example.js\n`;
+                  errorMsg += `5. Wait for "Signaling server started on ws://localhost:8080"\n`;
+                  errorMsg += `6. Then click Connect again\n\n`;
+                  errorMsg += `💡 Quick start: Use ./start-server.sh (Mac/Linux) or start-server.bat (Windows)`;
+                } else {
+                  errorMsg += `Possible causes:\n`;
+                  errorMsg += `1. Signaling server is not running\n`;
+                  errorMsg += `2. Network connectivity issues\n`;
+                  errorMsg += `3. Server rejected the connection\n`;
+                  errorMsg += `4. Firewall blocking the connection`;
+                }
+                
+                reject(new Error(errorMsg));
               }
-              
-              reject(new Error(errorMsg));
             }
           }
         };
@@ -259,9 +278,38 @@ export class BrowserP2PNode implements P2PNode {
   }
 
   /**
+   * Phase 40: Setup connection manager for auto-reconnect
+   */
+  setupConnectionManager(config: ConnectionConfig): void {
+    this.connectionManager = new ConnectionManager(config);
+    
+    // Setup auto-reconnect
+    this.connectionManager.setupAutoReconnect(
+      async () => {
+        if (this.currentBootstrapUrl) {
+          await this.connect(this.currentBootstrapUrl);
+        }
+      },
+      async () => {
+        // On reconnect success, restore peer connections
+        logger.info("[P2P] Reconnected, restoring peer connections...");
+        this.requestPeers();
+      }
+    );
+  }
+
+  /**
    * Disconnect from P2P network
    */
   disconnect(): void {
+    this.isManualDisconnect = true;
+    
+    // Stop auto-reconnect
+    if (this.connectionManager) {
+      this.connectionManager.stopReconnect();
+      this.connectionManager.clearAllHeartbeats();
+    }
+    
     // Close all peer connections
     for (const peer of this.peers.values()) {
       if (peer.dataChannel) {
@@ -890,6 +938,29 @@ export class BrowserP2PNode implements P2PNode {
       peerInfo.lastSeen = Date.now();
       logger.debug(`[P2P] Total connected peers: ${this.getPeerCount()}`);
       
+      // Phase 40: Setup heartbeat for this peer
+      if (this.connectionManager) {
+        this.connectionManager.setupPeerHeartbeat(
+          peerInfo.id,
+          () => {
+            // Send ping
+            if (dataChannel.readyState === "open") {
+              this.sendToPeer(peerInfo.id, "PING", { timestamp: Date.now() });
+            }
+          },
+          (failedPeerId) => {
+            // On heartbeat failure, try to reconnect
+            logger.warn(`[P2P] Peer ${failedPeerId.substring(0, 16)}... heartbeat failed, attempting reconnection...`);
+            const failedPeer = this.peers.get(failedPeerId);
+            if (failedPeer && !failedPeer.connected) {
+              // Remove and re-initiate connection
+              this.peers.delete(failedPeerId);
+              this.initiatePeerConnection(failedPeerId);
+            }
+          }
+        );
+      }
+      
       // Phase 33: Log IP hash for connected peer
       if (typeof window !== "undefined") {
         (async () => {
@@ -934,6 +1005,11 @@ export class BrowserP2PNode implements P2PNode {
     dataChannel.onclose = () => {
       logger.debug(`[P2P] Data channel closed with peer ${peerInfo.id.substring(0, 16)}...`);
       peerInfo.connected = false;
+      
+      // Phase 40: Clear heartbeat when channel closes
+      if (this.connectionManager) {
+        this.connectionManager.clearPeerHeartbeat(peerInfo.id);
+      }
     };
 
     dataChannel.onerror = (error) => {
@@ -973,6 +1049,25 @@ export class BrowserP2PNode implements P2PNode {
    * Handle message from peer
    */
   private handlePeerMessage(message: P2PMessage, sender: string): void {
+    // Phase 40: Handle PING/PONG for heartbeat
+    if (message.type === "PING") {
+      // Respond with PONG
+      this.sendToPeer(sender, "PONG", { timestamp: message.data?.timestamp || Date.now() });
+      // Record successful heartbeat
+      if (this.connectionManager) {
+        this.connectionManager.recordHeartbeatResponse(sender);
+      }
+      return;
+    }
+    
+    if (message.type === "PONG") {
+      // Record successful heartbeat response
+      if (this.connectionManager) {
+        this.connectionManager.recordHeartbeatResponse(sender);
+      }
+      return;
+    }
+    
     // Deduplication: ignore messages we've seen
     if (message.messageId && this.seenMessages.has(message.messageId)) {
       return;

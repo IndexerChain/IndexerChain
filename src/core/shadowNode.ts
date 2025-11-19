@@ -1,0 +1,389 @@
+/**
+ * Phase 40: Shadow Node Client - Browser-side Shadow Node integration
+ * 
+ * This client connects to the Shadow Node (running in Cloudflare Worker)
+ * to maintain persistent connection even when browser is locked/suspended.
+ * 
+ * Features:
+ * - Automatic session creation and persistence
+ * - WebSocket connection to Shadow Node
+ * - State synchronization when browser reconnects
+ * - Automatic recovery from lock screen
+ */
+
+import { logger } from "./logger.js";
+import type { Block, SnapshotMeta } from "./types.js";
+
+export interface ShadowState {
+  latestHeight: number;
+  latestHeader: Block | null;
+  latestHeaderHash: string;
+  recentHeaders: Block[];
+  latestSnapshotMeta: SnapshotMeta | null;
+  stateCommitment: string | null;
+  finalizedHeight: number;
+  lastUpdated: number;
+}
+
+export interface ShadowNodeConfig {
+  shadowNodeUrl: string; // e.g., "https://shadow.indexerchain.com"
+  sessionId?: string; // Optional: use existing session
+  nodeId: string;
+  autoReconnect?: boolean; // default true
+  reconnectInterval?: number; // default 5000ms
+}
+
+/**
+ * Shadow Node Client
+ * Manages connection to Shadow Node and state synchronization
+ */
+export class ShadowNodeClient {
+  private config: ShadowNodeConfig;
+  private sessionId: string | null = null;
+  private ws: WebSocket | null = null;
+  private isConnected: boolean = false;
+  private reconnectTimer: number | null = null;
+  private cachedState: ShadowState | null = null;
+  private stateUpdateHandlers: Set<(state: ShadowState) => void> = new Set();
+  private connectionHandlers: Set<(connected: boolean) => void> = new Set();
+
+  constructor(config: ShadowNodeConfig) {
+    this.config = {
+      autoReconnect: true,
+      reconnectInterval: 5000,
+      ...config,
+    };
+    
+    // Load sessionId from localStorage if not provided
+    if (!this.config.sessionId) {
+      const saved = localStorage.getItem('indexerchain_shadow_session');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          this.config.sessionId = parsed.sessionId;
+          this.sessionId = parsed.sessionId;
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
+    } else {
+      this.sessionId = this.config.sessionId;
+    }
+  }
+
+  /**
+   * Initialize shadow session
+   */
+  async initialize(): Promise<boolean> {
+    try {
+      // Generate sessionId if not exists
+      if (!this.sessionId) {
+        this.sessionId = this.generateSessionId();
+        this.config.sessionId = this.sessionId;
+        
+        // Save to localStorage
+        localStorage.setItem('indexerchain_shadow_session', JSON.stringify({
+          sessionId: this.sessionId,
+          nodeId: this.config.nodeId,
+          createdAt: Date.now(),
+        }));
+      }
+
+      // Initialize session on Shadow Node
+      const response = await fetch(`${this.config.shadowNodeUrl}/init?sessionId=${this.sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: this.sessionId,
+          nodeId: this.config.nodeId,
+        }),
+      });
+
+      // Handle 503 (Service Unavailable) gracefully - Shadow Node may not be deployed yet
+      if (response.status === 503) {
+        logger.warn(`[ShadowNode] Shadow Node service unavailable (503) - this is normal if Shadow Node is not deployed yet`);
+        return false;
+      }
+
+      if (!response.ok) {
+        // For other errors, log but don't throw - Shadow Node is optional
+        logger.warn(`[ShadowNode] Failed to initialize shadow session: ${response.status} ${response.statusText}`);
+        return false;
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        this.cachedState = data.cachedState;
+        logger.info(`[ShadowNode] Session initialized: ${this.sessionId.substring(0, 16)}...`);
+        
+        // Connect WebSocket
+        await this.connect();
+        
+        return true;
+      } else {
+        logger.warn(`[ShadowNode] Shadow session initialization returned error: ${data.error || 'Unknown error'}`);
+        return false;
+      }
+    } catch (error) {
+      // Network errors, CORS errors, etc. - Shadow Node is optional, so just log and return false
+      logger.warn(`[ShadowNode] Initialization failed (non-critical):`, error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }
+
+  /**
+   * Connect WebSocket to Shadow Node
+   */
+  async connect(): Promise<void> {
+    if (this.isConnected && this.ws) {
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const wsUrl = `${this.config.shadowNodeUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/shadow/${this.sessionId}`;
+        this.ws = new WebSocket(wsUrl);
+
+        this.ws.onopen = () => {
+          logger.info(`[ShadowNode] Connected to shadow node`);
+          this.isConnected = true;
+          this.notifyConnectionHandlers(true);
+          
+          // Request latest state
+          this.requestSync();
+          
+          // Start heartbeat
+          this.startHeartbeat();
+          
+          resolve();
+        };
+
+        this.ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            this.handleMessage(data);
+          } catch (error) {
+            logger.error(`[ShadowNode] Failed to parse message:`, error);
+          }
+        };
+
+        this.ws.onerror = (error) => {
+          logger.error(`[ShadowNode] WebSocket error:`, error);
+          this.isConnected = false;
+          this.notifyConnectionHandlers(false);
+          
+          if (this.config.autoReconnect) {
+            this.scheduleReconnect();
+          }
+          
+          reject(error);
+        };
+
+        this.ws.onclose = () => {
+          logger.warn(`[ShadowNode] WebSocket closed`);
+          this.isConnected = false;
+          this.notifyConnectionHandlers(false);
+          
+          if (this.config.autoReconnect) {
+            this.scheduleReconnect();
+          }
+        };
+      } catch (error) {
+        logger.error(`[ShadowNode] Connection failed:`, error);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Handle messages from Shadow Node
+   */
+  private handleMessage(data: any) {
+    if (data.type === 'SHADOW_CONNECTED') {
+      logger.info(`[ShadowNode] Shadow node confirmed connection`);
+      if (data.cachedState) {
+        this.cachedState = data.cachedState;
+        if (this.cachedState) {
+          this.notifyStateUpdateHandlers(this.cachedState);
+        }
+      }
+    } else if (data.type === 'SHADOW_STATE_UPDATE') {
+      // Shadow Node received new state from signaling server
+      if (data.state) {
+        this.cachedState = data.state;
+        if (this.cachedState) {
+          this.notifyStateUpdateHandlers(this.cachedState);
+          logger.debug(`[ShadowNode] State updated: height=${data.state.latestHeight}`);
+        }
+      }
+    } else if (data.type === 'SYNC_RESPONSE') {
+      // Response to sync request
+      if (data.cachedState) {
+        this.cachedState = data.cachedState;
+        if (this.cachedState) {
+          this.notifyStateUpdateHandlers(this.cachedState);
+        }
+      }
+    } else if (data.type === 'PONG') {
+      // Heartbeat response
+      // Nothing to do
+    }
+  }
+
+  /**
+   * Request latest state from Shadow Node
+   */
+  requestSync(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'SYNC_REQUEST',
+      }));
+    }
+  }
+
+  /**
+   * Send root tip update to Shadow Node (when browser receives it)
+   */
+  sendRootTipUpdate(rootTip: any): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'ROOT_TIP_UPDATE',
+        rootTip: rootTip,
+      }));
+    }
+  }
+
+  /**
+   * Start heartbeat to keep connection alive
+   */
+  private startHeartbeat() {
+    const heartbeat = () => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({
+          type: 'PING',
+          timestamp: Date.now(),
+        }));
+      }
+    };
+    
+    // Send heartbeat every 30 seconds
+    setInterval(heartbeat, 30000);
+  }
+
+  /**
+   * Schedule reconnection
+   */
+  private scheduleReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+    
+    this.reconnectTimer = window.setTimeout(() => {
+      logger.info(`[ShadowNode] Attempting to reconnect...`);
+      this.connect().catch((error) => {
+        logger.error(`[ShadowNode] Reconnection failed:`, error);
+        this.scheduleReconnect();
+      });
+    }, this.config.reconnectInterval || 5000);
+  }
+
+  /**
+   * Get cached state
+   */
+  getCachedState(): ShadowState | null {
+    return this.cachedState;
+  }
+
+  /**
+   * Register state update handler
+   */
+  onStateUpdate(handler: (state: ShadowState) => void): () => void {
+    this.stateUpdateHandlers.add(handler);
+    
+    // Return unsubscribe function
+    return () => {
+      this.stateUpdateHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Register connection handler
+   */
+  onConnectionChange(handler: (connected: boolean) => void): () => void {
+    this.connectionHandlers.add(handler);
+    
+    // Return unsubscribe function
+    return () => {
+      this.connectionHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Notify state update handlers
+   */
+  private notifyStateUpdateHandlers(state: ShadowState) {
+    this.stateUpdateHandlers.forEach((handler) => {
+      try {
+        handler(state);
+      } catch (error) {
+        logger.error(`[ShadowNode] State update handler error:`, error);
+      }
+    });
+  }
+
+  /**
+   * Notify connection handlers
+   */
+  private notifyConnectionHandlers(connected: boolean) {
+    this.connectionHandlers.forEach((handler) => {
+      try {
+        handler(connected);
+      } catch (error) {
+        logger.error(`[ShadowNode] Connection handler error:`, error);
+      }
+    });
+  }
+
+  /**
+   * Generate unique session ID
+   */
+  private generateSessionId(): string {
+    const random = () => Math.random().toString(36).substring(2);
+    return `${Date.now()}-${random()}-${random()}`;
+  }
+
+  /**
+   * Disconnect
+   */
+  disconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    
+    this.isConnected = false;
+    this.notifyConnectionHandlers(false);
+  }
+
+  /**
+   * Check if connected
+   */
+  getConnected(): boolean {
+    return this.isConnected;
+  }
+
+  /**
+   * Get session ID
+   */
+  getSessionId(): string | null {
+    return this.sessionId;
+  }
+}
+

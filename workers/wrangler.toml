@@ -26,10 +26,21 @@ name = "SIGNALING_ROOM"
 class_name = "SignalingRoom"
 script_name = "indexerchain-signaling"
 
+# Phase 40: Shadow Node Durable Object (for mobile persistence)
+[[durable_objects.bindings]]
+name = "SHADOW_SESSION"
+class_name = "ShadowSession"
+script_name = "indexerchain-signaling"
+
 # Durable Objects migrations (required for first-time setup)
 [[migrations]]
 tag = "v1"
 new_classes = ["SignalingRoom"]
+
+# Phase 40: Shadow Node migration
+[[migrations]]
+tag = "v2"
+new_classes = ["ShadowSession"]
 
 # Limits (Cloudflare defaults)
 # [limits]

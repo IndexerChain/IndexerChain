@@ -5,7 +5,12 @@
  * This worker handles WebRTC signaling between browser nodes.
  * 
  * Uses Durable Objects to maintain shared state across all worker instances.
+ * 
+ * Phase 40: Added Shadow Node support for mobile persistence
  */
+
+// Phase 40: Import Shadow Node
+import { ShadowSession } from './shadow.js';
 
 /**
  * Durable Object for managing signaling room state
@@ -361,8 +366,62 @@ export class SignalingRoom {
   }
 }
 
+export { ShadowSession };
+
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    // Phase 40: Handle Shadow Node routes
+    if (url.pathname.startsWith('/shadow/') || url.pathname === '/shadow') {
+      // Extract sessionId from path or query
+      let sessionId = url.searchParams.get('sessionId');
+      
+      if (!sessionId && url.pathname.startsWith('/shadow/')) {
+        const parts = url.pathname.split('/');
+        sessionId = parts[2];
+      }
+      
+      if (!sessionId && url.pathname !== '/shadow') {
+        return new Response(JSON.stringify({ error: 'Missing sessionId' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      
+      // For /shadow without sessionId, return info
+      if (!sessionId) {
+        return new Response(JSON.stringify({ 
+          service: 'Shadow Node',
+          status: 'ready',
+          usage: 'POST /shadow/{sessionId}/init to initialize a session',
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      
+      // Get or create ShadowSession Durable Object
+      const sessionIdObj = env.SHADOW_SESSION.idFromName(sessionId);
+      const session = env.SHADOW_SESSION.get(sessionIdObj);
+      
+      // Forward request to session
+      return session.fetch(request);
+    }
+
+    // Handle keepalive endpoint for PWA persistence
+    if (url.pathname === '/keepalive' && request.method === 'POST') {
+      return new Response('ok', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        },
+      });
+    }
+
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {

@@ -19,6 +19,7 @@ import type { NodeCapability, NonceRange } from "../core/globalNonceAllocator.js
 import { SnapshotDownloader } from "../core/snapshotDownloader.js";
 import { SnapshotSeeder } from "../core/snapshotSeeder.js";
 import { BrowserP2PNode } from "../core/p2p.js";
+import { ShadowNodeClient, type ShadowState } from "../core/shadowNode.js";
 import { handleReceivedBlock, handleReceivedBlocks } from "../core/sync.js";
 import { GlobalStateSentinel } from "../core/globalSentinel.js";
 import type { DriftAssessment } from "../core/types.js";
@@ -494,6 +495,11 @@ function App() {
   const [txOpType, setTxOpType] = useState<"PUT" | "APPEND" | "DELETE">("PUT");
 
   const p2pNodeRef = useRef<BrowserP2PNode | null>(null);
+  
+  // Phase 40: Shadow Node for mobile persistence
+  const shadowNodeRef = useRef<ShadowNodeClient | null>(null);
+  const [_shadowNodeConnected, setShadowNodeConnected] = useState<boolean>(false);
+  const [_shadowNodeState, setShadowNodeState] = useState<ShadowState | null>(null);
 
   const [needsReset, setNeedsReset] = useState<boolean>(false);
 
@@ -619,6 +625,166 @@ function App() {
     };
   }, []);
 
+  // PWA: Keepalive and Wake Lock support for mobile lock screen persistence
+  useEffect(() => {
+    let keepaliveInterval: number | null = null;
+    let wakeLock: WakeLockSentinel | null = null;
+    let serviceWorkerRegistration: ServiceWorkerRegistration | null = null;
+    let handleVisibilityChange: (() => void) | null = null;
+
+    const initPWASupport = async () => {
+      // 1. Register/access Service Worker for keepalive
+      if ('serviceWorker' in navigator) {
+        try {
+          const registration = await navigator.serviceWorker.ready;
+          serviceWorkerRegistration = registration;
+          
+          // Start keepalive in service worker
+          if (registration.active) {
+            registration.active.postMessage({ type: 'start-keepalive' });
+          }
+          
+          console.log('[PWA] Service Worker ready for keepalive');
+        } catch (error) {
+          console.warn('[PWA] Service Worker not available:', error);
+        }
+      }
+
+      // 2. Client-side keepalive ping (backup to service worker)
+      const performKeepalive = async () => {
+        try {
+          // Try to ping service worker first
+          if (serviceWorkerRegistration?.active) {
+            const channel = new MessageChannel();
+            serviceWorkerRegistration.active.postMessage(
+              { type: 'ping' },
+              [channel.port2]
+            );
+          }
+
+          // Also send keepalive request to server (if endpoint exists)
+          // This helps maintain WebSocket/WebRTC connections
+          try {
+            await fetch('/keepalive', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ timestamp: Date.now() }),
+              keepalive: true, // Critical: keeps connection alive even when page is suspended
+            });
+          } catch (e) {
+            // Endpoint might not exist, that's okay
+            // The keepalive flag still helps maintain connections
+          }
+        } catch (error) {
+          console.warn('[PWA] Keepalive ping failed:', error);
+        }
+      };
+
+      // Start periodic keepalive (every 30 seconds)
+      keepaliveInterval = window.setInterval(performKeepalive, 30000);
+      
+      // Perform initial keepalive
+      performKeepalive();
+
+      // 3. Screen Wake Lock API (optional, for users who want screen to stay on)
+      const requestWakeLock = async () => {
+        if ('wakeLock' in navigator) {
+          try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log('[PWA] Wake Lock acquired');
+            
+            wakeLock.addEventListener('release', () => {
+              console.log('[PWA] Wake Lock released');
+            });
+          } catch (error) {
+            // Wake Lock might be denied or not supported
+            console.log('[PWA] Wake Lock not available:', error);
+          }
+        }
+      };
+
+      // Request wake lock if mining is active (optional feature)
+      // Users can enable this if they want screen to stay on during mining
+      if (isMining) {
+        requestWakeLock();
+      }
+
+      // Re-request wake lock when visibility changes (e.g., tab becomes visible again)
+      handleVisibilityChange = async () => {
+        if (document.visibilityState === 'visible' && isMining && wakeLock === null) {
+          await requestWakeLock();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    };
+
+    initPWASupport();
+    
+    // Cleanup function
+    return () => {
+      if (keepaliveInterval !== null) {
+        clearInterval(keepaliveInterval);
+      }
+      if (wakeLock !== null) {
+        wakeLock.release().catch(() => {});
+      }
+      if (serviceWorkerRegistration?.active) {
+        serviceWorkerRegistration.active.postMessage({ type: 'stop-keepalive' });
+      }
+      if (handleVisibilityChange !== null) {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [isMining]); // Re-run when mining state changes
+
+  // Phase 40: Shadow Node - Sync state when browser recovers from lock screen
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && shadowNodeRef.current && shadowNodeRef.current.getConnected()) {
+        // Browser recovered from lock screen, sync state from Shadow Node
+        logger.info("[ShadowNode] Browser recovered, syncing state from shadow node...");
+        
+        const shadowState = shadowNodeRef.current.getCachedState();
+        if (shadowState && chainContext) {
+          // Request latest state
+          shadowNodeRef.current.requestSync();
+          
+          // If shadow node has newer state, we could trigger a sync here
+          // For now, the shadow node will push updates via WebSocket
+          logger.info(`[ShadowNode] Shadow state: height=${shadowState.latestHeight}, lastUpdated=${new Date(shadowState.lastUpdated).toISOString()}`);
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [chainContext]);
+
+  // Phase 40: Forward ROOT_TIP_UPDATE to Shadow Node
+  useEffect(() => {
+    if (!p2pNodeRef.current || !shadowNodeRef.current) return;
+    
+    const p2pNode = p2pNodeRef.current;
+    const shadowNode = shadowNodeRef.current;
+    
+    // Listen for ROOT_TIP_UPDATE messages
+    const handleRootTipUpdate = (payload: any, _sender: string) => {
+      // Forward to Shadow Node
+      if (shadowNode.getConnected()) {
+        shadowNode.sendRootTipUpdate(payload.rootTip || payload);
+      }
+    };
+    
+    // Register handler
+    p2pNode.onMessage("ROOT_TIP_UPDATE", handleRootTipUpdate);
+    
+    // Note: p2p.ts doesn't have offMessage, but handler will be cleaned up when component unmounts
+    // The handler reference will be garbage collected
+  }, [p2pNodeRef.current, shadowNodeRef.current]);
+
   // Phase 9: Load snapshot metadata when chain context changes
   // Phase 11: Also load snapshot size info
   // Phase 20: Update seeder cache when new snapshot is created
@@ -681,35 +847,20 @@ function App() {
         willUse: urlToUse
       });
       
-      // If saved state has a different URL, update it first
-      if (savedState.bootstrapUrl && savedState.bootstrapUrl !== bootstrapUrl) {
-        logger.debug(`[Auto-Connect] Updating bootstrap URL from ${bootstrapUrl} to ${savedState.bootstrapUrl}`);
-        setBootstrapUrl(savedState.bootstrapUrl);
-        // Wait for state update, then connect
-        setTimeout(() => {
-          logger.debug(`[Auto-Connect] Connecting after URL update...`);
-          handleConnectP2P();
-        }, 500);
-      } else {
-        // Ensure bootstrapUrl is set if it's not already
-        if (bootstrapUrl !== urlToUse) {
-          setBootstrapUrl(urlToUse);
-          setTimeout(() => {
-            logger.debug(`[Auto-Connect] Connecting to ${urlToUse}...`);
-            handleConnectP2P();
-          }, 500);
-        } else {
-          // Connect immediately with current bootstrapUrl
-          setTimeout(() => {
-            logger.debug(`[Auto-Connect] Connecting to ${urlToUse}...`);
-            handleConnectP2P();
-          }, 1000); // Small delay to ensure everything is ready
-        }
+      // Ensure bootstrapUrl is set if it's not already
+      if (bootstrapUrl !== urlToUse) {
+        setBootstrapUrl(urlToUse);
       }
+      
+      // Connect immediately (small delay to ensure state is updated)
+      setTimeout(() => {
+        logger.debug(`[Auto-Connect] Connecting to ${urlToUse}...`);
+        handleConnectP2P();
+      }, 300); // Reduced delay for faster connection
     } else {
       logger.debug(`[Auto-Connect] No bootstrap URL available, skipping auto-connect`);
     }
-  }, [chainContext, loading]); // Only depend on chainContext and loading to avoid re-triggering
+  }, [chainContext, loading, bootstrapUrl, isP2PConnected]); // Include all dependencies
 
   // Restore mining state after chain is initialized
   const restoreMiningRef = useRef<boolean>(false);
@@ -2314,9 +2465,22 @@ function App() {
 
   // Connect to P2P network
   const handleConnectP2P = async () => {
-    if (!chainContext || !bootstrapUrl) {
+    // Use default URL if bootstrapUrl is not set
+    const urlToUse = bootstrapUrl || DEFAULT_MAINNET_SIGNALING;
+    
+    if (!chainContext) {
+      setError("Chain context not ready. Please wait...");
+      return;
+    }
+    
+    if (!urlToUse) {
       setError("Please enter a bootstrap server URL (e.g., ws://localhost:8080)");
       return;
+    }
+    
+    // Update bootstrapUrl if using default
+    if (!bootstrapUrl) {
+      setBootstrapUrl(urlToUse);
     }
 
     try {
@@ -2326,8 +2490,58 @@ function App() {
       const p2pNode = new BrowserP2PNode(nodeId);
       p2pNodeRef.current = p2pNode;
 
-      await p2pNode.connect(bootstrapUrl);
+      // Phase 40: Setup connection manager for auto-reconnect
+      await import("../core/connectionManager.js");
+      p2pNode.setupConnectionManager({
+        bootstrapUrl: urlToUse,
+        reconnectInterval: 1500,
+        maxReconnectAttempts: -1, // Infinite
+        heartbeatInterval: 10000, // 10 seconds
+        heartbeatTimeout: 30000, // 30 seconds
+        enableSessionPersistence: true,
+      });
+
+      await p2pNode.connect(urlToUse);
       p2pNode.requestPeers();
+
+      // Phase 40: Initialize Shadow Node for mobile persistence
+      try {
+        const shadowNodeUrl = isMainnetMode 
+          ? "https://shadow.indexerchain.com" 
+          : urlToUse.replace("ws://", "http://").replace("wss://", "https://").replace("/signal", "/shadow");
+        
+        const shadowNode = new ShadowNodeClient({
+          shadowNodeUrl: shadowNodeUrl,
+          nodeId: nodeId,
+          autoReconnect: true,
+          reconnectInterval: 5000,
+        });
+        
+        shadowNodeRef.current = shadowNode;
+        
+        // Initialize shadow session
+        const shadowInitialized = await shadowNode.initialize();
+        if (shadowInitialized) {
+          logger.info("[ShadowNode] Shadow node initialized successfully");
+          
+          // Listen for state updates
+          shadowNode.onStateUpdate((state) => {
+            setShadowNodeState(state);
+            logger.debug(`[ShadowNode] State updated: height=${state.latestHeight}`);
+          });
+          
+          // Listen for connection changes
+          shadowNode.onConnectionChange((connected) => {
+            setShadowNodeConnected(connected);
+            logger.info(`[ShadowNode] Connection status: ${connected ? 'connected' : 'disconnected'}`);
+          });
+        } else {
+          logger.warn("[ShadowNode] Failed to initialize shadow node (non-critical)");
+        }
+      } catch (error) {
+        logger.warn("[ShadowNode] Shadow node initialization error (non-critical):", error);
+        // Shadow Node is optional, don't fail P2P connection if it fails
+      }
 
       // Phase 19: Initialize delegator and worker node managers
       if (delegatorManager) {
