@@ -1184,6 +1184,11 @@ function App() {
     
     const incrementalStateSyncManager = getIncrementalStateSyncManager();
     incrementalStateSyncManager.init(chainContext, chainContext.p2p);
+    
+    // Phase 47: Make snapshotDownloader available to UnifiedSyncManager
+    if (typeof window !== "undefined") {
+      (window as any).snapshotDownloader = snapshotDownloader;
+    }
   }, [chainContext, snapshotDownloader]);
 
   // Setup P2P message handlers

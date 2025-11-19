@@ -456,7 +456,8 @@ async function warpSyncFromPeers(
   
   logger.info(`[UnifiedSync] Requesting snapshots from ${peers.length} peer(s)`);
   
-  // Request snapshot metadata from all peers
+  // Phase 47: Try to use snapshotDownloader if available (from App.tsx)
+  // First, request snapshot metadata from all peers
   const requestId = `genesis_warp_${Date.now()}`;
   for (const [peerId, peer] of peers) {
     if (peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
@@ -472,16 +473,64 @@ async function warpSyncFromPeers(
     }
   }
   
-  // Wait for snapshot metadata responses (up to 5 seconds)
-  const maxWaitTime = 5000;
-  const checkInterval = 500;
+  // Wait a bit for SNAPSHOT_META responses to arrive
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  // Phase 47: Try to use snapshotDownloader to find and download snapshots
+  // Check if snapshotDownloader is available via window (set by App.tsx)
+  let snapshotDownloader: any = null;
+  if (typeof window !== "undefined") {
+    snapshotDownloader = (window as any).snapshotDownloader;
+  }
+  
+  if (snapshotDownloader) {
+    try {
+      logger.info(`[UnifiedSync] Using snapshotDownloader to find snapshots...`);
+      // Request snapshot metadata
+      const metas = await snapshotDownloader.requestSnapshotMeta(rootTip.latestHeight);
+      
+      if (metas && metas.length > 0) {
+        // Find the best snapshot (closest to target height, but not exceeding it)
+        const suitableSnapshots = metas.filter((m: any) => m.height <= rootTip.latestHeight);
+        if (suitableSnapshots.length > 0) {
+          const bestSnapshot = suitableSnapshots.sort((a: any, b: any) => b.height - a.height)[0];
+          logger.info(`[UnifiedSync] Found snapshot at height ${bestSnapshot.height}, downloading...`);
+          
+          // Download snapshot
+          await snapshotDownloader.downloadSnapshot(bestSnapshot, {}, (progress: any) => {
+            logger.debug(`[UnifiedSync] Snapshot download: ${progress.percent.toFixed(1)}%`);
+          });
+          
+          // Check if snapshot was applied (local height should be > 0)
+          const localTip = chainContext.storage.getTip();
+          const localHeight = localTip?.header.height ?? -1;
+          
+          if (localHeight > 0) {
+            logger.info(`[UnifiedSync] ✅ Genesis sync successful via peer snapshot: height=${localHeight}`);
+            return {
+              success: true,
+              synced: localHeight >= rootTip.latestHeight,
+              method: "warp",
+              fromHeight: 0,
+              toHeight: localHeight,
+            };
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn(`[UnifiedSync] Failed to download snapshot via snapshotDownloader:`, error);
+    }
+  }
+  
+  // Wait longer and check if snapshot was applied (up to 10 seconds total)
+  const maxWaitTime = 10000;
+  const checkInterval = 1000;
   const startTime = Date.now();
   
   while (Date.now() - startTime < maxWaitTime) {
     await new Promise(resolve => setTimeout(resolve, checkInterval));
     
-    // Check if we've received any snapshots via snapshotDownloader
-    // The snapshotDownloader will handle SNAPSHOT_META responses and download snapshots
+    // Check if we've received any snapshots (snapshotDownloader may have applied it)
     const localTip = chainContext.storage.getTip();
     const localHeight = localTip?.header.height ?? -1;
     
@@ -597,17 +646,12 @@ export async function handleRootTipUpdate(
       return peerWarpResult;
     }
     
-    // If all warp sync attempts failed, log warning but don't fall back to chunk sync
-    // Chunk sync won't work if peers don't have height 1 blocks
-    logger.warn(`[UnifiedSync] ⚠️ All warp sync attempts failed for genesis node. Waiting for peers with snapshots...`);
-    return {
-      success: false,
-      synced: false,
-      method: "warp" as const,
-      fromHeight: 0,
-      toHeight: rootHeight,
-      error: "Genesis warp sync failed: no snapshots available from peers or rootTip",
-    };
+    // Phase 47: If all warp sync attempts failed, fall back to chunk sync
+    // Even if peers don't have height 1 blocks, we should try chunk sync
+    // It's better than failing completely - chunk sync may work if peers have some blocks
+    logger.warn(`[UnifiedSync] ⚠️ All warp sync attempts failed for genesis node. Falling back to chunk sync...`);
+    logger.info(`[UnifiedSync] Attempting chunk sync as fallback: 1 → ${rootHeight}`);
+    return await chunkSync(chainContext, p2pNode, 1, rootHeight);
   }
 
   // Step 1: StateLock highest priority
