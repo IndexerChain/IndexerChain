@@ -35,6 +35,8 @@ export class StateDriftDetector {
   private checkInterval: any = null;
   private readonly CHECK_INTERVAL_MS = 10000; // Check every 10 seconds
   private lastDriftCheck: StateDriftResult | null = null;
+  private lastDriftLogTime: number = 0;
+  private readonly DRIFT_LOG_COOLDOWN_MS = 60000; // Only log drift once per minute
 
   private static instance: StateDriftDetector;
 
@@ -128,6 +130,10 @@ export class StateDriftDetector {
     // Check for state commitment mismatch
     if (majorityCommit && localStateCommitment !== majorityCommit.stateCommitment) {
       // Critical drift: same height but different state
+      // Only log as warning if we don't have enough peers to determine true majority
+      const commits = gossip.getStateCommitsForHeight(localHeight);
+      const isTrueMajority = commits.length >= 2;
+      
       this.lastDriftCheck = {
         hasDrift: true,
         localHeight,
@@ -135,11 +141,26 @@ export class StateDriftDetector {
         majorityHeight: localHeight,
         majorityStateCommitment: majorityCommit.stateCommitment,
         driftType: "commitment_mismatch",
-        severity: "critical",
+        severity: isTrueMajority ? "critical" : "warning",
         reason: `State commitment mismatch at height ${localHeight}: local=${localStateCommitment.substring(0, 16)}..., majority=${majorityCommit.stateCommitment.substring(0, 16)}...`,
       };
 
-      console.error(`[Phase 36] Critical state drift detected:`, this.lastDriftCheck);
+      // Only log drift detection once per minute to avoid spam
+      const now = Date.now();
+      const shouldLog = now - this.lastDriftLogTime > this.DRIFT_LOG_COOLDOWN_MS;
+      
+      if (isTrueMajority) {
+        if (shouldLog) {
+          console.warn(`[Phase 36] Critical state drift detected:`, this.lastDriftCheck);
+          this.lastDriftLogTime = now;
+        }
+      } else {
+        // For insufficient peers, use debug level and only log once per minute
+        if (shouldLog) {
+          console.debug(`[Phase 36] State drift detected (insufficient peers for majority):`, this.lastDriftCheck);
+          this.lastDriftLogTime = now;
+        }
+      }
       return this.lastDriftCheck;
     }
 
@@ -162,7 +183,12 @@ export class StateDriftDetector {
           reason: `Local state does not match locked state at height ${lock.height}`,
         };
 
-        console.error(`[Phase 36] State drift from locked state:`, this.lastDriftCheck);
+        // Only log once per minute
+        const now = Date.now();
+        if (now - this.lastDriftLogTime > this.DRIFT_LOG_COOLDOWN_MS) {
+          console.warn(`[Phase 36] State drift from locked state:`, this.lastDriftCheck);
+          this.lastDriftLogTime = now;
+        }
         return this.lastDriftCheck;
       }
     }

@@ -10,6 +10,7 @@ import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard, type MainnetAdmissionStatus, type NetworkStage } from "../../core/miningGuard.js";
 import { QuorumPanel } from "./QuorumPanel.js";
 import { MiningReadinessReasons } from "../mining/MiningReadinessReasons.js";
+import { HeightSyncPanel } from "./HeightSyncPanel.js";
 
 interface NetworkHealthPanelProps {
   chainContext: ChainContext | null;
@@ -485,6 +486,13 @@ export function NetworkHealthPanel({
       })()}
 
       {/* Phase 36: State Lock Status - placeholder for future implementation */}
+
+      {/* Phase 41: Height Sync Panel */}
+      <HeightSyncPanel
+        chainContext={chainContext}
+        p2pNode={p2pNode}
+        locale={locale}
+      />
 
       {/* Phase 37: Bootstrap Debug Overlay */}
       <div

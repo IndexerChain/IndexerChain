@@ -21,6 +21,13 @@ import { SnapshotSeeder } from "../core/snapshotSeeder.js";
 import { BrowserP2PNode } from "../core/p2p.js";
 import { ShadowNodeClient, type ShadowState } from "../core/shadowNode.js";
 import { handleReceivedBlock, handleReceivedBlocks } from "../core/sync.js";
+import { HardReorgBanner, emitHardReorgEvent, recordReorgToHistory } from "./HardReorgBanner.js";
+import { ActiveMinerDialog, type ActiveMinerInfo } from "./ActiveMinerDialog.js";
+import { getHeightSyncManager } from "../core/heightSyncManager.js";
+import { getParallelSyncManager } from "../core/parallelSync.js";
+import { getWarpSyncManager } from "../core/warpSync.js";
+import { getChunkBasedSyncManager } from "../core/chunkBasedSync.js";
+import { getIncrementalStateSyncManager } from "../core/incrementalStateSync.js";
 import { GlobalStateSentinel } from "../core/globalSentinel.js";
 import type { DriftAssessment } from "../core/types.js";
 import { verifyTxSignature } from "../core/signatures.js";
@@ -500,6 +507,11 @@ function App() {
   const shadowNodeRef = useRef<ShadowNodeClient | null>(null);
   const [_shadowNodeConnected, setShadowNodeConnected] = useState<boolean>(false);
   const [_shadowNodeState, setShadowNodeState] = useState<ShadowState | null>(null);
+  
+  // Phase 42: Active miner management
+  const [activeMinerDialogOpen, setActiveMinerDialogOpen] = useState<boolean>(false);
+  const [activeMinerInfo, setActiveMinerInfo] = useState<ActiveMinerInfo | null>(null);
+  const activeMinerHeartbeatRef = useRef<number | null>(null);
 
   const [needsReset, setNeedsReset] = useState<boolean>(false);
 
@@ -1065,6 +1077,23 @@ function App() {
     })();
   }, [chainContext]);
 
+  // Phase 43: Initialize all sync managers
+  useEffect(() => {
+    if (!chainContext || !chainContext.p2p) return;
+    
+    const parallelSyncManager = getParallelSyncManager();
+    parallelSyncManager.init(chainContext, chainContext.p2p);
+    
+    const warpSyncManager = getWarpSyncManager();
+    warpSyncManager.init(chainContext, chainContext.p2p, snapshotDownloader || undefined);
+    
+    const chunkBasedSyncManager = getChunkBasedSyncManager();
+    chunkBasedSyncManager.init(chainContext, chainContext.p2p);
+    
+    const incrementalStateSyncManager = getIncrementalStateSyncManager();
+    incrementalStateSyncManager.init(chainContext, chainContext.p2p);
+  }, [chainContext, snapshotDownloader]);
+
   // Setup P2P message handlers
   useEffect(() => {
     if (!chainContext || !chainContext.p2p) return;
@@ -1187,7 +1216,7 @@ function App() {
     // Handle REQUEST_BLOCKS messages
     // Track recent requests to avoid spam and reduce logging
     const recentBlockRequests = new Map<string, number>(); // sender -> last request time
-    p2p.onMessage("REQUEST_BLOCKS", async (request: { fromHeight: number; toHeight: number }, sender: string) => {
+    p2p.onMessage("REQUEST_BLOCKS", async (request: { fromHeight: number; toHeight: number; requestId?: string }, sender: string) => {
       const localTip = chainContext.storage.getTip();
       const localHeight = localTip?.header?.height ?? -1;
       
@@ -1246,10 +1275,12 @@ function App() {
         console.log(`[Sync] 📤 Sending ${blocks.length} blocks (height ${actualFromHeight}-${actualToHeight}) to ${sender.substring(0, 16)}...`);
         // Send blocks directly to the requesting peer if sendToPeer is available
         if (p2p.sendToPeer) {
-          p2p.sendToPeer(sender, "BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
+          // Phase 43: Include requestId if this is part of parallel sync
+          const responseRequestId = request.requestId || `${sender}_${Date.now()}`;
+          p2p.sendToPeer(sender, "BLOCKS", { blocks, requestId: responseRequestId });
         } else {
           // Fallback to broadcast
-          p2p.broadcast("BLOCKS", { blocks, requestId: `${sender}_${Date.now()}` });
+          p2p.broadcast("BLOCKS", { blocks, requestId: request.requestId || `${sender}_${Date.now()}` });
         }
       } else {
         // Log when we can't provide blocks (helpful for debugging)
@@ -1259,7 +1290,8 @@ function App() {
 
     // Handle BLOCKS messages (chain sync)
     // Phase 21: Pass sender for peer reputation tracking
-    p2p.onMessage("BLOCKS", async (data: { blocks: Block[] }, sender: string) => {
+    // Phase 43: Support parallel sync with requestId
+    p2p.onMessage("BLOCKS", async (data: { blocks: Block[]; requestId?: string }, sender: string) => {
       // Always log when receiving blocks to help debug sync issues
       if (data.blocks && data.blocks.length > 0) {
         const firstHeight = data.blocks[0]?.header?.height ?? '?';
@@ -1272,6 +1304,12 @@ function App() {
       if (!data.blocks || data.blocks.length === 0) {
         console.warn("[Sync] ⚠️ Received empty BLOCKS message from", sender.substring(0, 16));
         return;
+      }
+      
+      // Phase 43: Notify parallel sync manager if this is part of parallel sync
+      if (data.requestId) {
+        const parallelSyncManager = getParallelSyncManager();
+        parallelSyncManager.handleReceivedBlocks(data.blocks, sender, data.requestId);
       }
       
       const result = await handleReceivedBlocks(data.blocks, chainContext, sender);
@@ -1842,23 +1880,28 @@ function App() {
             if (peerCount === 0) {
               console.warn(`[Sync] ⚠️ No peers available! Cannot sync. Please check connection.`);
             } else {
-              p2p.broadcast("REQUEST_BLOCKS", {
-                fromHeight: localHeight + 1,
-                toHeight: targetHeight,
-              });
-              // Also try direct peer requests if sendToPeer is available
-              if (p2p.sendToPeer) {
-                const peerIds = Array.from(p2p.peers.keys());
-                for (const peerId of peerIds) {
-                  const peer = p2p.peers.get(peerId);
-                  if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
-                    logger.debug(`[Sync] Also requesting directly from peer ${peerId.substring(0, 16)}...`);
-                    p2p.sendToPeer(peerId, "REQUEST_BLOCKS", {
-                      fromHeight: localHeight + 1,
-                      toHeight: targetHeight,
-                    });
-                  }
+              // Phase 43: Use chunk-based sync to only request missing blocks
+              const chunkBasedSyncManager = getChunkBasedSyncManager();
+              const coverage = chunkBasedSyncManager.getBlockCoverage(localHeight + 1, targetHeight);
+              
+              if (coverage.missing > 0) {
+                logger.info(`[Sync] 📊 Block coverage: ${coverage.present}/${coverage.total} present (${coverage.coveragePercent.toFixed(1)}%), ${coverage.missing} missing`);
+                
+                // Use chunk-based sync to only request missing blocks
+                const syncResult = await chunkBasedSyncManager.syncMissingBlocks(localHeight + 1, targetHeight);
+                
+                if (syncResult.success) {
+                  logger.info(`[ChunkBasedSync] ✅ Requested ${syncResult.requestedChunks.length} chunk(s), skipped ${syncResult.skippedBlocks} already-present blocks`);
+                } else {
+                  // Fallback to normal sync
+                  logger.warn(`[ChunkBasedSync] Failed, falling back to normal sync`);
+                  p2p.broadcast("REQUEST_BLOCKS", {
+                    fromHeight: localHeight + 1,
+                    toHeight: targetHeight,
+                  });
                 }
+              } else {
+                logger.info(`[Sync] ✅ All blocks ${localHeight + 1}-${targetHeight} are already present, no sync needed`);
               }
             }
           }
@@ -2048,6 +2091,35 @@ function App() {
       }
       
       try {
+        // Phase 43: Try warp sync first if applicable
+        const localTip = chainContext.storage.getTip();
+        const localHeight = localTip?.header.height ?? -1;
+        const networkHeight = payload.latestHeight || 0;
+        
+        if (localHeight <= 0 || (networkHeight - localHeight >= 1000)) {
+          const warpSyncManager = getWarpSyncManager();
+          if (warpSyncManager.canWarpSync(localHeight, networkHeight)) {
+            logger.info(`[WarpSync] 🚀 Attempting warp sync from bootstrap: ${localHeight} → ${networkHeight}`);
+            const warpResult = await warpSyncManager.performWarpSync({
+              latestHeight: networkHeight,
+              latestHeader: payload.latestHeader,
+              latestHeaderHash: payload.latestHeaderHash || "",
+              recentHeaders: payload.recentHeaders || [],
+              latestSnapshotMeta: payload.latestSnapshotMeta,
+              stateCommitment: payload.stateCommitment,
+            });
+            
+            if (warpResult.success && warpResult.synced) {
+              logger.info(`[WarpSync] ✅ Bootstrap warp sync completed in ${warpResult.durationMs}ms`);
+              // Update chain context
+              setChainContext({ ...chainContext });
+              // Mark bootstrap as complete
+              setBootstrapComplete(true);
+              return; // Skip normal bootstrap processing
+            }
+          }
+        }
+        
         const { getBootstrapSyncManager } = await import("../core/bootstrapSync.js");
         const bootstrapManager = getBootstrapSyncManager(chainContext);
         
@@ -2146,6 +2218,77 @@ function App() {
       const localTip = chainContext.storage.getTip();
       const localHeight = localTip?.header.height ?? -1;
       
+      // Phase 42: Update HeightSyncManager with signal root tip
+      if (p2pNodeRef.current) {
+        const heightSyncManager = getHeightSyncManager();
+        heightSyncManager.init(chainContext, p2pNodeRef.current);
+        heightSyncManager.updateSignalRootTip({
+          latestHeight: rootHeight,
+          latestHeaderHash: rootHeaderHash || "",
+          stateCommitment: rootTip.stateCommitment || null,
+          recentHeaders: recentHeaders || [],
+        });
+      }
+      
+      // Phase 43: Try incremental state sync if applicable (state mismatch but heights close)
+      const localStateCommit = localTip?.header.stateCommitment || "";
+      const networkStateCommit = rootTip.stateCommitment || "";
+      if (localStateCommit && networkStateCommit && localStateCommit !== networkStateCommit && 
+          localHeight > 0 && rootHeight - localHeight >= 100 && rootHeight - localHeight <= 1000) {
+        const incrementalStateSyncManager = getIncrementalStateSyncManager();
+        if (incrementalStateSyncManager.canIncrementalSync(localHeight, rootHeight, localStateCommit, networkStateCommit)) {
+          logger.info(`[IncrementalStateSync] 🚀 Attempting incremental state sync: ${localHeight} → ${rootHeight} (state mismatch detected)`);
+          const syncResult = await incrementalStateSyncManager.performIncrementalSync(rootHeight, networkStateCommit);
+          
+          if (syncResult.success && syncResult.synced) {
+            logger.info(`[IncrementalStateSync] ✅ Incremental state sync completed in ${syncResult.durationMs}ms: applied ${syncResult.appliedDeltas} delta(s)`);
+            // Update chain context to reflect new state
+            setChainContext({ ...chainContext });
+            // Continue with normal processing
+          } else if (syncResult.success && !syncResult.synced) {
+            logger.debug(`[IncrementalStateSync] Incremental sync not applicable, continuing with normal sync`);
+          } else {
+            logger.warn(`[IncrementalStateSync] Incremental sync failed: ${syncResult.error}, falling back to normal sync`);
+          }
+        }
+      }
+      
+      // Phase 43: Try warp sync if applicable (new node or large gap)
+      if (localHeight <= 0 || (rootHeight - localHeight >= 1000)) {
+        const warpSyncManager = getWarpSyncManager();
+        if (warpSyncManager.canWarpSync(localHeight, rootHeight)) {
+          logger.info(`[WarpSync] 🚀 Attempting warp sync: ${localHeight} → ${rootHeight}`);
+          const warpResult = await warpSyncManager.performWarpSync({
+            latestHeight: rootHeight,
+            latestHeader: rootHeader,
+            latestHeaderHash: rootHeaderHash || "",
+            recentHeaders: recentHeaders || [],
+            latestSnapshotMeta: snapshotMeta || undefined,
+            stateCommitment: rootTip.stateCommitment || undefined,
+          });
+          
+          if (warpResult.success && warpResult.synced) {
+            logger.info(`[WarpSync] ✅ Warp sync completed in ${warpResult.durationMs}ms: ${warpResult.fromHeight} → ${warpResult.toHeight}`);
+            // Update chain context to reflect new state
+            setChainContext({ ...chainContext });
+            // Update local height
+            const newTip = chainContext.storage.getTip();
+            const newHeight = newTip?.header.height ?? localHeight;
+            // Continue with normal processing if we're not at target height yet
+            if (newHeight < rootHeight) {
+              logger.info(`[WarpSync] Still need to sync ${rootHeight - newHeight} more blocks`);
+            } else {
+              logger.info(`[WarpSync] ✅ Fully synced to height ${rootHeight}`);
+              return; // Skip hard reorg check if we just warped
+            }
+          } else if (warpResult.success && !warpResult.synced) {
+            logger.debug(`[WarpSync] Warp sync not applicable, continuing with normal sync`);
+          } else {
+            logger.warn(`[WarpSync] Warp sync failed: ${warpResult.error}, falling back to normal sync`);
+          }
+        }
+      }
+      
       logger.debug(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
       
       // 🔥 Hard Reorg: Check for fork if we have recent headers
@@ -2175,6 +2318,26 @@ function App() {
             
             if (reorgResult.success) {
               logger.info(`[HardReorg] ✅ Hard reorg completed: removed ${reorgResult.removedBlocks} blocks, rewound to height ${forkResult.rewindHeight}`);
+              
+              // Phase 42: Emit hard reorg UX event
+              const oldHeight = forkResult.localHeight;
+              const newHeight = forkResult.rewindHeight;
+              
+              emitHardReorgEvent({
+                from: oldHeight,
+                to: newHeight,
+                rolledBack: reorgResult.removedBlocks,
+                timestamp: Date.now(),
+                cause: forkResult.reason,
+              });
+              
+              recordReorgToHistory({
+                from: oldHeight,
+                to: newHeight,
+                rolledBack: reorgResult.removedBlocks,
+                timestamp: Date.now(),
+                cause: forkResult.reason,
+              });
               
               // Update chain context to trigger re-render
               setChainContext({ ...chainContext });
@@ -2538,6 +2701,32 @@ function App() {
           shadowNode.onStateUpdate((state) => {
             setShadowNodeState(state);
             logger.debug(`[ShadowNode] State updated: height=${state.latestHeight}`);
+            
+            // Phase 42: Update HeightSyncManager with shadow state
+            if (chainContext && p2pNodeRef.current) {
+              const heightSyncManager = getHeightSyncManager();
+              heightSyncManager.init(chainContext, p2pNodeRef.current);
+              heightSyncManager.updateShadowState({
+                height: state.latestHeight,
+                tipHash: state.latestHeaderHash,
+                stateCommitment: state.stateCommitment,
+              });
+            }
+          });
+          
+          // Phase 42: Listen for active miner changes
+          shadowNode.onActiveMinerChange((activeMinerId) => {
+            if (activeMinerId && shadowNode.getSessionId()) {
+              const sessionId = shadowNode.getSessionId();
+              const nodeId = p2pNodeRef.current?.nodeId || "";
+              const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+              
+              if (activeMinerId !== minerId && isMining) {
+                // Another device took over - stop mining
+                logger.warn("[ActiveMiner] Another device took over mining, stopping...");
+                handleStopMining();
+              }
+            }
           });
           
           // Listen for connection changes
@@ -3526,6 +3715,7 @@ function App() {
   // Phase 27: Check if this instance can mine (must be LEADER)
   // Phase 30: Add mining guard checks
   // Phase 38: Check onboarding before starting
+  // Phase 42: Add multi-device mining protection
   const handleStartMining = async () => {
     if (!chainContext) return;
     
@@ -3545,6 +3735,58 @@ function App() {
           : `⚠️ This machine already has a mining instance: ${leaderId}. Current instance is read-only. To mine on this instance, please stop mining on other instances or close their pages.`
       );
       return;
+    }
+    
+    // Phase 42: Multi-device mining protection
+    if (shadowNodeRef.current) {
+      const shadowNode = shadowNodeRef.current;
+      const sessionId = shadowNode.getSessionId();
+      const nodeId = p2pNodeRef.current?.nodeId || await getOrCreateNodeAddress();
+      const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+      
+      // Check current active miner
+      const currentActiveMinerId = shadowNode.getActiveMinerId();
+      
+      if (currentActiveMinerId && currentActiveMinerId !== minerId) {
+        // Another device is mining - show dialog
+        try {
+          // Try to get active miner info from Shadow Node
+          const shadowNodeUrl = isMainnetMode 
+            ? "https://signal.indexerchain.com" 
+            : (bootstrapUrl.replace("ws://", "http://").replace("wss://", "https://"));
+          const response = await fetch(`${shadowNodeUrl}/shadow/${sessionId}/getActiveMiner`, {
+            method: 'GET',
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setActiveMinerInfo({
+              activeMinerId: data.activeMinerId,
+              lastSeen: data.activeMinerLastSeen || Date.now(),
+            });
+            setActiveMinerDialogOpen(true);
+            return; // Wait for user decision
+          }
+        } catch (error) {
+          logger.warn("[ActiveMiner] Failed to get active miner info:", error);
+        }
+      } else if (!currentActiveMinerId || currentActiveMinerId === minerId) {
+        // No active miner or we are the active miner - claim it
+        const claimResult = await shadowNode.claimActiveMiner(minerId);
+        if (!claimResult.success) {
+          if (claimResult.activeMinerId) {
+            // Another device is mining
+            setActiveMinerInfo({
+              activeMinerId: claimResult.activeMinerId,
+              lastSeen: Date.now(),
+            });
+            setActiveMinerDialogOpen(true);
+            return;
+          } else {
+            setError(claimResult.error || "Failed to claim active miner");
+            return;
+          }
+        }
+      }
     }
     
     // Phase 30: Mining guard check
@@ -3606,6 +3848,28 @@ function App() {
       setError("");
       // Removed: setMiningHash, setMiningNonce (replaced by MiningLiveStatsCard)
       setMiningStats({ hashesTried: 0, hashRate: null, elapsedTime: 0 });
+      
+      // Phase 42: Start active miner heartbeat
+      if (shadowNodeRef.current) {
+        const shadowNode = shadowNodeRef.current;
+        const sessionId = shadowNode.getSessionId();
+        const nodeId = p2pNodeRef.current?.nodeId || await getOrCreateNodeAddress();
+        const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+        
+        // Clear existing heartbeat
+        if (activeMinerHeartbeatRef.current) {
+          clearInterval(activeMinerHeartbeatRef.current);
+        }
+        
+        // Start heartbeat every 5 seconds
+        activeMinerHeartbeatRef.current = window.setInterval(() => {
+          if (shadowNodeRef.current) {
+            shadowNodeRef.current.heartbeatActiveMiner(minerId).catch((err) => {
+              logger.warn("[ActiveMiner] Heartbeat failed:", err);
+            });
+          }
+        }, 5000);
+      }
 
       // Phase 8: Start mining with Worker
       // Phase 26: Pass duty cycle to miner client
@@ -3730,9 +3994,25 @@ function App() {
   };
 
   // Phase 8: Stop mining
+  // Phase 42: Release active miner when stopping
   const handleStopMining = () => {
     minerClient.stopMining("user");
     setIsMining(false);
+    
+    // Phase 42: Release active miner
+    if (shadowNodeRef.current && activeMinerHeartbeatRef.current) {
+      clearInterval(activeMinerHeartbeatRef.current);
+      activeMinerHeartbeatRef.current = null;
+      
+      const shadowNode = shadowNodeRef.current;
+      const sessionId = shadowNode.getSessionId();
+      const nodeId = p2pNodeRef.current?.nodeId || "";
+      const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+      
+      shadowNode.releaseActiveMiner(minerId).catch((err) => {
+        logger.warn("[ActiveMiner] Failed to release active miner:", err);
+      });
+    }
   };
 
   // Phase 8: Auto-restart mining when tip changes
@@ -3888,8 +4168,42 @@ function App() {
     ? Array.from(chainContext.p2p.peers.values()).filter((p) => p.connected)
     : [];
 
+  // Phase 42: Handle active miner dialog actions
+  const handleActiveMinerTakeover = async () => {
+    if (!shadowNodeRef.current || !chainContext) return;
+    
+    const shadowNode = shadowNodeRef.current;
+    const sessionId = shadowNode.getSessionId();
+    const nodeId = p2pNodeRef.current?.nodeId || await getOrCreateNodeAddress();
+    const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+    
+    // Force claim active miner
+    const claimResult = await shadowNode.claimActiveMiner(minerId);
+    if (claimResult.success) {
+      setActiveMinerDialogOpen(false);
+      // Start mining after claiming
+      handleStartMining();
+    } else {
+      setError(claimResult.error || "Failed to take over mining");
+    }
+  };
+
   return (
     <div className="app">
+      {/* Phase 42: Hard Reorg Banner */}
+      <HardReorgBanner locale={locale} />
+      
+      {/* Phase 42: Active Miner Dialog */}
+      <ActiveMinerDialog
+        isOpen={activeMinerDialogOpen}
+        activeMinerInfo={activeMinerInfo}
+        locale={locale}
+        onCancel={() => {
+          setActiveMinerDialogOpen(false);
+          setActiveMinerInfo(null);
+        }}
+        onTakeover={handleActiveMinerTakeover}
+      />
       <header className="app-header">
         <div style={{ 
           display: "flex", 

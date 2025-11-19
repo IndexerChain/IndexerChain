@@ -46,6 +46,8 @@ export class ShadowNodeClient {
   private cachedState: ShadowState | null = null;
   private stateUpdateHandlers: Set<(state: ShadowState) => void> = new Set();
   private connectionHandlers: Set<(connected: boolean) => void> = new Set();
+  private activeMinerId: string | null = null; // Phase 41: Track active miner
+  private activeMinerHandlers: Set<(activeMinerId: string | null) => void> = new Set(); // Phase 41: Active miner change handlers
 
   constructor(config: ShadowNodeConfig) {
     this.config = {
@@ -229,6 +231,11 @@ export class ShadowNodeClient {
     } else if (data.type === 'PONG') {
       // Heartbeat response
       // Nothing to do
+    } else if (data.type === 'ACTIVE_MINER_CHANGED') {
+      // Phase 41: Active miner changed
+      this.activeMinerId = data.activeMinerId || null;
+      this.notifyActiveMinerHandlers(this.activeMinerId);
+      logger.info(`[ShadowNode] Active miner changed: ${this.activeMinerId || 'none'}`);
     }
   }
 
@@ -384,6 +391,130 @@ export class ShadowNodeClient {
    */
   getSessionId(): string | null {
     return this.sessionId;
+  }
+
+  /**
+   * Phase 41: Claim active miner status
+   */
+  async claimActiveMiner(nodeId: string): Promise<{ success: boolean; error?: string; activeMinerId?: string }> {
+    if (!this.sessionId) {
+      return { success: false, error: "Session not initialized" };
+    }
+
+    try {
+      const response = await fetch(`${this.config.shadowNodeUrl}/setActiveMiner?sessionId=${this.sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nodeId,
+          action: 'claim',
+        }),
+      });
+
+      if (response.status === 409) {
+        // Conflict - another miner is active
+        const data = await response.json();
+        return { success: false, error: data.error || 'Another device is already mining', activeMinerId: data.activeMinerId };
+      }
+
+      if (!response.ok) {
+        const data = await response.json();
+        return { success: false, error: data.error || 'Failed to claim active miner' };
+      }
+
+      const data = await response.json();
+      this.activeMinerId = data.activeMinerId || null;
+      this.notifyActiveMinerHandlers(this.activeMinerId);
+      return { success: true };
+    } catch (error) {
+      logger.error(`[ShadowNode] Failed to claim active miner:`, error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Phase 41: Release active miner status
+   */
+  async releaseActiveMiner(nodeId: string): Promise<void> {
+    if (!this.sessionId) {
+      return;
+    }
+
+    try {
+      await fetch(`${this.config.shadowNodeUrl}/setActiveMiner?sessionId=${this.sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nodeId,
+          action: 'release',
+        }),
+      });
+
+      this.activeMinerId = null;
+      this.notifyActiveMinerHandlers(null);
+    } catch (error) {
+      logger.error(`[ShadowNode] Failed to release active miner:`, error);
+    }
+  }
+
+  /**
+   * Phase 41: Send heartbeat for active miner
+   */
+  async heartbeatActiveMiner(nodeId: string): Promise<void> {
+    if (!this.sessionId || this.activeMinerId !== nodeId) {
+      return;
+    }
+
+    try {
+      await fetch(`${this.config.shadowNodeUrl}/setActiveMiner?sessionId=${this.sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nodeId,
+          action: 'heartbeat',
+        }),
+      });
+    } catch (error) {
+      // Ignore heartbeat errors - they're not critical
+    }
+  }
+
+  /**
+   * Phase 41: Get active miner ID
+   */
+  getActiveMinerId(): string | null {
+    return this.activeMinerId;
+  }
+
+  /**
+   * Phase 41: Register active miner change handler
+   */
+  onActiveMinerChange(handler: (activeMinerId: string | null) => void): () => void {
+    this.activeMinerHandlers.add(handler);
+    
+    // Return unsubscribe function
+    return () => {
+      this.activeMinerHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Phase 41: Notify active miner handlers
+   */
+  private notifyActiveMinerHandlers(activeMinerId: string | null) {
+    this.activeMinerHandlers.forEach((handler) => {
+      try {
+        handler(activeMinerId);
+      } catch (error) {
+        logger.error(`[ShadowNode] Active miner handler error:`, error);
+      }
+    });
   }
 }
 

@@ -37,6 +37,10 @@ export class ShadowSession {
       lastUpdated: 0,
     };
     
+    // Phase 41: Active miner tracking
+    this.activeMinerId = null; // nodeId of the device currently mining
+    this.activeMinerLastSeen = 0; // timestamp when active miner was last seen
+    
     // Heartbeat tracking
     this.lastHeartbeat = Date.now();
     this.heartbeatInterval = null;
@@ -55,6 +59,8 @@ export class ShadowSession {
         this.sessionId = stored.sessionId;
         this.nodeId = stored.nodeId;
         this.cachedState = stored.cachedState || this.cachedState;
+        this.activeMinerId = stored.activeMinerId || null;
+        this.activeMinerLastSeen = stored.activeMinerLastSeen || 0;
         console.log(`[ShadowSession] Loaded session: ${this.sessionId?.substring(0, 16)}...`);
         return true;
       }
@@ -73,6 +79,8 @@ export class ShadowSession {
         sessionId: this.sessionId,
         nodeId: this.nodeId,
         cachedState: this.cachedState,
+        activeMinerId: this.activeMinerId,
+        activeMinerLastSeen: this.activeMinerLastSeen,
         lastUpdated: Date.now(),
       });
     } catch (error) {
@@ -196,6 +204,24 @@ export class ShadowSession {
         status: 'ok', 
         lastHeartbeat: this.lastHeartbeat,
         cachedState: this.cachedState,
+        activeMinerId: this.activeMinerId, // Phase 41: Return active miner info
+      }), {
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+    
+    // Phase 41: Handle active miner management
+    if (path === '/setActiveMiner' && request.method === 'POST') {
+      return this.handleSetActiveMiner(request);
+    }
+    
+    if (path === '/getActiveMiner' && request.method === 'GET') {
+      return new Response(JSON.stringify({
+        activeMinerId: this.activeMinerId,
+        activeMinerLastSeen: this.activeMinerLastSeen,
       }), {
         headers: { 
           'Content-Type': 'application/json',
@@ -261,6 +287,7 @@ export class ShadowSession {
         success: true,
         sessionId: this.sessionId,
         cachedState: this.cachedState,
+        activeMinerId: this.activeMinerId, // Phase 41: Return active miner info
       }), {
         headers: { 
           'Content-Type': 'application/json',
@@ -288,6 +315,7 @@ export class ShadowSession {
       cachedState: this.cachedState,
       lastHeartbeat: this.lastHeartbeat,
       isConnected: this.isConnected,
+      activeMinerId: this.activeMinerId, // Phase 41: Return active miner info
     }), {
       headers: { 
         'Content-Type': 'application/json',
