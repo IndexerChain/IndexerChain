@@ -290,7 +290,6 @@ export class MiningGuard {
     // This is for early network phase where nodes can mine based on signal server's rootTip
     const isColdStartMode = bootstrapComplete && peerCount === 0;
     if (isColdStartMode) {
-      logger.debug(`[Phase 37] Cold Start mode: bootstrapComplete=true, peers=0, allowing mining`);
       miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
     }
     
@@ -453,7 +452,6 @@ export class MiningGuard {
     } else if (bootstrapComplete && peerCount === 0) {
       // Phase 37: Cold Start mode - bootstrap complete but no peers yet
       miningMode = "GUARDED";
-      logger.debug(`[Phase 37] Cold Start mining mode: bootstrapComplete=true, peers=0`);
     } else if (allowGuardedMining) {
       // Level 2: GUARDED Mining - Dev/testnet with warnings
       miningMode = "GUARDED";
@@ -584,7 +582,7 @@ export class MiningGuard {
         // Phase 39: Log info during initialization phase (don't block mining)
         if (finalityLag > maxFinalityLag && shouldRelaxCheck) {
           if (networkStage === "FINALITY_INIT") {
-            logger.debug(`[Phase 39] Finality Initialization Mode: finalityLag=${finalityLag} > ${maxFinalityLag}, but allowing mining (finalizedHeight=${finalizedHeight}, localHeight=${localHeight})`);
+            // Finality Initialization Mode: allowing mining during warmup
           } else if (networkStage === "GENESIS_QUORUM") {
             logger.debug(`[Phase 39] Genesis Quorum Mode: finalityLag=${finalityLag}, but skipping finality check (height=0)`);
           } else {

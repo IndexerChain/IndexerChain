@@ -13,13 +13,11 @@ const KEEPALIVE_ENDPOINT = '/keepalive';
 
 // Install event - cache essential resources
 self.addEventListener('install', (event) => {
-  console.log('[Service Worker] Installing...');
   self.skipWaiting(); // Activate immediately
 });
 
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
-  console.log('[Service Worker] Activating...');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -161,5 +159,5 @@ self.addEventListener('activate', () => {
   }, KEEPALIVE_INTERVAL);
 });
 
-console.log('[Service Worker] Loaded and ready');
+// Service Worker loaded and ready
 
