@@ -160,11 +160,23 @@ export async function handleReceivedBlocks(
       if (block.header.height !== localHeight + 1) {
         const gap = block.header.height - localHeight;
         if (gap > 1) {
-          console.log(`[Sync] ⚠️ First block ${block.header.height} is too far ahead (local: ${localHeight}, gap: ${gap}). Skipping - need to sync missing blocks first.`);
+          // If local height is 0 and we receive a block > 1, we need to request from height 1
+          if (localHeight === 0 && block.header.height > 1) {
+            console.warn(`[Sync] ⚠️ Local height is 0, but received block ${block.header.height}. Need to request blocks from height 1 first.`);
+            // Request missing blocks from height 1
+            if (context.p2p) {
+              context.p2p.broadcast("REQUEST_BLOCKS", {
+                fromHeight: 1,
+                toHeight: block.header.height - 1,
+              });
+            }
+          } else {
+            console.warn(`[Sync] ⚠️ First block ${block.header.height} is too far ahead (local: ${localHeight}, gap: ${gap}). Skipping - need to sync missing blocks first.`);
+          }
           continue;
         } else if (gap < 1) {
           // This shouldn't happen (already checked above), but handle it
-          console.log(`[Sync] ⚠️ First block ${block.header.height} is behind local height ${localHeight}. Skipping.`);
+          console.warn(`[Sync] ⚠️ First block ${block.header.height} is behind local height ${localHeight}. Skipping.`);
           continue;
         }
       }
@@ -238,7 +250,9 @@ export async function handleReceivedBlocks(
       }
       
       appended++;
+      if (appended === 1 || appended % 10 === 0 || block.header.height % 50 === 0) {
       console.log(`[Sync] ✅ Appended block ${block.header.height} (total appended: ${appended})`);
+      }
       
       // Update expectedNextHeight after successful append
       // This ensures we continue processing consecutive blocks correctly

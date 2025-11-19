@@ -122,11 +122,7 @@ export class StateLockManager {
       const lastLockedHeight = (this as any).lastLockedHeight || 0;
       if (currentHeight > lastLockedHeight) {
         (this as any).lastLockedHeight = currentHeight;
-        console.log(`[Phase 36] State Lock formed at height ${currentHeight}:`, {
-          stateCommitment: majorityCommit.stateCommitment.substring(0, 16) + "...",
-          quorum: majorityCommit.quorum.toFixed(2) + "%",
-          independentPeers: majorityCommit.independentCount,
-        });
+        // Removed debug log: State Lock formed
       }
     }
   }

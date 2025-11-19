@@ -88,16 +88,11 @@ export class BootstrapSyncManager {
     const localHeight = localTip?.header.height ?? -1;
     const localHash = localTip?.hash ?? "";
 
-    console.log(`[Phase 32] Processing bootstrap response:`, {
-      latestHeight: response.latestHeight,
-      localHeight,
-      latestHash: response.latestHeaderHash.substring(0, 16) + "...",
-      localHash: localHash.substring(0, 16) + "..."
-    });
+    // Removed debug log: [Phase 32] Processing bootstrap response
 
     // Check if we're already up to date
     if (localHeight === response.latestHeight && localHash === response.latestHeaderHash) {
-      console.log(`[Phase 32] Already synced to latest height ${response.latestHeight}`);
+      // Removed debug log: [Phase 32] Already synced
       this.bootstrapComplete = true;
       this.lastBootstrapHeight = response.latestHeight;
       return {
@@ -113,7 +108,7 @@ export class BootstrapSyncManager {
     
     if (heightDiff > 0 && heightDiff <= 500 && response.recentHeaders) {
       // Fast sync using recent headers
-      console.log(`[Phase 38] Fast syncing using ${response.recentHeaders.length} recent headers (height diff: ${heightDiff})`);
+      // Removed debug log: [Phase 38] Fast syncing
       actions.push(`Fast sync: ${heightDiff} blocks behind`);
       
       try {
@@ -182,7 +177,7 @@ export class BootstrapSyncManager {
     const snapshotInterval = this.chainContext.params.snapshotInterval || 1000;
     if (heightDiff >= snapshotInterval) {
       if (response.latestSnapshotMeta) {
-        console.log(`[Phase 38] Large height difference (${heightDiff}), Worker has snapshot at height ${response.latestSnapshotMeta.height}`);
+        // Removed debug log: [Phase 38] Large height difference
         actions.push(`Snapshot sync recommended (height diff: ${heightDiff}, snapshot at ${response.latestSnapshotMeta.height})`);
         
         // Phase 38: Store snapshot meta for later use (including in window for App.tsx to access)
@@ -290,7 +285,7 @@ export class BootstrapSyncManager {
     // The actual block will be requested via normal P2P sync
     this.lastBootstrapHeight = header.height;
     
-    console.log(`[Phase 32] Fast tip reference updated to height ${header.height}`);
+    // Removed debug log: [Phase 32] Fast tip reference updated
 
     return { success: true };
   }

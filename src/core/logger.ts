@@ -63,7 +63,7 @@ function getLogLevel(): LogLevel {
     }
   }
   
-  return LogLevel.DEBUG; // All logs in development
+  return LogLevel.INFO; // Only INFO and above in development (no DEBUG)
 }
 
 class Logger {

@@ -8,6 +8,7 @@ import { useState, useEffect } from "react";
 import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { getQuorumManager, type QuorumStatus } from "../../core/quorumManager.js";
+import { formatAddress } from "../../utils/format.js";
 
 interface QuorumPanelProps {
   chainContext: ChainContext | null;
@@ -197,7 +198,7 @@ export function QuorumPanel({ chainContext, p2pNode, locale }: QuorumPanelProps)
                           }}
                         >
                           <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.75rem" }}>
-                            {peer.peerId.substring(0, 16)}...
+                            {formatAddress(peer.peerId, 8, 8)}
                           </td>
                           <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.75rem" }}>
                             {peer.ipHash || "-"}

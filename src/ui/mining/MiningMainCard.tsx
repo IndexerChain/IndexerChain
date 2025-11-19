@@ -536,19 +536,28 @@ export function MiningMainCard({
                     )}
                     {miningGuardResult.details.independentPeerCount !== undefined && (
                       <div>
-                        {isZh ? "独立节点" : "Independent Peers"}: {miningGuardResult.details.independentPeerCount} / {miningGuardResult.details.requiredIndependentPeers || (isFirstYearMode ? 2 : 3)}
-                        {isFirstYearMode && (
-                          <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
-                            {isZh ? "(第一年要求 ≥2)" : "(First Year: ≥2)"}
-                          </span>
-                        )}
-                        {miningGuardResult.details.independentPeerCount < (miningGuardResult.details.requiredIndependentPeers || (isFirstYearMode ? 2 : 3)) && (
-                          <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
-                            {isZh 
-                              ? "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）"
-                              : "💡 Need peers from different IPs (multiple tabs on same computer don't count)"}
-                          </div>
-                        )}
+                        {(() => {
+                          const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
+                          const defaultRequiredPeers = isFirstYearMode ? 2 : minPeersRequired;
+                          const requiredPeers = miningGuardResult.details.requiredIndependentPeers || defaultRequiredPeers;
+                          return (
+                            <>
+                              {isZh ? "独立节点" : "Independent Peers"}: {miningGuardResult.details.independentPeerCount} / {requiredPeers}
+                              {isFirstYearMode && (
+                                <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
+                                  {isZh ? "(第一年要求 ≥2)" : "(First Year: ≥2)"}
+                                </span>
+                              )}
+                              {miningGuardResult.details.independentPeerCount < requiredPeers && (
+                                <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
+                                  {isZh 
+                                    ? "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）"
+                                    : "💡 Need peers from different IPs (multiple tabs on same computer don't count)"}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>

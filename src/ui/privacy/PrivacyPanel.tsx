@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from "react";
 import { useI18n } from "../../i18n/useI18n.js";
+import { formatAddress, formatNumber } from "../../utils/format.js";
 import { getMultiWalletStore } from "../../core/multiWallet.js";
 import { getStealthKeyStore } from "../../core/privacy/stealthKeyStore.js";
 import { getNoteStore } from "../../core/privacy/noteStore.js";
@@ -342,9 +343,9 @@ export function PrivacyPanel({ chainContext, onBroadcastTx }: PrivacyPanelProps)
                 {notes.map((note) => (
                   <tr key={note.noteId} style={{ borderTop: "1px solid #ddd" }}>
                     <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.75rem" }}>
-                      {note.noteId.substring(0, 16)}...
+                      {formatAddress(note.noteId, 8, 8)}
                     </td>
-                    <td style={{ padding: "0.5rem" }}>{note.amount.toFixed(2)} IDC</td>
+                    <td style={{ padding: "0.5rem" }}>{formatNumber(note.amount, 2, locale === "zh" ? "zh-CN" : "en-US")} IDC</td>
                     <td style={{ padding: "0.5rem" }}>
                       {note.isSpent ? (locale === "zh" ? "已花费" : "Spent") : (locale === "zh" ? "未花费" : "Unspent")}
                     </td>

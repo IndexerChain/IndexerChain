@@ -118,7 +118,7 @@ export class ShadowNodeClient {
       const data = await response.json();
       if (data.success) {
         this.cachedState = data.cachedState;
-        logger.info(`[ShadowNode] Session initialized: ${this.sessionId.substring(0, 16)}...`);
+        logger.debug(`[ShadowNode] Session initialized: ${this.sessionId.substring(0, 16)}...`);
         
         // Connect WebSocket
         await this.connect();
@@ -149,7 +149,7 @@ export class ShadowNodeClient {
         this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
-          logger.info(`[ShadowNode] Connected to shadow node`);
+          logger.debug(`[ShadowNode] Connected to shadow node`);
           this.isConnected = true;
           this.notifyConnectionHandlers(true);
           
@@ -204,7 +204,7 @@ export class ShadowNodeClient {
    */
   private handleMessage(data: any) {
     if (data.type === 'SHADOW_CONNECTED') {
-      logger.info(`[ShadowNode] Shadow node confirmed connection`);
+      logger.debug(`[ShadowNode] Shadow node confirmed connection`);
       if (data.cachedState) {
         this.cachedState = data.cachedState;
         if (this.cachedState) {

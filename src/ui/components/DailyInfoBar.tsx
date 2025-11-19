@@ -15,6 +15,7 @@ import { getReferralSystem, generateReferralCode } from "../../core/referralSyst
 import type { ChainContext } from "../../core/chain.js";
 import type { Address } from "../../core/types.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { formatAddress } from "../../utils/format.js";
 
 interface DailyInfoBarProps {
   chainContext: ChainContext | null;
@@ -357,7 +358,7 @@ export function DailyInfoBar({
               }}>
                 {copySuccess 
                   ? t("dailyInfo.copied")
-                  : `${inviteCode.substring(0, 12)}...`}
+                  : formatAddress(inviteCode, 6, 6)}
               </div>
             </div>
           </div>

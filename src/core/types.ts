@@ -338,6 +338,7 @@ export interface DriftAssessment {
   forkSuspected: boolean; // localTipHash != majorityTipHash 且高度接近
   healthLevel: "HEALTHY" | "MINOR_DRIFT" | "CRITICAL_DRIFT";
   reason: string; // 用于 UI 展示
+  minPeersRequired?: number; // Minimum peers required for assessment
 }
 
 /**

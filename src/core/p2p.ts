@@ -916,7 +916,7 @@ export class BrowserP2PNode implements P2PNode {
 
     // Handle connection state changes
     connection.onconnectionstatechange = () => {
-      console.log(`[P2P] Connection state for ${peerId.substring(0, 16)}...: ${connection.connectionState}`);
+      // Removed debug log: Connection state changes
       if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
         console.warn(`[P2P] ⚠️ Connection failed/disconnected for ${peerId.substring(0, 16)}..., state: ${connection.connectionState}`);
       }

@@ -633,6 +633,12 @@ export interface Translations {
       averageBlockTime: string;
       difficultyChange: string;
       difficultyExplanation: string;
+      lastBlocksActualVsExpected: string;
+      difficultyIncreased: string;
+      difficultyDecreased: string;
+      difficultyUnchanged: string;
+      genesisBlockUsingInitial: string;
+      heightLessThanInterval: string;
     };
 
     // Common (expanded)
@@ -802,6 +808,9 @@ export interface Translations {
       syncProgress: string;
       behind: string;
       syncingNow: string;
+      syncingMessage: string;
+      resyncingFromSnapshot: string;
+      localForkConflict: string;
     };
 
     // Global Consistency Sentinel
@@ -826,6 +835,20 @@ export interface Translations {
       admissionStatus: string;
       bootstrapStatus: string;
       localTip: string;
+      label: string;
+      healthyOnMainnet: string;
+      degraded: string;
+      blocked: string;
+      miningReady: string;
+      safe: string;
+      safeMode: string;
+      guardedMode: string;
+      localOnlyMode: string;
+      healthyMiningTip: string;
+      safeMiningDesc: string;
+      degradedMiningDesc: string;
+      localOnlyMiningDesc: string;
+      cannotMineDesc: string;
     };
 
     // Height Sync
@@ -883,6 +906,20 @@ export interface Translations {
       miningBlocked: string;
       stopMining: string;
       startMining: string;
+      statusCheckFailed: string;
+      cannotCheckStatus: string;
+      miningIsBlocked: string;
+    };
+
+    // Mining Guard Reasons
+    miningGuard: {
+      firstYearRuleInsufficientPeers: string;
+      firstYearRuleMultipleReasons: string;
+      rule2InsufficientQuorum: string;
+      needAtLeastIndependentPeers: string;
+      quorumScoreInsufficient: string;
+      bootstrapIncomplete: string;
+      criticalStateDrift: string;
     };
 
     // Mining Readiness
@@ -1027,18 +1064,135 @@ export interface Translations {
 
     // Config Checker
     configChecker: {
+      title: string;
+      passed: string;
+      warnings: string;
+      errors: string;
       browserEnvironment: string;
+      runningInBrowser: string;
+      notRunningInBrowser: string;
+      webCryptoApi: string;
+      webCryptoApiAvailable: string;
+      webCryptoApiNotAvailable: string;
+      webCryptoApiRecommendation: string;
+      webWorkerSupport: string;
+      webWorkersAvailable: string;
+      webWorkersNotAvailable: string;
+      webWorkersRecommendation: string;
+      localStorage: string;
+      localStorageAvailable: string;
+      localStorageNotAvailable: string;
+      localStorageRecommendation: string;
       networkId: string;
+      network: string;
       initialDifficulty: string;
+      difficulty: string;
+      difficultyTooLow: string;
+      difficultyRecommendation: string;
+      targetBlockTime: string;
+      secondsPerBlock: string;
+      blockTimeOutsideRange: string;
+      blockTimeRecommendation: string;
+      lightNodeWindow: string;
+      keepingRecentBlocks: string;
+      windowTooSmall: string;
+      windowRecommendation: string;
       snapshotInterval: string;
+      snapshotEveryBlocks: string;
+      intervalTooFrequent: string;
+      intervalRecommendation: string;
+      finality: string;
+      finalityEnabled: string;
+      finalityDisabled: string;
+      finalityRecommendation: string;
+      finalityCommitteeSize: string;
+      committeeSizeOutsideRange: string;
+      committeeSizeRecommendation: string;
       chainContext: string;
+      chainNotInitialized: string;
+      p2pConnection: string;
+      connectedToNetwork: string;
       notConnected: string;
+      p2pRecommendation: string;
       nodeAddress: string;
       walletInitialized: string;
+      walletNotInitialized: string;
       miningStatus: string;
       miningActive: string;
+      categorySystem: string;
+      categoryStorage: string;
+      categoryChain: string;
+      categoryP2p: string;
+      categoryWallet: string;
+      categoryMining: string;
     };
 
+
+    // Chain Reset
+    chainReset: {
+      confirmMessage: string;
+      warning: string;
+    };
+
+    // Fork Detection
+    forkDetection: {
+      forkDetected: string;
+    };
+
+    // Local Instance
+    localInstance: {
+      alreadyHasMiningInstance: string;
+      clearedOldInstance: string;
+      detectedAnotherInstance: string;
+      cleanupFailed: string;
+      leaderOnlyMining: string;
+      followerModeDesc: string;
+      followerModeTip: string;
+    };
+
+    // Cold Start
+    coldStart: {
+      title: string;
+      description: string;
+    };
+
+    // Mainnet Admission
+    mainnetAdmission: {
+      firstYearMode: string;
+      rule4: string;
+    };
+
+    // Token Economics
+    tokenEconomics: {
+      totalSupply: string;
+      emissionPeriod: string;
+      blockTime: string;
+      year1Output: string;
+      first3Years: string;
+      blocksPerYear: string;
+      description: string;
+      totalSupplyStrict: string;
+    };
+
+    // Network Mode Switch
+    networkMode: {
+      switchedToMainnet: string;
+      switchedToDev: string;
+      switchedToMainnetDisconnect: string;
+      switchedToDevDisconnect: string;
+    };
+
+    // Mining Warning
+    miningWarning: {
+      wrongChainWarning: string;
+    };
+
+    // Storage Cleanup
+    storageCleanup: {
+      checkUnusedStorage: string;
+      noUnusedStorage: string;
+      warningDesc: string;
+    };
 
 }
 
@@ -1631,6 +1785,12 @@ export const translations: Record<Locale, Translations> = {
       averageBlockTime: "Average Block Time:",
       difficultyChange: "Difficulty Change:",
       difficultyExplanation: "Difficulty Explanation:",
+      lastBlocksActualVsExpected: "最后 {interval} 个区块：实际 {actual} 秒 vs 预期 {expected} 秒（比率：{ratio}）。",
+      difficultyIncreased: "难度从 {current} 增加到 {new}（区块太慢）",
+      difficultyDecreased: "难度从 {current} 减少到 {new}（区块太快）",
+      difficultyUnchanged: "难度保持在 {difficulty}",
+      genesisBlockUsingInitial: "创世区块 - 使用初始难度",
+      heightLessThanInterval: "高度 {height} < 间隔 {interval} - 使用初始难度",
     },
     commonExpanded: {
       seconds: "秒",
@@ -1784,6 +1944,9 @@ export const translations: Record<Locale, Translations> = {
       syncProgress: "同步进度",
       behind: "落后",
       syncingNow: "正在同步中...",
+      syncingMessage: "正在同步中...",
+      resyncingFromSnapshot: "⚠️ 节点正在从快照同步，挖矿已禁用直到完全同步完成。",
+      localForkConflict: "⚠️ 检测到本地分叉冲突，将自动回滚并重新同步。",
     },
     globalSentinel: {
       title: "🔍 全局一致性监控",
@@ -1804,6 +1967,20 @@ export const translations: Record<Locale, Translations> = {
       admissionStatus: "准入状态",
       bootstrapStatus: "Bootstrap 状态",
       localTip: "本地 Tip",
+      label: "网络健康状态:",
+      healthyOnMainnet: "✅ 健康 & 主网",
+      degraded: "⚠️ 降级",
+      blocked: "🚫 已阻止",
+      miningReady: "挖矿就绪:",
+      safe: "✅ 安全",
+      safeMode: "✅ 安全模式（网络健康）",
+      guardedMode: "🟡 保护模式（低连接）",
+      localOnlyMode: "🔵 本地训练模式",
+      healthyMiningTip: "只要这里显示 ✅ 健康 & 主网，你当前的挖矿就是有效的。",
+      safeMiningDesc: "网络健康，可安全挖矿。区块将被主网接受。",
+      degradedMiningDesc: "低连接模式，风险挖矿。区块可能不会被主网接受。",
+      localOnlyMiningDesc: "本地训练模式，完全本地挖矿，不参与网络共识。",
+      cannotMineDesc: "无法挖矿：不满足最低要求。",
     },
     heightSync: {
       shadowNode: "Shadow Node",
@@ -1853,6 +2030,18 @@ export const translations: Record<Locale, Translations> = {
       miningBlocked: "当前无法挖矿",
       stopMining: "停止挖矿",
       startMining: "开始挖矿",
+      statusCheckFailed: "状态检查失败",
+      cannotCheckStatus: "无法检查挖矿状态",
+      miningIsBlocked: "挖矿被阻止",
+    },
+    miningGuard: {
+      firstYearRuleInsufficientPeers: "首年规则：需要至少 {required} 个独立 IP 对等节点，目前只有 {current} 个",
+      firstYearRuleMultipleReasons: "首年规则：{reasons}",
+      rule2InsufficientQuorum: "规则 2：当前 Quorum 分数为 {current}，首年要求 ≥ {required}",
+      needAtLeastIndependentPeers: "需要 ≥{required} 个独立对等节点（当前: {current}）",
+      quorumScoreInsufficient: "Quorum 分数 {current} < 要求 {required}",
+      bootstrapIncomplete: "Bootstrap 未完成",
+      criticalStateDrift: "检测到严重状态漂移",
     },
     miningReadiness: {
       bootstrapIncomplete: "Bootstrap 未完成",
@@ -1979,16 +2168,115 @@ export const translations: Record<Locale, Translations> = {
       dismiss: "关闭",
     },
     configChecker: {
-      browserEnvironment: "Browser Environment",
-      networkId: "Network ID",
-      initialDifficulty: "Initial Difficulty",
-      snapshotInterval: "Snapshot Interval",
-      chainContext: "Chain Context",
-      notConnected: "Not connected",
-      nodeAddress: "Node Address",
-      walletInitialized: "Wallet initialized",
-      miningStatus: "Mining Status",
-      miningActive: "Mining active",
+      title: "配置检查",
+      passed: "通过",
+      warnings: "警告",
+      errors: "错误",
+      browserEnvironment: "浏览器环境",
+      runningInBrowser: "在浏览器中运行",
+      notRunningInBrowser: "未在浏览器中运行",
+      webCryptoApi: "WebCrypto API",
+      webCryptoApiAvailable: "WebCrypto API 可用",
+      webCryptoApiNotAvailable: "WebCrypto API 不可用",
+      webCryptoApiRecommendation: "使用现代浏览器（Chrome、Firefox、Safari、Edge）",
+      webWorkerSupport: "Web Worker 支持",
+      webWorkersAvailable: "Web Workers 可用",
+      webWorkersNotAvailable: "Web Workers 不可用",
+      webWorkersRecommendation: "挖矿将在主线程运行（可能阻塞 UI）",
+      localStorage: "localStorage",
+      localStorageAvailable: "localStorage 可用",
+      localStorageNotAvailable: "localStorage 不可用",
+      localStorageRecommendation: "在浏览器设置中启用 cookies/localStorage",
+      networkId: "网络 ID",
+      network: "网络",
+      initialDifficulty: "初始难度",
+      difficulty: "难度",
+      difficultyTooLow: "难度过低",
+      difficultyRecommendation: "建议：设置难度 >= 1 以确保安全",
+      targetBlockTime: "目标区块时间",
+      secondsPerBlock: "{seconds} 秒/区块",
+      blockTimeOutsideRange: "区块时间超出推荐范围",
+      blockTimeRecommendation: "推荐：5-60 秒",
+      lightNodeWindow: "轻节点窗口",
+      keepingRecentBlocks: "保留最近 {count} 个区块",
+      windowTooSmall: "窗口太小",
+      windowRecommendation: "推荐：>= 10 个区块以确保安全",
+      snapshotInterval: "快照间隔",
+      snapshotEveryBlocks: "每 {count} 个区块创建快照",
+      intervalTooFrequent: "间隔过于频繁",
+      intervalRecommendation: "推荐：>= 10 个区块",
+      finality: "最终性",
+      finalityEnabled: "已启用（{count} 个成员）",
+      finalityDisabled: "快速最终性已禁用",
+      finalityRecommendation: "启用以获得更快的确认",
+      finalityCommitteeSize: "最终性委员会大小",
+      committeeSizeOutsideRange: "委员会大小超出推荐范围",
+      committeeSizeRecommendation: "推荐：7-21 个成员",
+      chainContext: "链上下文",
+      chainNotInitialized: "链未初始化",
+      p2pConnection: "P2P 连接",
+      connectedToNetwork: "已连接到网络",
+      notConnected: "未连接",
+      p2pRecommendation: "连接到 P2P 网络以同步区块",
+      nodeAddress: "节点地址",
+      walletInitialized: "钱包已初始化",
+      walletNotInitialized: "钱包未初始化",
+      miningStatus: "挖矿状态",
+      miningActive: "挖矿活跃",
+      categorySystem: "系统",
+      categoryStorage: "存储",
+      categoryChain: "链",
+      categoryP2p: "P2P",
+      categoryWallet: "钱包",
+      categoryMining: "挖矿",
+    },
+    chainReset: {
+      confirmMessage: "这将清除所有链数据和快照，然后重新开始。继续吗？",
+      warning: "⚠️ 警告：这将永久删除所有链数据和快照，然后从创世区块重新开始。",
+    },
+    forkDetection: {
+      forkDetected: "⚠️ 检测到分叉，已自动停止挖矿",
+    },
+    localInstance: {
+      alreadyHasMiningInstance: "本机已有一个挖矿实例",
+      clearedOldInstance: "✅ 已清理旧的实例信息，当前实例现在是 LEADER，可以开始挖矿",
+      detectedAnotherInstance: "⚠️ 检测到另一个活跃实例：{instanceId}。如果确定没有其他标签页/窗口打开，请刷新页面后再试。",
+      cleanupFailed: "⚠️ 清理完成，但选举未成功。请刷新页面重试。",
+      leaderOnlyMining: "仅 LEADER 可挖矿",
+      followerModeDesc: "此标签页是 FOLLOWER。只有本机的 LEADER 标签页可以在主网挖矿。",
+      followerModeTip: "提示：关闭其他标签页后刷新本页，或找到 LEADER 标签页进行挖矿。",
+    },
+    coldStart: {
+      title: "冷启动模式",
+      description: "网络处于冷启动阶段：只有少数矿工在线。你的区块仍然有效，但安全性低于成熟阶段。",
+    },
+    mainnetAdmission: {
+      firstYearMode: "第一年模式",
+      rule4: "规则 4: 只有 LEADER 标签页可以在主网挖矿",
+    },
+    tokenEconomics: {
+      totalSupply: "总供应量：10 亿 IDC（固定上限）",
+      emissionPeriod: "发行周期：10 年（不是 100 年）",
+      blockTime: "区块时间：约 10 秒",
+      year1Output: "第一年产出：50%（500M IDC）",
+      first3Years: "前 3 年产出：90%（875M IDC）",
+      blocksPerYear: "每年区块数：3,153,600 个区块",
+      description: "IDC 采用最大化激励模型，专为浏览器挖矿优化。总供应量固定为 10 亿 IDC，通过 10 年逐步发行。第一年产出 50%（500M IDC），前 3 年产出 90%（875M IDC），最大化早期参与者的吸引力。",
+      totalSupplyStrict: "总供应量严格限制在 10 亿 IDC，永远不会超过此上限。",
+    },
+    networkMode: {
+      switchedToMainnet: "已切换到主网模式。请刷新页面以使网络ID更改生效。\n\n注意：切换到主网后，您将连接到主网节点，但本地链数据可能需要重置。",
+      switchedToDev: "已切换到开发模式。请刷新页面以使网络ID更改生效。",
+      switchedToMainnetDisconnect: "已切换到主网模式。请先断开连接，然后刷新页面以使网络ID更改生效。\n\n注意：切换到主网后，您将连接到主网节点，但本地链数据可能需要重置。",
+      switchedToDevDisconnect: "已切换到开发模式。请先断开连接，然后刷新页面以使网络ID更改生效。",
+    },
+    miningWarning: {
+      wrongChainWarning: "警告：你的节点可能在错误链或孤立网络上挖矿，请检查网络连接和同步状态。",
+    },
+    storageCleanup: {
+      checkUnusedStorage: "检查并清理未使用的本地存储数据。这不会影响链数据。",
+      noUnusedStorage: "没有发现未使用的存储数据。",
+      warningDesc: "这些操作会永久删除数据。请确保您了解操作的后果。建议在执行前备份重要数据。",
     },
   },
   en: {
@@ -2579,6 +2867,12 @@ export const translations: Record<Locale, Translations> = {
       averageBlockTime: "Average Block Time:",
       difficultyChange: "Difficulty Change:",
       difficultyExplanation: "Difficulty Explanation:",
+      lastBlocksActualVsExpected: "Last {interval} blocks: {actual}s actual vs {expected}s expected (ratio: {ratio}).",
+      difficultyIncreased: "Difficulty increased from {current} to {new} (blocks too slow)",
+      difficultyDecreased: "Difficulty decreased from {current} to {new} (blocks too fast)",
+      difficultyUnchanged: "Difficulty unchanged at {difficulty}",
+      genesisBlockUsingInitial: "Genesis block - using initial difficulty",
+      heightLessThanInterval: "Height {height} < interval {interval} - using initial difficulty",
     },
     commonExpanded: {
       seconds: "s",
@@ -2732,6 +3026,9 @@ export const translations: Record<Locale, Translations> = {
       syncProgress: "Sync Progress",
       behind: "behind",
       syncingNow: "Syncing...",
+      syncingMessage: "Syncing...",
+      resyncingFromSnapshot: "⚠️ Node is resyncing from snapshot, mining is disabled until fully synced.",
+      localForkConflict: "⚠️ Local fork conflict detected, will auto-rollback and resync.",
     },
     globalSentinel: {
       title: "🔍 Global Consistency Sentinel",
@@ -2752,6 +3049,20 @@ export const translations: Record<Locale, Translations> = {
       admissionStatus: "Admission Status",
       bootstrapStatus: "Bootstrap Status",
       localTip: "Local Tip",
+      label: "Network Health:",
+      healthyOnMainnet: "✅ Healthy & On Mainnet",
+      degraded: "⚠️ Degraded",
+      blocked: "🚫 Blocked",
+      miningReady: "Mining Ready:",
+      safe: "✅ SAFE",
+      safeMode: "✅ SAFE Mode (Network Healthy)",
+      guardedMode: "🟡 GUARDED Mode (Low Connectivity)",
+      localOnlyMode: "🔵 LOCAL-ONLY Mode",
+      healthyMiningTip: "As long as it shows ✅ Healthy & On Mainnet here, your current mining is valid.",
+      safeMiningDesc: "Network healthy, safe to mine. Blocks will be accepted by mainnet.",
+      degradedMiningDesc: "Low connectivity mode, risky mining. Blocks may not be accepted by mainnet.",
+      localOnlyMiningDesc: "Local training mode, completely local mining, not participating in network consensus.",
+      cannotMineDesc: "Cannot mine: minimum requirements not met.",
     },
     heightSync: {
       shadowNode: "Shadow Node",
@@ -2801,6 +3112,18 @@ export const translations: Record<Locale, Translations> = {
       miningBlocked: "Mining Blocked",
       stopMining: "Stop Mining",
       startMining: "Start Mining",
+      statusCheckFailed: "Status Check Failed",
+      cannotCheckStatus: "Cannot check mining status",
+      miningIsBlocked: "Mining is blocked",
+    },
+    miningGuard: {
+      firstYearRuleInsufficientPeers: "First Year Rule: Need at least {required} independent IP peer nodes, currently only {current}",
+      firstYearRuleMultipleReasons: "First Year Rule: {reasons}",
+      rule2InsufficientQuorum: "Rule 2: Current Quorum score is {current}, first year requires ≥ {required}",
+      needAtLeastIndependentPeers: "Need ≥{required} independent peer nodes (current: {current})",
+      quorumScoreInsufficient: "Quorum score {current} < required {required}",
+      bootstrapIncomplete: "Bootstrap incomplete",
+      criticalStateDrift: "Critical state drift detected",
     },
     miningReadiness: {
       bootstrapIncomplete: "Bootstrap Incomplete",
@@ -2927,16 +3250,115 @@ export const translations: Record<Locale, Translations> = {
       dismiss: "Dismiss",
     },
     configChecker: {
+      title: "Configuration Check",
+      passed: "passed",
+      warnings: "warnings",
+      errors: "errors",
       browserEnvironment: "Browser Environment",
+      runningInBrowser: "Running in browser",
+      notRunningInBrowser: "Not running in browser",
+      webCryptoApi: "WebCrypto API",
+      webCryptoApiAvailable: "WebCrypto API available",
+      webCryptoApiNotAvailable: "WebCrypto API not available",
+      webCryptoApiRecommendation: "Use a modern browser (Chrome, Firefox, Safari, Edge)",
+      webWorkerSupport: "Web Worker Support",
+      webWorkersAvailable: "Web Workers available",
+      webWorkersNotAvailable: "Web Workers not available",
+      webWorkersRecommendation: "Mining will run on main thread (may block UI)",
+      localStorage: "localStorage",
+      localStorageAvailable: "localStorage available",
+      localStorageNotAvailable: "localStorage not available",
+      localStorageRecommendation: "Enable cookies/localStorage in browser settings",
       networkId: "Network ID",
+      network: "Network",
       initialDifficulty: "Initial Difficulty",
+      difficulty: "Difficulty",
+      difficultyTooLow: "Difficulty too low",
+      difficultyRecommendation: "Set difficulty >= 1 for security",
+      targetBlockTime: "Target Block Time",
+      secondsPerBlock: "{seconds}s per block",
+      blockTimeOutsideRange: "Block time outside recommended range",
+      blockTimeRecommendation: "Recommended: 5-60 seconds",
+      lightNodeWindow: "Light Node Window",
+      keepingRecentBlocks: "Keeping {count} recent blocks",
+      windowTooSmall: "Window too small",
+      windowRecommendation: "Recommended: >= 10 blocks for safety",
       snapshotInterval: "Snapshot Interval",
+      snapshotEveryBlocks: "Snapshot every {count} blocks",
+      intervalTooFrequent: "Interval too frequent",
+      intervalRecommendation: "Recommended: >= 10 blocks",
+      finality: "Finality",
+      finalityEnabled: "Enabled ({count} members)",
+      finalityDisabled: "Fast finality disabled",
+      finalityRecommendation: "Enable for faster confirmation",
+      finalityCommitteeSize: "Finality Committee Size",
+      committeeSizeOutsideRange: "Committee size outside recommended range",
+      committeeSizeRecommendation: "Recommended: 7-21 members",
       chainContext: "Chain Context",
+      chainNotInitialized: "Chain not initialized",
+      p2pConnection: "P2P Connection",
+      connectedToNetwork: "Connected to network",
       notConnected: "Not connected",
+      p2pRecommendation: "Connect to P2P network for block sync",
       nodeAddress: "Node Address",
       walletInitialized: "Wallet initialized",
+      walletNotInitialized: "Wallet not initialized",
       miningStatus: "Mining Status",
       miningActive: "Mining active",
+      categorySystem: "SYSTEM",
+      categoryStorage: "STORAGE",
+      categoryChain: "CHAIN",
+      categoryP2p: "P2P",
+      categoryWallet: "WALLET",
+      categoryMining: "MINING",
+    },
+    chainReset: {
+      confirmMessage: "This will clear all chain data and snapshots, then start fresh. Continue?",
+      warning: "⚠️ Warning: This will permanently delete all chain data and snapshots, then start fresh from genesis block.",
+    },
+    forkDetection: {
+      forkDetected: "⚠️ Fork detected, mining stopped automatically",
+    },
+    localInstance: {
+      alreadyHasMiningInstance: "This device already has a mining instance",
+      clearedOldInstance: "✅ Cleared old instance info, current instance is now LEADER, can start mining",
+      detectedAnotherInstance: "⚠️ Detected another active instance: {instanceId}. If you're sure no other tabs/windows are open, please refresh the page and try again.",
+      cleanupFailed: "⚠️ Cleanup completed, but election failed. Please refresh the page and try again.",
+      leaderOnlyMining: "Only LEADER tab can mine on mainnet",
+      followerModeDesc: "This tab is FOLLOWER. Only the LEADER tab on this device can mine on mainnet.",
+      followerModeTip: "Tip: Close other tabs and refresh this page, or find the LEADER tab to mine.",
+    },
+    coldStart: {
+      title: "Cold Start Mode",
+      description: "Network is in cold start phase: only a few miners are online. Your blocks are still valid, but security is lower than mature phase.",
+    },
+    mainnetAdmission: {
+      firstYearMode: "First Year Mode",
+      rule4: "Rule 4: Only LEADER tabs can mine on mainnet",
+    },
+    tokenEconomics: {
+      totalSupply: "Total Supply: 1 billion IDC (fixed cap)",
+      emissionPeriod: "Emission Period: 10 years (not 100 years)",
+      blockTime: "Block Time: ~10 seconds",
+      year1Output: "Year 1 Output: 50% (500M IDC)",
+      first3Years: "First 3 Years: 90% (875M IDC)",
+      blocksPerYear: "Blocks per Year: 3,153,600 blocks",
+      description: "IDC adopts a maximized incentive model, optimized for browser mining. Total supply is fixed at 1 billion IDC, issued gradually over 10 years. Year 1 output is 50% (500M IDC), first 3 years output is 90% (875M IDC), maximizing early participant attraction.",
+      totalSupplyStrict: "Total supply is strictly limited to 1 billion IDC, never exceeding this cap.",
+    },
+    networkMode: {
+      switchedToMainnet: "Switched to mainnet mode. Please refresh the page for the network ID change to take effect.\n\nNote: After switching to mainnet, you will connect to mainnet nodes, but local chain data may need to be reset.",
+      switchedToDev: "Switched to dev mode. Please refresh the page for the network ID change to take effect.",
+      switchedToMainnetDisconnect: "Switched to mainnet mode. Please disconnect first, then refresh the page for the network ID change to take effect.\n\nNote: After switching to mainnet, you will connect to mainnet nodes, but local chain data may need to be reset.",
+      switchedToDevDisconnect: "Switched to dev mode. Please disconnect first, then refresh the page for the network ID change to take effect.",
+    },
+    miningWarning: {
+      wrongChainWarning: "Warning: Your node may be mining on the wrong chain or isolated network, please check network connection and sync status.",
+    },
+    storageCleanup: {
+      checkUnusedStorage: "Check and clean unused local storage data. This will not affect chain data.",
+      noUnusedStorage: "No unused storage data found.",
+      warningDesc: "These operations will permanently delete data. Please make sure you understand the consequences. It is recommended to backup important data before execution.",
     },
   },
 };

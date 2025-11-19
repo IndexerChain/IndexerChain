@@ -6,6 +6,8 @@
 
 import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
+import { useI18n } from "../../i18n/useI18n.js";
+import { formatNumber, formatAddress } from "../../utils/format.js";
 
 interface QuickStatusDashboardProps {
   chainContext: ChainContext | null;
@@ -32,9 +34,10 @@ export function QuickStatusDashboard({
   miningGuardResult,
   localRole,
   height,
-  locale,
+  locale: _locale,
   onQuickAction,
 }: QuickStatusDashboardProps) {
+  const { locale } = useI18n();
   const isZh = locale === "zh";
 
   const getMiningStatus = () => {
@@ -60,7 +63,7 @@ export function QuickStatusDashboard({
   };
 
   const miningStatus = getMiningStatus();
-  const balance = chainContext && nodeAddress ? chainContext.indexState.getBalance(nodeAddress as any).toFixed(2) : "0.00";
+  const balance = chainContext && nodeAddress ? formatNumber(chainContext.indexState.getBalance(nodeAddress as any), 2, locale === "zh" ? "zh-CN" : "en-US") : "0.00";
 
   return (
     <div
@@ -135,7 +138,7 @@ export function QuickStatusDashboard({
           </div>
           {nodeAddress && (
             <div style={{ fontSize: "0.75rem", opacity: 0.8, marginTop: "0.25rem" }}>
-              {nodeAddress.substring(0, 12)}...
+              {formatAddress(nodeAddress, 6, 6)}
             </div>
           )}
         </div>

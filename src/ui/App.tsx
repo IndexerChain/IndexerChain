@@ -68,6 +68,7 @@ import { PrivacyPanel } from "./privacy/PrivacyPanel.js";
 import { GlobalSentinelPanel } from "./GlobalSentinelPanel.js";
 import { RuntimeManager } from "../core/runtimeManager.js";
 import { useI18n } from "../i18n/useI18n.js";
+import { formatNumber, formatAddress, formatPercent, formatInteger } from "../utils/format.js";
 import { getLocalInstanceCoordinator, type LocalInstanceRole, type LeaderInfo } from "../core/localInstance.js";
 import { getLocalStateCoordinator } from "../core/localStateCoordinator.js";
 import { NetworkHealthPanel } from "./network/NetworkHealthPanel.js";
@@ -590,11 +591,11 @@ function App() {
             const inviteAddress = parseReferralCode(inviteCode);
             
             if (inviteAddress) {
-              console.log("[App] Found invite code in URL, parsed address:", inviteAddress);
+              // Removed debug log: [App] Found invite code
               setPendingInviteAddress(inviteAddress);
             } else if (inviteCode.startsWith("idc_")) {
               // Also try direct address format (idc_...)
-              console.log("[App] Found invite address directly in URL:", inviteCode);
+              // Removed debug log: [App] Found invite address
               setPendingInviteAddress(inviteCode);
             } else {
               console.warn("[App] Invalid invite code format:", inviteCode);
@@ -602,7 +603,7 @@ function App() {
           }).catch(() => {
             // If import fails, try direct address format
             if (inviteCode.startsWith("idc_")) {
-              console.log("[App] Found invite address directly in URL:", inviteCode);
+              // Removed debug log: [App] Found invite address
               setPendingInviteAddress(inviteCode);
             } else {
               console.warn("[App] Invalid invite code format:", inviteCode);
@@ -675,15 +676,15 @@ function App() {
             `This usually happens when chain data is corrupted (e.g., invalid transaction in a block).\n\n` +
             `Solution: Click the "Reset Chain" button below to clear all chain data and start fresh.`;
           setError(fullErrorMsg);
-          console.log("[App] Set error (corruption):", fullErrorMsg.substring(0, 200));
+          // Removed debug log: [App] Set error
         } else {
           const fullErrorMsg = `Failed to initialize chain: ${errorMsg}\n\n` +
             `If this persists, try resetting the chain using the button below.`;
           setError(fullErrorMsg);
-          console.log("[App] Set error (other):", fullErrorMsg.substring(0, 200));
+          // Removed debug log: [App] Set error
         }
         
-        console.log("[App] Set needsReset=true, error length:", errorMsg.length);
+        // Removed debug log: [App] Set needsReset
         setLoading(false);
       }
     };
@@ -722,7 +723,7 @@ function App() {
             registration.active.postMessage({ type: 'start-keepalive' });
           }
           
-          console.log('[PWA] Service Worker ready for keepalive');
+          // Removed debug log: [PWA] Service Worker ready
         } catch (error) {
           console.warn('[PWA] Service Worker not available:', error);
         }
@@ -769,14 +770,14 @@ function App() {
         if ('wakeLock' in navigator) {
           try {
             wakeLock = await navigator.wakeLock.request('screen');
-            console.log('[PWA] Wake Lock acquired');
+            // Removed debug log: [PWA] Wake Lock acquired
             
             wakeLock.addEventListener('release', () => {
-              console.log('[PWA] Wake Lock released');
+              // Removed debug log: [PWA] Wake Lock released
             });
           } catch (error) {
             // Wake Lock might be denied or not supported
-            console.log('[PWA] Wake Lock not available:', error);
+            // Removed debug log: [PWA] Wake Lock not available
           }
         }
       };
@@ -1050,9 +1051,7 @@ function App() {
 
   // Handle chain reset (for Phase 5 migration or corruption recovery)
   const handleResetChain = () => {
-    const confirmMsg = locale === "zh" 
-      ? "这将清除所有链数据和快照，然后重新开始。继续吗？"
-      : "This will clear all chain data and snapshots, then start fresh. Continue?";
+    const confirmMsg = t("chainReset.confirmMessage");
     if (!confirm(confirmMsg)) {
       return;
     }
@@ -1194,8 +1193,8 @@ function App() {
     const p2p = chainContext.p2p;
 
     // Handle NEW_TX messages
-    p2p.onMessage("NEW_TX", async (tx: Tx, sender: string) => {
-      console.log("Received NEW_TX from", sender);
+    p2p.onMessage("NEW_TX", async (tx: Tx, _sender: string) => {
+      // Removed debug log: Received NEW_TX
       // Phase 5: Verify signature before adding
       const isValid = await verifyTxSignature(tx);
       if (!isValid) {
@@ -1296,7 +1295,7 @@ function App() {
     // Handle NEW_BLOCK messages (backward compatibility)
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("NEW_BLOCK", async (block: Block, sender: string) => {
-      console.log("Received NEW_BLOCK from", sender, "height:", block.header.height);
+      // Removed debug log: Received NEW_BLOCK
       const result = await handleReceivedBlock(block, chainContext, p2p, sender);
       if (result.handled) {
         // Remove transactions from mempool
@@ -1384,9 +1383,11 @@ function App() {
     // Phase 43: Support parallel sync with requestId
     p2p.onMessage("BLOCKS", async (data: { blocks: Block[]; requestId?: string }, sender: string) => {
       if (!data.blocks || data.blocks.length === 0) {
-        console.warn("[Sync] ⚠️ Received empty BLOCKS message from", sender.substring(0, 16));
+        logger.warn("[Sync] ⚠️ Received empty BLOCKS message from", sender.substring(0, 16));
         return;
       }
+      
+      logger.info(`[Sync] 📦 Received ${data.blocks.length} blocks from ${sender.substring(0, 16)}... (heights: ${data.blocks[0]?.header?.height || '?'}-${data.blocks[data.blocks.length - 1]?.header?.height || '?'})`);
       
       // Phase 43: Notify parallel sync manager if this is part of parallel sync
       if (data.requestId) {
@@ -1526,9 +1527,10 @@ function App() {
           }
         }
       } else if (!result.success) {
-        console.error("[Sync] ❌ Failed to append blocks:", result.error);
+        logger.error("[Sync] ❌ Failed to append blocks:", result.error);
       } else if (result.appended === 0) {
-        console.warn("[Sync] ⚠️ No blocks appended (may already have them)");
+        // This is normal when blocks already exist, but log it at debug level
+        logger.debug("[Sync] ⚠️ No blocks appended (may already have them)");
       }
     });
 
@@ -1574,7 +1576,7 @@ function App() {
                 bootstrapUrl: bootstrapUrl,
               };
               localStorage.setItem("indexerchain_app_state", JSON.stringify(state));
-              console.log(`[Auto-Connect] Saved connection state: autoConnect=true, bootstrapUrl=${bootstrapUrl}`);
+              // Removed debug log: [Auto-Connect] Saved connection state
             }
           } catch (e) {
             console.warn("Failed to save connection state:", e);
@@ -1642,12 +1644,10 @@ function App() {
           if (now - lastRequestTime > 3000) {
             (window as any)[lastRequestKey] = now;
             const peerCount = p2p.getPeerCount();
-            // Production: No console logs
             if (peerCount === 0) {
-              // Production: No console logs
+              logger.warn(`[Sync] ⚠️ Behind by ${behindBy} blocks but no peers connected`);
             } else {
-              // Production: No console logs
-              // const peerIds = Array.from(p2p.peers.keys()); // Unused in production
+              logger.info(`[Sync] 📥 Requesting ${requestRange} blocks (heights ${localHeight + 1}-${targetHeight}) from ${peerCount} peer(s)`);
               p2p.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: targetHeight,
@@ -1658,6 +1658,7 @@ function App() {
                 for (const peerId of peerIds) {
                   const peer = p2p.peers.get(peerId);
                   if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                    logger.debug(`[Sync] Direct request to peer ${peerId.substring(0, 16)}...`);
                     p2p.sendToPeer(peerId, "REQUEST_BLOCKS", {
                       fromHeight: localHeight + 1,
                       toHeight: targetHeight,
@@ -1671,15 +1672,28 @@ function App() {
           // Initial sync: request aggressively even without network height
           // Only do this if we don't have networkHeight yet (to avoid duplicate requests)
           const requestRange = 500;
-          // Production: No console logs
           const lastRequestKey = `lastBlockRequest_${localHeight + 1}_${localHeight + requestRange}`;
           const lastRequestTime = (window as any)[lastRequestKey] || 0;
           if (now - lastRequestTime > 5000) { // Request every 5 seconds for initial sync
             (window as any)[lastRequestKey] = now;
+            logger.info(`[Sync] Initial sync: requesting blocks from height ${localHeight + 1} to ${localHeight + requestRange} (no network height yet)`);
             p2p.broadcast("REQUEST_BLOCKS", {
               fromHeight: localHeight + 1,
               toHeight: localHeight + requestRange,
             });
+            // Also try direct peer requests
+            if (p2p.sendToPeer) {
+              const peerIds = Array.from(p2p.peers.keys());
+              for (const peerId of peerIds) {
+                const peer = p2p.peers.get(peerId);
+                if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                  p2p.sendToPeer(peerId, "REQUEST_BLOCKS", {
+              fromHeight: localHeight + 1,
+              toHeight: localHeight + requestRange,
+            });
+                }
+              }
+            }
           }
         }
       } else {
@@ -1854,7 +1868,7 @@ function App() {
               setTimeout(async () => {
                 try {
                   const targetHeight = payload.availableFromHeight - 1;
-                  console.log(`[Sync] Triggering snapshot downloader to find snapshot near height ${targetHeight}`);
+                  // Removed debug log: [Sync] Triggering snapshot downloader
                   // Wait a bit for SNAPSHOT_META responses to arrive
                   await new Promise(resolve => setTimeout(resolve, 1000));
                   const metas = await snapshotDownloader.requestSnapshotMeta(targetHeight);
@@ -1863,11 +1877,11 @@ function App() {
                     const suitableSnapshots = metas.filter(m => m.height <= targetHeight);
                     if (suitableSnapshots.length > 0) {
                       const bestSnapshot = suitableSnapshots.sort((a, b) => b.height - a.height)[0];
-                      console.log(`[Sync] Found suitable snapshot at height ${bestSnapshot.height}, starting download...`);
-                      snapshotDownloader.downloadSnapshot(bestSnapshot, {}, (progress) => {
-                        console.log(`[Sync] Snapshot download progress: ${progress.percent.toFixed(1)}% (${progress.receivedChunks}/${progress.totalChunks} chunks)`);
+                      // Removed debug log: [Sync] Found suitable snapshot
+                      snapshotDownloader.downloadSnapshot(bestSnapshot, {}, (_progress) => {
+                        // Removed debug log: [Sync] Snapshot download progress
                       }).then(() => {
-                        console.log(`[Sync] ✅ Snapshot downloaded successfully at height ${bestSnapshot.height}`);
+                        // Removed debug log: [Sync] Snapshot downloaded
                         // Snapshot will be applied automatically by the downloader
                       }).catch((error) => {
                         console.error(`[Sync] ❌ Failed to download snapshot:`, error);
@@ -1885,14 +1899,14 @@ function App() {
                     if (workerHasSnapshot && workerHeight > localHeight) {
                       // Worker has snapshot, try to download from Worker
                       const workerSnapshotMeta = (window as any).lastRootTipSnapshotMeta;
-                      console.log(`[Sync] Worker has snapshot at height ${workerSnapshotMeta.height}, attempting download...`);
+                      // Removed debug log: [Sync] Worker has snapshot
                       
                       setTimeout(async () => {
                         try {
-                          await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (progress) => {
-                            console.log(`[Sync] Snapshot download from Worker: ${progress.percent.toFixed(1)}%`);
+                          await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
+                            // Removed debug log: [Sync] Snapshot download from Worker
                           });
-                          console.log(`[Sync] ✅ Snapshot downloaded from Worker at height ${workerSnapshotMeta.height}`);
+                          // Removed debug log: [Sync] Snapshot downloaded from Worker
                           setError(""); // Clear error on success
                         } catch (error) {
                           console.error(`[Sync] ❌ Failed to download snapshot from Worker:`, error);
@@ -1919,11 +1933,11 @@ function App() {
             
             // Don't request blocks from available height if gap is too large
             // Wait for snapshot sync first
-            console.log(`[Sync] Gap too large (${gap}), waiting for snapshot sync before requesting blocks`);
+            // Removed debug log: [Sync] Gap too large
             return; // Don't process as regular GLOBAL_VIEW_RESPONSE
           } else {
             // Small gap, just request from available height
-            console.log(`[Sync] Peer indicates blocks available from height ${payload.availableFromHeight}, updating request range`);
+            // Removed debug log: [Sync] Peer indicates blocks available
             p2p.broadcast("REQUEST_BLOCKS", {
               fromHeight: payload.availableFromHeight,
               toHeight: Math.min(payload.height, payload.availableFromHeight + 500),
@@ -1941,6 +1955,11 @@ function App() {
         const localTip = chainContext.storage.getTip();
         const localHeight = localTip?.header.height ?? -1;
         const behindBy = networkHeight - localHeight;
+        
+        // Log when network height is discovered or changes significantly
+        if (lastKnownNetworkHeight !== networkHeight || (localHeight === 0 && networkHeight > 0)) {
+          logger.info(`[Sync] 📡 Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy} blocks`);
+        }
         
         // Suppress frequent sync status logs - only log when height changes significantly
         // console.log(`[Sync] Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy}`);
@@ -2834,7 +2853,7 @@ function App() {
       if (params.signalServers && params.signalServers.length > 0) {
         // Use signal servers from chainParams
         signalServersToUse = params.signalServers;
-        logger.info(`[Phase 45] Using ${signalServersToUse.length} signal server(s) from chainParams`);
+        logger.debug(`[Phase 45] Using ${signalServersToUse.length} signal server(s) from chainParams`);
       } else {
         // Fallback to single URL
         const urlToUse = bootstrapUrl || DEFAULT_MAINNET_SIGNALING;
@@ -2877,7 +2896,7 @@ function App() {
         
         if (params.shadowNodeUrls && params.shadowNodeUrls.length > 0) {
           shadowNodeUrls = params.shadowNodeUrls;
-          logger.info(`[Phase 45] Using ${shadowNodeUrls.length} shadow node URL(s) from chainParams`);
+          logger.debug(`[Phase 45] Using ${shadowNodeUrls.length} shadow node URL(s) from chainParams`);
         } else {
           // Fallback: derive from signal servers
           shadowNodeUrls = signalServersToUse.map(url => 
@@ -2901,7 +2920,7 @@ function App() {
             // Initialize shadow session
             const initialized = await shadowNode.initialize();
             if (initialized) {
-              logger.info(`[Phase 45] Shadow node initialized successfully with ${shadowNodeUrl}`);
+              logger.debug(`[Phase 45] Shadow node initialized successfully with ${shadowNodeUrl}`);
               shadowNodeInitialized = true;
               
               // Listen for state updates
@@ -3203,9 +3222,7 @@ function App() {
             if (isMining) handleStopMining();
             if (clusterMining) handleStopClusterMining();
             if (autoMining) setAutoMining(false);
-            setError(locale === "zh" 
-              ? "⚠️ 检测到分叉，已自动停止挖矿" 
-              : "⚠️ Fork detected, mining stopped automatically");
+            setError(t("forkDetection.forkDetected"));
           }
         });
         consensus.start();
@@ -3313,12 +3330,12 @@ function App() {
         
         // Also query network height using GLOBAL_VIEW_REQUEST (fallback)
         // This will work once we have peer connections
-        console.log(`[Sync] Querying network height from ${peerCount} peer(s)...`);
+        // Removed debug log: [Sync] Querying network height
         if (peerCount > 0) {
           p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
         } else {
           // If no peers yet, set up a periodic query
-          console.log(`[Sync] No peers yet, will query network height once peers connect`);
+          // Removed debug log: [Sync] No peers yet
           // The GLOBAL_VIEW_REQUEST will be sent automatically once peers connect
         }
         
@@ -3327,13 +3344,27 @@ function App() {
         // But only if we have peers
         if (peerCount > 0) {
           const requestRange = 500; // Increased for better initial sync
-          console.log(`[Sync] Requesting blocks from height ${localHeight + 1} to ${localHeight + requestRange}`);
+          logger.debug(`[Sync] Requesting blocks from height ${localHeight + 1} to ${localHeight + requestRange} (${requestRange} blocks)`);
           p2pNode.broadcast("REQUEST_BLOCKS", {
             fromHeight: localHeight + 1,
             toHeight: localHeight + requestRange,
           });
+          // Also try direct peer requests for better reliability
+          if (p2pNode.sendToPeer) {
+            const peerIds = Array.from(p2pNode.peers.keys());
+            for (const peerId of peerIds) {
+              const peer = p2pNode.peers.get(peerId);
+              if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                logger.debug(`[Sync] Direct request to peer ${peerId.substring(0, 16)}...`);
+                p2pNode.sendToPeer(peerId, "REQUEST_BLOCKS", {
+                  fromHeight: localHeight + 1,
+                  toHeight: localHeight + requestRange,
+                });
+              }
+            }
+          }
         } else {
-          console.log(`[Sync] No peers yet, will request blocks once peers connect`);
+          logger.warn(`[Sync] No peers connected yet. Waiting for peer connections...`);
         }
         
         // Also request peers to get more connections
@@ -3341,10 +3372,9 @@ function App() {
         
         // Log peer IDs for debugging
         if (peerCount > 0) {
-          const peerIds = Array.from(p2pNode.peers.keys());
-          console.log(`[Sync] Connected peer IDs:`, peerIds.map(id => id.substring(0, 16) + "..."));
+          // Removed debug log: [Sync] Connected peer IDs
         } else {
-          console.warn(`[Sync] No peers connected yet. Waiting for peer connections...`);
+          logger.warn(`[Sync] No peers connected yet. Waiting for peer connections...`);
         }
         
         // Phase 32: Listen for peer connection events to execute pending block requests
@@ -3372,11 +3402,24 @@ function App() {
             // If local height is 0 or very low, immediately request blocks
             // This ensures new nodes sync quickly
             if (localHeight <= 0) {
-              logger.debug(`[Phase 32] Local height is ${localHeight}, immediately requesting blocks from height 1`);
+              logger.info(`[Phase 32] Local height is ${localHeight}, immediately requesting blocks from height 1 to 500`);
               p2pNode.broadcast("REQUEST_BLOCKS", {
                 fromHeight: 1,
                 toHeight: 500, // Request first 500 blocks
               });
+              // Also try direct peer requests
+              if (p2pNode.sendToPeer) {
+                const peerIds = Array.from(p2pNode.peers.keys());
+                for (const peerId of peerIds) {
+                  const peer = p2pNode.peers.get(peerId);
+                  if (peer && peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                    p2pNode.sendToPeer(peerId, "REQUEST_BLOCKS", {
+                      fromHeight: 1,
+                      toHeight: 500,
+                    });
+                  }
+                }
+              }
             } else if (localHeight < 100) {
               // If height is low, also request aggressively
               logger.debug(`[Phase 32] Local height is low (${localHeight}), requesting blocks aggressively`);
@@ -3611,7 +3654,7 @@ function App() {
         );
         
         if (registered) {
-          console.log(`[App] ✅ Referral registered: ${minerAddr} invited by ${pendingInviteAddress}`);
+          // Removed debug log: [App] Referral registered
           setCurrentReferrerAddress(pendingInviteAddress);
           setPendingInviteAddress(null); // Clear pending
           
@@ -4347,7 +4390,7 @@ function App() {
       
       if (newHeight > lastHeightRef.current) {
         // Tip changed, restart mining if currently mining or auto-mining is enabled
-        console.log("[App] Tip height changed:", lastHeightRef.current, "->", newHeight);
+        // Removed debug log: [App] Tip height changed
         lastHeightRef.current = newHeight;
         
         // Handle single-threaded mining restart
@@ -4876,10 +4919,10 @@ function App() {
                   lineHeight: "1.5",
                   wordBreak: "break-word"
                 }}>
-                  ⚠️ <strong>Warning:</strong> This will permanently delete all chain data and snapshots, then start fresh from genesis block.
+                  ⚠️ <strong>{t("common.warning")}:</strong> {t("chainReset.warning")}
                 </p>
               </div>
-            ) : error.includes("本机已有一个挖矿实例") || error.includes("already has a mining instance") ? (
+            ) : error.includes(t("localInstance.alreadyHasMiningInstance")) || error.includes("already has a mining instance") ? (
               <div style={{ 
                 marginTop: "1.5rem", 
                 paddingTop: "1.5rem", 
@@ -4900,13 +4943,13 @@ function App() {
                       const newRole = localCoordinator.getRole();
                       const leaderInfo = localCoordinator.getLeaderInfo();
                       if (newRole === "LEADER") {
-                        setError("✅ 已清理旧的实例信息，当前实例现在是 LEADER，可以开始挖矿");
+                        setError(t("localInstance.clearedOldInstance"));
                         setTimeout(() => setError(""), 3000);
                       } else if (leaderInfo) {
                         // Still have a leader, might be another active instance
-                        setError(`⚠️ 检测到另一个活跃实例：${leaderInfo.instanceId}。如果确定没有其他标签页/窗口打开，请刷新页面后再试。`);
+                        setError(t("localInstance.detectedAnotherInstance", { instanceId: leaderInfo.instanceId }));
                       } else {
-                        setError("⚠️ 清理完成，但选举未成功。请刷新页面重试。");
+                        setError(t("localInstance.cleanupFailed"));
                       }
                     }, 1500);
                   }}
@@ -5000,7 +5043,7 @@ function App() {
                       {t("wallet.balance")}
                     </div>
                     <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white" }}>
-                      {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                      {formatNumber(chainContext.indexState.getBalance(nodeAddress as any), 2, locale === "zh" ? "zh-CN" : "en-US")} IDC
                     </div>
                   </div>
                 </div>
@@ -5030,7 +5073,7 @@ function App() {
                       color: "white",
                       wordBreak: "break-all"
                     }}>
-                      {nodeAddress}
+                      {formatAddress(nodeAddress, 8, 6)}
                     </span>
                     <button
                       onClick={() => {
@@ -5078,7 +5121,7 @@ function App() {
                   fontFamily: "monospace",
                   color: "white"
                 }}>
-                  {getOrCreateBrowserNodeId().substring(0, 16)}...
+                  {formatAddress(getOrCreateBrowserNodeId(), 8, 8)}
                 </div>
               </div>
             </div>
@@ -5333,7 +5376,7 @@ function App() {
               {/* Phase 30: Global Consistency Sentinel Panel - Collapsed by default */}
               {chainContext && chainContext.params.globalSentinelEnabled !== false && (
                 <AccordionCard
-                  title={locale === "zh" ? "🔍 全局一致性监控" : "🔍 Global Consistency Sentinel"}
+                  title={t("app.globalConsistencySentinel")}
                   defaultExpanded={false}
                   locale={locale}
                 >
@@ -5375,7 +5418,7 @@ function App() {
               {/* Phase 34: Network Health Dashboard - Collapsed by default */}
               {chainContext && (
                 <AccordionCard
-                  title={locale === "zh" ? "🌐 网络健康状态" : "🌐 Network Health"}
+                  title={t("app.networkHealthStatus")}
                   defaultExpanded={false}
                   locale={locale}
                 >
@@ -5577,28 +5620,26 @@ function App() {
                       fontSize: "0.85rem",
                       color: "#721c24"
                     }}>
-                      {locale === "zh" 
-                        ? "⚠️ 检测到本地分叉冲突，将自动回滚并重新同步。"
-                        : "⚠️ Local fork conflict detected, will auto-rollback and resync."}
+                      {t("localStateSync.localForkConflict")}
                     </div>
                   )}
                   
                   {/* Phase 29: Local State Sync Status */}
                   <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #ddd" }}>
                     <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-                      {locale === "zh" ? "本地状态同步" : "Local State Sync"}
+                      {t("localStateSync.title")}
                     </h3>
                     <div className="status-item">
-                      <span className="label">{locale === "zh" ? "同步状态" : "Sync Status"}:</span>
+                      <span className="label">{t("localStateSync.syncStatus")}:</span>
                       <span className="value">
                         {localStateSyncInfo.syncStatus === "synced" ? (
-                          <span style={{ color: "#28a745" }}>✓ {locale === "zh" ? "已同步" : "Synced"}</span>
+                          <span style={{ color: "#28a745" }}>✓ {t("localStateSync.synced")}</span>
                         ) : localStateSyncInfo.syncStatus === "syncing" ? (
-                          <span style={{ color: "#ffc107" }}>⟳ {locale === "zh" ? "同步中..." : "Syncing..."}</span>
+                          <span style={{ color: "#ffc107" }}>⟳ {t("localStateSync.syncing")}</span>
                         ) : localStateSyncInfo.syncStatus === "out_of_sync" ? (
-                          <span style={{ color: "#dc3545" }}>⚠ {locale === "zh" ? "未同步" : "Out of Sync"}</span>
+                          <span style={{ color: "#dc3545" }}>⚠ {t("localStateSync.outOfSync")}</span>
                         ) : (
-                          <span style={{ color: "#dc3545" }}>✗ {locale === "zh" ? "错误" : "Error"}</span>
+                          <span style={{ color: "#dc3545" }}>✗ {t("localStateSync.error")}</span>
                         )}
                       </span>
                     </div>
@@ -5612,19 +5653,17 @@ function App() {
                         fontSize: "0.85rem",
                         color: "#856404"
                       }}>
-                        {locale === "zh" 
-                          ? "⚠️ 节点正在从快照同步，挖矿已禁用直到完全同步完成。"
-                          : "⚠️ Node is resyncing from snapshot, mining is disabled until fully synced."}
+                        {t("localStateSync.resyncingFromSnapshot")}
                       </div>
                     )}
                     {localStateSyncInfo.lastSyncEpoch > 0 && (
                       <>
                         <div className="status-item">
-                          <span className="label">{locale === "zh" ? "最后同步高度" : "Last Sync Height"}:</span>
+                          <span className="label">{t("localStateSync.lastSyncHeight")}:</span>
                           <span className="value">{localStateSyncInfo.lastSyncEpoch}</span>
                         </div>
                         <div className="status-item">
-                          <span className="label">{locale === "zh" ? "最后同步时间" : "Last Sync Time"}:</span>
+                          <span className="label">{t("localStateSync.lastSyncTime")}:</span>
                           <span className="value" style={{ fontSize: "0.85rem" }}>
                             {new Date(localStateSyncInfo.lastSyncTime).toLocaleTimeString()}
                           </span>
@@ -5633,32 +5672,32 @@ function App() {
                     )}
                     {localStateSyncInfo.error && (
                       <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f8d7da", borderRadius: "4px", border: "1px solid #dc3545", fontSize: "0.85rem", color: "#721c24" }}>
-                        {locale === "zh" ? "错误" : "Error"}: {localStateSyncInfo.error}
+                        {t("localStateSync.error")}: {localStateSyncInfo.error}
                       </div>
                     )}
                     
                     {/* Consistency Check */}
                     <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #eee" }}>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "一致性检查" : "Consistency Check"}:</span>
+                        <span className="label">{t("localStateSync.consistencyCheck")}:</span>
                         <span className="value">
                           {consistencyCheck.isConsistent ? (
-                            <span style={{ color: "#28a745" }}>✓ {locale === "zh" ? "一致" : "Consistent"}</span>
+                            <span style={{ color: "#28a745" }}>✓ {t("localStateSync.consistent")}</span>
                           ) : (
-                            <span style={{ color: "#dc3545" }}>✗ {locale === "zh" ? "不一致" : "Inconsistent"}</span>
+                            <span style={{ color: "#dc3545" }}>✗ {t("localStateSync.inconsistent")}</span>
                           )}
                         </span>
                       </div>
                       {!consistencyCheck.isConsistent && (
                         <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.25rem" }}>
                           {!consistencyCheck.tipHashMatch && (
-                            <div>⚠ {locale === "zh" ? "Tip Hash 不匹配" : "Tip Hash mismatch"}</div>
+                            <div>⚠ {t("localStateSync.tipHashMismatch")}</div>
                           )}
                           {!consistencyCheck.heightMatch && (
-                            <div>⚠ {locale === "zh" ? "高度不匹配" : "Height mismatch"}</div>
+                            <div>⚠ {t("localStateSync.heightMismatch")}</div>
                           )}
                           {!consistencyCheck.stateCommitmentMatch && (
-                            <div>⚠ {locale === "zh" ? "State Commitment 不匹配" : "State Commitment mismatch"}</div>
+                            <div>⚠ {t("localStateSync.stateCommitmentMismatch")}</div>
                           )}
                         </div>
                       )}
@@ -5681,7 +5720,7 @@ function App() {
                   {syncStatus.networkHeight > 0 ? (
                     <>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "网络高度" : "Network Height"}:</span>
+                          <span className="label">{t("localStateSync.networkHeight")}:</span>
                         <span className="value" style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#28a745" }}>
                           {syncStatus.networkHeight}
                         </span>
@@ -5690,10 +5729,10 @@ function App() {
                         <div className="status-item" style={{ marginTop: "0.75rem" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
                             <span className="label" style={{ fontSize: "0.9rem" }}>
-                              {locale === "zh" ? "同步进度" : "Sync Progress"}
+                              {t("localStateSync.syncProgress")}
                             </span>
                             <span style={{ fontSize: "0.85rem", color: "#666" }}>
-                              {syncStatus.localHeight} / {syncStatus.networkHeight} ({syncStatus.behindBy} {locale === "zh" ? "落后" : "behind"})
+                              {syncStatus.localHeight} / {syncStatus.networkHeight} ({syncStatus.behindBy} {t("localStateSync.behind")})
                             </span>
                           </div>
                           <div style={{ 
@@ -5729,7 +5768,7 @@ function App() {
                               gap: "0.5rem"
                             }}>
                               <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
-                              {locale === "zh" ? "正在同步中..." : "Syncing..."}
+                              {t("localStateSync.syncingMessage")}
                             </div>
                           )}
                         </div>
@@ -5827,13 +5866,14 @@ function App() {
                   </div>
                   {/* Phase 30: Network Health Status */}
                   {(() => {
+                    const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
                     const isHealthy = isMainnetMode && 
                       isP2PConnected && 
-                      peerCount >= 3 && 
+                      peerCount >= minPeersRequired && 
                       miningGuardResult?.ok === true;
                     const isDegraded = isMainnetMode && 
                       isP2PConnected && 
-                      (peerCount < 3 || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code === "NOT_FINALIZED"));
+                      (peerCount < minPeersRequired || (miningGuardResult && !miningGuardResult.ok && miningGuardResult.code === "NOT_FINALIZED"));
                     
                     return (
                       <div className="status-item" style={{ 
@@ -5847,7 +5887,7 @@ function App() {
                       }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
                           <span className="label" style={{ fontWeight: "bold" }}>
-                            {locale === "zh" ? "网络健康状态:" : "Network Health:"}
+                            {t("networkHealth.label")}
                           </span>
                           <span className="value" style={{ 
                             color: isHealthy ? "#28a745" : isDegraded ? "#ffc107" : "#dc3545",
@@ -5855,18 +5895,16 @@ function App() {
                             fontSize: "1rem"
                           }}>
                             {isHealthy 
-                              ? (locale === "zh" ? "✅ 健康 & 主网" : "✅ Healthy & On Mainnet")
+                              ? t("networkHealth.healthyOnMainnet")
                               : isDegraded
-                              ? (locale === "zh" ? "⚠️ 降级" : "⚠️ Degraded")
-                              : (locale === "zh" ? "🚫 已阻止" : "🚫 Blocked")
+                              ? t("networkHealth.degraded")
+                              : t("networkHealth.blocked")
                             }
                           </span>
                         </div>
                         {isHealthy && (
                           <div style={{ fontSize: "0.85rem", color: "#155724", marginTop: "0.25rem" }}>
-                            {locale === "zh" 
-                              ? "只要这里显示 ✅ 健康 & 主网，你当前的挖矿就是有效的。"
-                              : "As long as this shows ✅ Healthy & On Mainnet, your current mining is effective."}
+                            {t("networkHealth.healthyMiningTip")}
                           </div>
                         )}
                         {/* Phase 33: Mining Ready Status with Mode */}
@@ -5882,27 +5920,19 @@ function App() {
                             switch (miningGuardResult.mode) {
                               case "SAFE":
                                 modeColor = "#28a745";
-                                modeDescription = locale === "zh" 
-                                  ? "网络健康，可安全挖矿。区块将被主网接受。"
-                                  : "Network healthy, safe to mine. Blocks will be accepted by mainnet.";
+                                modeDescription = t("networkHealth.safeMiningDesc");
                                 break;
                               case "GUARDED":
                                 modeColor = "#ffc107";
-                                modeDescription = locale === "zh"
-                                  ? "低连接模式，风险挖矿。区块可能不会被主网接受。"
-                                  : "Low connectivity mode, guarded mining. Blocks may not be accepted by mainnet.";
+                                modeDescription = t("networkHealth.degradedMiningDesc");
                                 break;
                               case "LOCAL_ONLY":
                                 modeColor = "#17a2b8";
-                                modeDescription = locale === "zh"
-                                  ? "本地训练模式，完全本地挖矿，不参与网络共识。"
-                                  : "Local training mode, completely local mining, not participating in network consensus.";
+                                modeDescription = t("networkHealth.localOnlyMiningDesc");
                                 break;
                               default:
                                 modeColor = "#dc3545";
-                                modeDescription = locale === "zh"
-                                  ? "无法挖矿：不满足最低要求。"
-                                  : "Cannot mine: Minimum requirements not met.";
+                                modeDescription = t("networkHealth.cannotMineDesc");
                             }
                             
                             // Get status message
@@ -5920,21 +5950,16 @@ function App() {
                                     const independentPeers = miningGuardResult.details?.independentPeerCount || 0;
                                     const quorumScore = miningGuardResult.details?.quorumScore || 0;
                                     const requiredQuorumScore = miningGuardResult.details?.requiredQuorumScore || 40;
-                                    statusMessage = locale === "zh"
-                                      ? `🟡 挖矿就绪：保护模式（第一年模式，${independentPeers} 个独立节点，Quorum ${quorumScore}/${requiredQuorumScore}）`
-                                      : `🟡 Mining Ready: GUARDED (First Year Mode, ${independentPeers} independent peers, Quorum ${quorumScore}/${requiredQuorumScore})`;
+                                    statusMessage = `🟡 ${t("networkHealth.miningReady")}: ${t("networkHealth.guardedMode")} (${t("mainnetAdmission.firstYearMode")}, ${independentPeers} ${t("network.independentPeers")}, Quorum ${quorumScore}/${requiredQuorumScore})`;
                                   } else {
                                     const peerCount = miningGuardResult.details?.peerCount || 0;
-                                    const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? 3;
-                                    statusMessage = locale === "zh"
-                                      ? `🟡 挖矿就绪：保护模式（独立节点：${peerCount} < ${requiredPeers}）`
-                                      : `🟡 Mining Ready: GUARDED (Independent peers: ${peerCount} < ${requiredPeers})`;
+                                    const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
+                                    const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? minPeersRequired;
+                                    statusMessage = `🟡 ${t("networkHealth.miningReady")}: ${t("networkHealth.guardedMode")} (${t("network.independentPeers")}: ${peerCount} < ${requiredPeers})`;
                                   }
                                   break;
                                 case "LOCAL_ONLY":
-                                  statusMessage = locale === "zh" 
-                                    ? "🔵 挖矿就绪：本地训练模式" 
-                                    : "🔵 Mining Ready: LOCAL-ONLY (Training Mode)";
+                                  statusMessage = `🔵 ${t("networkHealth.miningReady")}: ${t("networkHealth.localOnlyMode")}`;
                                   break;
                               }
                             }
@@ -5943,15 +5968,15 @@ function App() {
                           return (
                             <>
                               <div style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
-                                <span className="label">{locale === "zh" ? "挖矿就绪:" : "Mining Ready:"}</span>
+                                <span className="label">{t("networkHealth.miningReady")}:</span>
                                 <span className="value" style={{ 
                                   color: modeColor,
                                   fontWeight: "bold",
                                   marginLeft: "0.5rem"
                                 }}>
                                   {statusMessage || (miningGuardResult.ok 
-                                    ? (locale === "zh" ? "✅ 安全" : "✅ SAFE")
-                                    : (locale === "zh" ? "🚫 已阻止" : "🚫 BLOCKED"))}
+                                    ? t("networkHealth.safe")
+                                    : t("networkHealth.blocked"))}
                                 </span>
                                 {miningGuardResult.ok && miningGuardResult.mode && (
                                   <div style={{ 
@@ -5993,11 +6018,11 @@ function App() {
                                 <div style={{ fontWeight: "bold", marginBottom: "0.25rem", color: modeColor }}>
                                   {miningGuardResult.ok 
                                     ? (miningGuardResult.mode === "SAFE"
-                                        ? (locale === "zh" ? "✅ 安全模式（网络健康）" : "✅ SAFE Mode (Network Healthy)")
+                                        ? t("networkHealth.safeMode")
                                         : miningGuardResult.mode === "GUARDED"
-                                        ? (locale === "zh" ? "🟡 保护模式（低连接）" : "🟡 GUARDED Mode (Low Connectivity)")
-                                        : (locale === "zh" ? "🔵 本地训练模式" : "🔵 LOCAL-ONLY Mode"))
-                                    : (locale === "zh" ? "🚫 已阻止" : "🚫 BLOCKED")
+                                        ? t("networkHealth.guardedMode")
+                                        : t("networkHealth.localOnlyMode"))
+                                    : t("networkHealth.blocked")
                                   }
                                 </div>
                                 {miningGuardResult.ok && (
@@ -6020,21 +6045,21 @@ function App() {
                   <div className="status-item">
                     <span className="label">{t("wallet.address")}:</span>
                     <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all" }}>
-                      {nodeAddress ? `${nodeAddress.substring(0, 20)}...` : t("common.loading")}
+                      {nodeAddress ? formatAddress(nodeAddress, 10, 10) : t("common.loading")}
                     </span>
                   </div>
                   {nodeAddress && chainContext && (
                     <div className="status-item">
                       <span className="label">{t("wallet.balance")}:</span>
                       <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
-                        {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                        {formatNumber(chainContext.indexState.getBalance(nodeAddress as any), 2, locale === "zh" ? "zh-CN" : "en-US")} IDC
                       </span>
                     </div>
                   )}
                   <div className="status-item">
                     <span className="label">{t("wallet.nodeId")}:</span>
                     <span className="value" style={{ fontSize: "0.8rem" }}>
-                      {getOrCreateBrowserNodeId().substring(0, 16)}...
+                      {formatAddress(getOrCreateBrowserNodeId(), 8, 8)}
                     </span>
                   </div>
                 </div>
@@ -6059,13 +6084,13 @@ function App() {
                     </div>
                     <div className="status-item">
                       <span className="label">{t("chain.nonce")}:</span>
-                      <span className="value" style={{ fontSize: "0.85rem" }}>{tip.header.nonce.toLocaleString()}</span>
+                      <span className="value" style={{ fontSize: "0.85rem" }}>{formatInteger(tip.header.nonce, locale === "zh" ? "zh-CN" : "en-US")}</span>
                     </div>
                   </div>
                   <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #e9ecef" }}>
                     <span className="label">{t("chain.hash")}:</span>
                     <span className="value" style={{ fontSize: "0.75rem", wordBreak: "break-all", fontFamily: "monospace" }}>
-                      {tip.hash.substring(0, 24)}...
+                      {formatAddress(tip.hash, 12, 12)}
                     </span>
                   </div>
                   {tip.header.stateCommitment && (
@@ -6139,13 +6164,11 @@ function App() {
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
                     <span style={{ fontSize: "1.5rem" }}>⚠️</span>
                     <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#856404" }}>
-                      {locale === "zh" ? "冷启动模式" : "Cold Start Mode"}
+                      {t("coldStart.title")}
                     </h3>
                   </div>
                   <div style={{ fontSize: "0.9rem", color: "#856404" }}>
-                    {locale === "zh"
-                      ? "网络处于冷启动阶段：只有少数矿工在线。你的区块仍然有效，但安全性低于成熟阶段。"
-                      : "Network is in Cold Start: only a few miners online. Your blocks are still valid but security is lower than mature phase."}
+                    {t("coldStart.description")}
                   </div>
                 </div>
               )}
@@ -6181,10 +6204,10 @@ function App() {
                         ? (miningGuardResult.mode === "SAFE" ? "#155724" : "#856404")
                         : "#721c24"
                     }}>
-                      {locale === "zh" ? "📋 主网准入规则" : "📋 Mainnet Admission Rules"}
+                      {t("app.mainnetAdmissionRules")}
                       {miningGuardResult.ok && miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50 && (
                         <span style={{ fontSize: "0.85rem", marginLeft: "0.5rem", fontWeight: "normal" }}>
-                          ({locale === "zh" ? "第一年模式" : "First Year Mode"})
+                          ({t("mainnetAdmission.firstYearMode")})
                         </span>
                       )}
                     </h3>
@@ -6245,7 +6268,7 @@ function App() {
                       {localRole === "FOLLOWER" && (
                         <li>
                           {locale === "zh"
-                            ? "规则 4: 只有 LEADER 标签页可以在主网挖矿"
+                            ? t("mainnetAdmission.rule4")
                             : "Rule 4: Only LEADER tab can mine on mainnet"}
                         </li>
                       )}
@@ -6268,18 +6291,14 @@ function App() {
                     <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
                       <span style={{ fontSize: "1.5rem" }}>ℹ️</span>
                       <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#0c5460" }}>
-                        {locale === "zh" ? "FOLLOWER 模式" : "FOLLOWER Mode"}
+                        {t("app.followerMode")}
                       </h3>
                     </div>
                     <div style={{ fontSize: "0.9rem", color: "#0c5460", marginBottom: "0.5rem" }}>
-                      {locale === "zh"
-                        ? "此标签页是 FOLLOWER。只有本机的 LEADER 标签页可以在主网挖矿。"
-                        : "This tab is FOLLOWER. Only the LEADER tab on this machine can mine on mainnet."}
+                      {t("localInstance.followerModeDesc")}
                     </div>
                     <div style={{ fontSize: "0.85rem", color: "#0c5460" }}>
-                      {locale === "zh"
-                        ? "提示：关闭其他标签页后刷新本页，或找到 LEADER 标签页进行挖矿。"
-                        : "Tip: Close other tabs and refresh this page, or find the LEADER tab to mine."}
+                      {t("localInstance.followerModeTip")}
                     </div>
                   </div>
                 )}
@@ -6430,7 +6449,7 @@ function App() {
                       color: "#6c757d",
                       fontWeight: "normal"
                     }}>
-                      {locale === "zh" ? "📊 奖励与网络信息" : "📊 Rewards & Network Info"}
+                      {t("app.rewardsNetworkInfo")}
                     </h3>
                   </div>
 
@@ -6492,8 +6511,8 @@ function App() {
                       }}
                     >
                       {showAdvanced
-                        ? (locale === "zh" ? "▼ 隐藏高级设置" : "▼ Hide Advanced Settings")
-                        : (locale === "zh" ? "▶ 显示高级设置" : "▶ Show Advanced Settings")}
+                        ? t("app.hideAdvancedSettings")
+                        : t("app.showAdvancedSettings")}
                     </button>
                   </div>
 
@@ -6501,7 +6520,7 @@ function App() {
                   {showAdvanced && chainContext && (
                     <div className="status-card" style={{ marginBottom: "1.5rem" }}>
                       <h2 style={{ marginBottom: "1.5rem" }}>
-                        {locale === "zh" ? "⚙️ 高级设置" : "⚙️ Advanced Settings"}
+                        {t("app.advancedSettings")}
                       </h2>
 
                       {/* Mining Mode Selector */}
@@ -6605,7 +6624,7 @@ function App() {
                           if (miningGuardResult && !miningGuardResult.ok) {
                             warnings.push({
                               type: "error",
-                              message: miningGuardResult.reason || (locale === "zh" ? "无法挖矿" : "Cannot mine"),
+                              message: miningGuardResult.reason || t("app.cannotMine"),
                               source: "MiningGuard",
                             });
                           }
@@ -6718,31 +6737,31 @@ function App() {
                       border: `2px solid ${isConcerning ? "#ffc107" : "#28a745"}`,
                       marginBottom: "1rem"
                     }}>
-                      <h2>📊 {locale === "zh" ? "挖矿有效性统计" : "Mining Effectiveness"}</h2>
+                      <h2>📊 {t("app.miningEffectiveness")}</h2>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "已接受区块:" : "Accepted Blocks:"}</span>
+                        <span className="label">{t("app.acceptedBlocks")}</span>
                         <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
                           {stats.acceptedBlocks}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "拒绝/孤块:" : "Rejected/Orphaned:"}</span>
+                        <span className="label">{t("app.rejectedOrphaned")}</span>
                         <span className="value" style={{ color: "#dc3545", fontWeight: "bold" }}>
                           {stats.rejectedBlocks}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "总挖矿数:" : "Total Mined:"}</span>
+                        <span className="label">{t("app.totalMined")}</span>
                         <span className="value">{stats.totalBlocksMined}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "有效率:" : "Effectiveness:"}</span>
+                        <span className="label">{t("app.effectiveness")}</span>
                         <span className="value" style={{ 
                           fontSize: "1.2rem", 
                           fontWeight: "bold",
                           color: stats.effectivenessRate >= 50 ? "#28a745" : stats.effectivenessRate >= 10 ? "#ffc107" : "#dc3545"
                         }}>
-                          {stats.effectivenessRate.toFixed(1)}%
+                          {formatPercent(stats.effectivenessRate, 1)}
                         </span>
                       </div>
                       {isConcerning && (
@@ -6754,9 +6773,7 @@ function App() {
                           border: "1px solid #ffc107"
                         }}>
                           <strong style={{ color: "#856404" }}>
-                            ⚠️ {locale === "zh" 
-                              ? "警告：你的节点可能在错误链或孤立网络上挖矿，请检查网络连接和同步状态。" 
-                              : "Warning: Your node may be mining on the wrong chain or isolated network. Please check network connection and sync status."}
+                            ⚠️ {t("miningWarning.wrongChainWarning")}
                           </strong>
                         </div>
                       )}
@@ -6792,11 +6809,11 @@ function App() {
                         {t("transactionsExpanded.currentBalance")}:
                       </span>
                       <span style={{ fontSize: "1.3rem", fontWeight: "bold", color: "#667eea" }}>
-                        {chainContext.indexState.getBalance(nodeAddress as any).toFixed(6)} IDC
+                        {formatNumber(chainContext.indexState.getBalance(nodeAddress as any), 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                       </span>
                     </div>
                     <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.25rem" }}>
-                      {t("transactionsExpanded.address")}: {nodeAddress.substring(0, 20)}...
+                      {t("transactionsExpanded.address")}: {formatAddress(nodeAddress, 10, 10)}
                     </div>
                   </div>
                 )}
@@ -6867,7 +6884,7 @@ function App() {
                           fontWeight: "bold",
                           color: parseFloat(transferAmount) > chainContext.indexState.getBalance(nodeAddress as any) ? "#dc3545" : "#28a745"
                         }}>
-                          {(chainContext.indexState.getBalance(nodeAddress as any) - parseFloat(transferAmount) || 0).toFixed(6)} IDC
+                          {formatNumber((chainContext.indexState.getBalance(nodeAddress as any) - parseFloat(transferAmount) || 0), 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                         </span>
                         {parseFloat(transferAmount) > chainContext.indexState.getBalance(nodeAddress as any) && (
                           <span style={{ color: "#dc3545", marginLeft: "0.5rem" }}>
@@ -6896,8 +6913,8 @@ function App() {
                         const currentBalance = chainContext.indexState.getBalance(nodeAddress as any);
                         if (amount > currentBalance) {
                           setError(t("transactionsExpanded.insufficientBalanceError", { 
-                            current: currentBalance.toFixed(6), 
-                            amount: amount.toFixed(6) 
+                            current: formatNumber(currentBalance, 6, locale === "zh" ? "zh-CN" : "en-US"), 
+                            amount: formatNumber(amount, 6, locale === "zh" ? "zh-CN" : "en-US") 
                           }));
                           setSuccessMessage("");
                           return;
@@ -6922,8 +6939,8 @@ function App() {
                         setIsSigning(false);
                         // Show success message
                         setSuccessMessage(t("transactionsExpanded.transferSuccess", { 
-                          amount: amount.toFixed(6), 
-                          recipient: transferTo.substring(0, 20) 
+                          amount: formatNumber(amount, 6, locale === "zh" ? "zh-CN" : "en-US"), 
+                          recipient: formatAddress(transferTo, 10, 10) 
                         }));
                         // Clear success message after 5 seconds
                         setTimeout(() => {
@@ -7092,15 +7109,13 @@ function App() {
                               localStorage.setItem("indexerchain_force_mainnet", "true");
                               setBootstrapUrl(DEFAULT_MAINNET_SIGNALING);
                               // Show warning that page needs to be refreshed
-                              alert(locale === "zh" 
-                                ? "已切换到主网模式。请刷新页面以使网络ID更改生效。\n\n注意：切换到主网后，您将连接到主网节点，但本地链数据可能需要重置。"
-                                : "Switched to mainnet mode. Please refresh the page for the network ID change to take effect.\n\nNote: After switching to mainnet, you will connect to mainnet nodes, but local chain data may need to be reset.");
+                              alert(t("networkMode.switchedToMainnet"));
                             } else {
                               localStorage.removeItem("indexerchain_force_mainnet");
                               setBootstrapUrl("ws://localhost:8080");
                               // Show warning that page needs to be refreshed
                               alert(locale === "zh"
-                                ? "已切换到开发模式。请刷新页面以使网络ID更改生效。"
+                                ? t("networkMode.switchedToDev")
                                 : "Switched to dev mode. Please refresh the page for the network ID change to take effect.");
                             }
                           }}
@@ -7162,9 +7177,7 @@ function App() {
                               localStorage.removeItem("indexerchain_force_mainnet");
                               setBootstrapUrl("ws://localhost:8080");
                               // Show warning that page needs to be refreshed
-                              alert(locale === "zh"
-                                ? "已切换到开发模式。请先断开连接，然后刷新页面以使网络ID更改生效。"
-                                : "Switched to dev mode. Please disconnect first, then refresh the page for the network ID change to take effect.");
+                              alert(t("networkMode.switchedToDevDisconnect"));
                             }
                           }}
                         />
@@ -7251,11 +7264,11 @@ function App() {
                       </div>
                       <div className="status-item">
                         <span className="label">{t("network.avgLatency")}:</span>
-                        <span className="value">{gsnStats.downloader.averageLatency.toFixed(0)} ms</span>
+                        <span className="value">{formatInteger(gsnStats.downloader.averageLatency, locale === "zh" ? "zh-CN" : "en-US")} ms</span>
                       </div>
                       <div className="status-item">
                         <span className="label">{t("network.avgIntegrity")}:</span>
-                        <span className="value">{(gsnStats.downloader.averageIntegrity * 100).toFixed(1)}%</span>
+                        <span className="value">{formatPercent(gsnStats.downloader.averageIntegrity * 100, 1)}</span>
                       </div>
                       <div className="status-item">
                         <span className="label">{t("network.cachedSnapshots")}:</span>
@@ -7263,26 +7276,26 @@ function App() {
                       </div>
                       <div className="status-item">
                         <span className="label">{locale === "zh" ? "缓存大小" : "Cache Size"}:</span>
-                        <span className="value">{(gsnStats.seeder.totalSize / 1024).toFixed(2)} KB</span>
+                        <span className="value">{formatNumber(gsnStats.seeder.totalSize / 1024, 2, locale === "zh" ? "zh-CN" : "en-US")} KB</span>
                       </div>
                     </>
                   )}
                   {snapshotDownloadProgress && (
                     <>
                       <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                        <span className="label">{locale === "zh" ? "下载进度" : "Download Progress"}:</span>
-                        <span className="value">{snapshotDownloadProgress.percent.toFixed(1)}%</span>
+                        <span className="label">{t("app.downloadProgress")}:</span>
+                        <span className="value">{formatPercent(snapshotDownloadProgress.percent, 1)}</span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "块数" : "Chunks"}:</span>
+                        <span className="label">{t("app.chunks")}:</span>
                         <span className="value">
                           {snapshotDownloadProgress.receivedChunks} / {snapshotDownloadProgress.totalChunks}
                         </span>
                       </div>
                       <div className="status-item">
-                        <span className="label">{locale === "zh" ? "速度" : "Speed"}:</span>
+                        <span className="label">{t("app.speed")}:</span>
                         <span className="value">
-                          {(snapshotDownloadProgress.speed / 1024).toFixed(2)} KB/s
+                          {formatNumber(snapshotDownloadProgress.speed / 1024, 2, locale === "zh" ? "zh-CN" : "en-US")} KB/s
                         </span>
                       </div>
                       <div className="status-item">
@@ -7292,8 +7305,8 @@ function App() {
                     </>
                   )}
                   <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
-                    💡 <strong>GSN:</strong> {locale === "zh" ? "所有节点通过 P2P 自动共享快照。" : "All nodes automatically share snapshots via P2P."}
-                    {gsnEnabled && (locale === "zh" ? " 您正在向其他节点提供快照。" : " You are seeding snapshots to other nodes.")}
+                    💡 <strong>GSN:</strong> {t("app.gsnDesc")}
+                    {gsnEnabled && t("app.gsnSeeding")}
                   </div>
                 </div>
               )}
@@ -7361,14 +7374,14 @@ function App() {
                         <div className="status-item">
                           <span className="label">{t("storage.latestSnapshotSize")}:</span>
                           <span className="value">
-                            {(snapshotSizeInfo.compressedSize / 1024).toFixed(2)} KB
+                            {formatNumber(snapshotSizeInfo.compressedSize / 1024, 2, locale === "zh" ? "zh-CN" : "en-US")} KB
                           </span>
                         </div>
                         {snapshotSizeInfo.compressionRatio > 0 && (
                           <div className="status-item">
                             <span className="label">{t("storage.compressionRatio")}:</span>
                             <span className="value" style={{ color: "#28a745", fontWeight: "bold" }}>
-                              {snapshotSizeInfo.compressionRatio.toFixed(1)}% {t("storage.reduction")}
+                              {formatPercent(snapshotSizeInfo.compressionRatio, 1)} {t("storage.reduction")}
                             </span>
                           </div>
                         )}
@@ -7376,7 +7389,7 @@ function App() {
                           <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
                             <span className="label">{t("storage.estimatedUncompressed")}:</span>
                             <span className="value">
-                              {(snapshotSizeInfo.estimatedUncompressedSize / 1024).toFixed(2)} KB
+                              {formatNumber(snapshotSizeInfo.estimatedUncompressedSize / 1024, 2, locale === "zh" ? "zh-CN" : "en-US")} KB
                             </span>
                           </div>
                         )}
@@ -7811,7 +7824,7 @@ function App() {
                       return (
                         <div className="status-item">
                           <span className="label">{t("advancedExpanded.averageBlockTime")} ({t("advanced.lastBlocks", { count: recentBlocks.length })}):</span>
-                          <span className="value">{avgTime.toFixed(2)}{t("commonExpanded.seconds")}</span>
+                          <span className="value">{formatNumber(avgTime, 2, locale === "zh" ? "zh-CN" : "en-US")}{t("commonExpanded.seconds")}</span>
                         </div>
                       );
                     }
@@ -7821,9 +7834,53 @@ function App() {
                     const allBlocks = chainContext.storage.getAllBlocks();
                     if (allBlocks.length >= chainContext.params.difficultyAdjustmentInterval) {
                       const explanation = explainDifficultyChange(allBlocks, chainContext.params);
+                      
+                      // Parse and translate the reason message
+                      let translatedReason = explanation.reason;
+                      
+                      // Parse "Last X blocks: Ys actual vs Zs expected (ratio: W)."
+                      const lastBlocksMatch = explanation.reason.match(/Last (\d+) blocks: ([\d.]+)s actual vs ([\d.]+)s expected \(ratio: ([\d.]+)\)\./);
+                      if (lastBlocksMatch) {
+                        const [, interval, actual, expected, ratio] = lastBlocksMatch;
+                        const firstPart = t("advancedExpanded.lastBlocksActualVsExpected", {
+                          interval,
+                          actual,
+                          expected,
+                          ratio,
+                        });
+                        
+                        // Parse difficulty change part
+                        let secondPart = "";
+                        if (explanation.reason.includes("Difficulty increased from")) {
+                          const match = explanation.reason.match(/Difficulty increased from (\d+) to (\d+)/);
+                          if (match) {
+                            secondPart = t("advancedExpanded.difficultyIncreased", { current: match[1], new: match[2] });
+                          }
+                        } else if (explanation.reason.includes("Difficulty decreased from")) {
+                          const match = explanation.reason.match(/Difficulty decreased from (\d+) to (\d+)/);
+                          if (match) {
+                            secondPart = t("advancedExpanded.difficultyDecreased", { current: match[1], new: match[2] });
+                          }
+                        } else if (explanation.reason.includes("Difficulty unchanged at")) {
+                          const match = explanation.reason.match(/Difficulty unchanged at (\d+)/);
+                          if (match) {
+                            secondPart = t("advancedExpanded.difficultyUnchanged", { difficulty: match[1] });
+                          }
+                        }
+                        
+                        translatedReason = firstPart + " " + secondPart;
+                      } else if (explanation.reason.includes("Genesis block")) {
+                        translatedReason = t("advancedExpanded.genesisBlockUsingInitial");
+                      } else if (explanation.reason.includes("Height") && explanation.reason.includes("< interval")) {
+                        const match = explanation.reason.match(/Height (\d+) < interval (\d+)/);
+                        if (match) {
+                          translatedReason = t("advancedExpanded.heightLessThanInterval", { height: match[1], interval: match[2] });
+                        }
+                      }
+                      
                       return (
                         <div style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#666" }}>
-                          <strong>{t("advancedExpanded.difficultyChange")}:</strong> {explanation.reason}
+                          <strong>{t("advancedExpanded.difficultyChange")}:</strong> {translatedReason}
                         </div>
                       );
                     }
@@ -7846,13 +7903,13 @@ function App() {
                     <div className="status-item">
                       <span className="label">{t("advanced.totalMinted")}:</span>
                       <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
-                        {totalMintedIDC.toFixed(6)} / {maxSupplyIDC.toFixed(6)} IDC
+                        {formatNumber(totalMintedIDC, 6, locale === "zh" ? "zh-CN" : "en-US")} / {formatNumber(maxSupplyIDC, 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                       </span>
                     </div>
                     <div className="status-item">
                       <span className="label">{t("advanced.mintingProgress")}:</span>
                       <span className="value">
-                        {((totalMintedIDC / maxSupplyIDC) * 100).toFixed(4)}%
+                        {formatPercent((totalMintedIDC / maxSupplyIDC) * 100, 4)}
                       </span>
                     </div>
                     <div className="status-item">
@@ -7864,13 +7921,13 @@ function App() {
                     <div className="status-item">
                       <span className="label">{t("advanced.blockRewardNext")}:</span>
                       <span className="value" style={{ fontWeight: "bold" }}>
-                        {nextBlockReward.toFixed(6)} IDC
+                        {formatNumber(nextBlockReward, 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                       </span>
                     </div>
                     <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
                       <span className="label">{t("advanced.blocksInEra")}:</span>
                       <span className="value">
-                        {Number(emissionStats.blocksRemainingInEra).toLocaleString()} {t("advanced.remaining")}
+                        {formatInteger(Number(emissionStats.blocksRemainingInEra), locale === "zh" ? "zh-CN" : "en-US")} {t("advanced.remaining")}
                       </span>
                     </div>
                   </div>
@@ -7936,10 +7993,10 @@ function App() {
                                 return (
                                   <tr key={peer.peerId} style={{ borderBottom: "1px solid #eee" }}>
                                     <td style={{ padding: "0.5rem" }} title={peer.peerId}>
-                                      {peer.peerId.substring(0, 16)}...
+                                      {formatAddress(peer.peerId, 8, 8)}
                                     </td>
                                     <td style={{ padding: "0.5rem", fontWeight: "bold" }}>
-                                      {peer.score.toFixed(1)}
+                                      {formatNumber(peer.score, 1, locale === "zh" ? "zh-CN" : "en-US")}
                                     </td>
                                     <td style={{ padding: "0.5rem", color: trustColor }}>
                                       {peer.trustLevel}
@@ -7951,7 +8008,7 @@ function App() {
                                       {peer.snapshotsServed} / {peer.snapshotsInvalid > 0 ? <span style={{ color: "#dc3545" }}>{peer.snapshotsInvalid}</span> : "0"}
                                     </td>
                                     <td style={{ padding: "0.5rem" }}>
-                                      {peer.avgLatencyMs ? `${peer.avgLatencyMs.toFixed(0)}ms` : "—"}
+                                      {peer.avgLatencyMs ? `${formatInteger(peer.avgLatencyMs, locale === "zh" ? "zh-CN" : "en-US")}ms` : "—"}
                                     </td>
                                     <td style={{ padding: "0.5rem" }}>
                                       {peer.workCompleted} / {peer.workFailed > 0 ? <span style={{ color: "#dc3545" }}>{peer.workFailed}</span> : "0"}
@@ -8059,10 +8116,10 @@ function App() {
                                   }}
                                 >
                                   <div>
-                                    <strong>{t("network.member")} #{idx + 1}:</strong> {member.address.substring(0, 20)}...
+                                    <strong>{t("network.member")} #{idx + 1}:</strong> {formatAddress(member.address, 10, 10)}
                                   </div>
                                   <div>
-                                    {t("network.score")}: {member.score.toFixed(1)} / 100
+                                    {t("network.score")}: {formatNumber(member.score, 1, locale === "zh" ? "zh-CN" : "en-US")} / 100
                                   </div>
                                 </div>
                               ))
@@ -8101,7 +8158,7 @@ function App() {
                     <div className="status-item">
                       <span className="label">{t("token.maxSupply")}:</span>
                       <span className="value" style={{ fontWeight: "bold", color: "#667eea", fontSize: "1.1rem" }}>
-                        {uIDCToIDC(IDC_MAX_SUPPLY).toLocaleString()} IDC
+                        {formatInteger(uIDCToIDC(IDC_MAX_SUPPLY), locale === "zh" ? "zh-CN" : "en-US")} IDC
                       </span>
                     </div>
                     <div className="status-item">
@@ -8113,13 +8170,13 @@ function App() {
                         <div className="status-item">
                           <span className="label">{t("token.totalSupply")}:</span>
                           <span className="value" style={{ fontWeight: "bold" }}>
-                            {uIDCToIDC(chainContext.indexState.getTotalMinted()).toLocaleString()} IDC
+                            {formatInteger(uIDCToIDC(chainContext.indexState.getTotalMinted()), locale === "zh" ? "zh-CN" : "en-US")} IDC
                           </span>
                         </div>
                         <div className="status-item">
                           <span className="label">{t("network.issuedRatio")}:</span>
                           <span className="value">
-                            {((Number(chainContext.indexState.getTotalMinted()) / Number(IDC_MAX_SUPPLY)) * 100).toFixed(4)}%
+                            {formatPercent((Number(chainContext.indexState.getTotalMinted()) / Number(IDC_MAX_SUPPLY)) * 100, 4)}
                           </span>
                         </div>
                       </>
@@ -8144,7 +8201,7 @@ function App() {
                           <div className="status-item">
                             <span className="label">{t("token.rewardPerBlock")}:</span>
                             <span className="value" style={{ fontWeight: "bold" }}>
-                              {stats.rawRewardIDC.toFixed(6)} IDC
+                              {formatNumber(stats.rawRewardIDC, 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                             </span>
                           </div>
                           <div className="status-item">
@@ -8162,7 +8219,7 @@ function App() {
                           <div className="status-item">
                             <span className="label">{t("token.totalEraReward")}:</span>
                             <span className="value" style={{ fontWeight: "bold" }}>
-                              {uIDCToIDC(stats.rawReward * stats.blocksInEra).toLocaleString()} IDC
+                              {formatInteger(uIDCToIDC(stats.rawReward * stats.blocksInEra), locale === "zh" ? "zh-CN" : "en-US")} IDC
                             </span>
                           </div>
                         </div>
@@ -8198,12 +8255,12 @@ function App() {
                     <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", overflow: "hidden" }}>
                       <thead>
                         <tr style={{ background: "#667eea", color: "white" }}>
-                          <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{locale === "zh" ? "年份" : "Year"}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{t("app.year")}</th>
                           <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{t("token.years")}</th>
                           <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.rewardPerBlock")}</th>
-                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{locale === "zh" ? "年度产出" : "Yearly Output"}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("app.yearlyOutput")}</th>
                           <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.cumulativeReward")}</th>
-                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{locale === "zh" ? "累计占比" : "Cumulative %"}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("app.cumulativePercent")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -8243,16 +8300,16 @@ function App() {
                                 {year} - {year + 1}
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace" }}>
-                                {yearRewardIDC.toFixed(6)} IDC
+                                {formatNumber(yearRewardIDC, 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace" }}>
-                                {totalYearRewardIDC.toLocaleString()} IDC
+                                {formatInteger(totalYearRewardIDC, locale === "zh" ? "zh-CN" : "en-US")} IDC
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace", fontWeight: "bold" }}>
-                                {cumulativeIDC.toLocaleString()} IDC
+                                {formatInteger(cumulativeIDC, locale === "zh" ? "zh-CN" : "en-US")} IDC
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace", fontWeight: "bold", color: isYear1 ? "#28a745" : isYear1To3 ? "#0c5460" : undefined }}>
-                                {cumulativePercent.toFixed(2)}%
+                                {formatPercent(cumulativePercent, 2)}
                               </td>
                             </tr>
                           );
@@ -8268,16 +8325,16 @@ function App() {
                   <div className="status-card" style={{ background: "#f8f9fa" }}>
                     <div className="status-item">
                       <span className="label">{t("token.baseFee")}:</span>
-                      <span className="value">{uIDCToIDC(IDC_BASE_FEE).toFixed(6)} IDC</span>
+                      <span className="value">{formatNumber(uIDCToIDC(IDC_BASE_FEE), 6, locale === "zh" ? "zh-CN" : "en-US")} IDC</span>
                     </div>
                     <div className="status-item">
                       <span className="label">{t("token.feePer100Bytes")}:</span>
-                      <span className="value">{uIDCToIDC(IDC_FEE_PER_100_BYTES).toFixed(6)} IDC</span>
+                      <span className="value">{formatNumber(uIDCToIDC(IDC_FEE_PER_100_BYTES), 6, locale === "zh" ? "zh-CN" : "en-US")} IDC</span>
                     </div>
                     <div className="status-item">
                       <span className="label">{t("token.feeFormula")}:</span>
                       <span className="value" style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>
-                        Fee = {uIDCToIDC(IDC_BASE_FEE).toFixed(6)} IDC + (Size / 100) × {uIDCToIDC(IDC_FEE_PER_100_BYTES).toFixed(6)} IDC
+                        Fee = {formatNumber(uIDCToIDC(IDC_BASE_FEE), 6, locale === "zh" ? "zh-CN" : "en-US")} IDC + (Size / 100) × {formatNumber(uIDCToIDC(IDC_FEE_PER_100_BYTES), 6, locale === "zh" ? "zh-CN" : "en-US")} IDC
                       </span>
                     </div>
                   </div>
@@ -8585,7 +8642,7 @@ function App() {
                 {/* Storage Cleanup */}
                 <div style={{ marginBottom: "2rem" }}>
                   <h3 style={{ marginBottom: "1rem" }}>
-                    {locale === "zh" ? "🧹 存储清理" : "🧹 Storage Cleanup"}
+                    {t("app.storageCleanup")}
                   </h3>
                   <div style={{ 
                     background: "#e7f3ff", 
@@ -8594,9 +8651,7 @@ function App() {
                     border: "1px solid #b3d9ff"
                   }}>
                     <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#004085" }}>
-                      {locale === "zh" 
-                        ? "检查并清理未使用的本地存储数据。这不会影响链数据。" 
-                        : "Check and clean up unused local storage data. This won't affect chain data."}
+                      {t("storageCleanup.checkUnusedStorage")}
                     </p>
                     <button
                       className="btn btn-secondary"
@@ -8611,9 +8666,7 @@ function App() {
                         
                         if (otherKeys.length === 0) {
                           alert(
-                            locale === "zh" 
-                              ? "没有发现未使用的存储数据。" 
-                              : "No unused storage data found."
+                            t("storageCleanup.noUnusedStorage")
                           );
                           return;
                         }
@@ -8642,7 +8695,7 @@ function App() {
                         fontWeight: "bold"
                       }}
                     >
-                      {locale === "zh" ? "🧹 清理未使用的存储" : "🧹 Clean Unused Storage"}
+                      {t("app.cleanUnusedStorage")}
                     </button>
                   </div>
                 </div>
@@ -8656,7 +8709,7 @@ function App() {
                   marginTop: "2rem"
                 }}>
                   <strong style={{ color: "#721c24" }}>
-                    ⚠️ {locale === "zh" ? "警告" : "Warning"}
+                    ⚠️ {t("app.warning")}
                   </strong>
                   <p style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#721c24" }}>
                     {locale === "zh" 

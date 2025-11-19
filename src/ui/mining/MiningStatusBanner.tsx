@@ -10,6 +10,7 @@ import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard } from "../../core/miningGuard.js";
 import { getQuorumManager } from "../../core/quorumManager.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 interface MiningStatusBannerProps {
   chainContext: ChainContext | null;
@@ -50,6 +51,7 @@ export function MiningStatusBanner({
     reason?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const { t } = useI18n();
 
   const isZh = locale === "zh";
 
@@ -138,16 +140,60 @@ export function MiningStatusBanner({
         } else {
           state = "BLOCKED";
           icon = "⛔";
-          label = isZh ? "当前无法挖矿" : "Mining Blocked";
+          label = t("miningStatusBanner.miningBlocked");
           color = "#dc3545";
           
           // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
           const isFirstYearModeBlocked = result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore <= 50;
           if (isFirstYearModeBlocked && result.reason) {
-            // Remove "First year: " prefix for cleaner display
-            summary = result.reason.replace(/^First year: /i, "");
+            // Translate first year rule messages
+            let translatedReason = result.reason;
+            
+            // Check for "首年规则：需要至少 X 个独立 IP 对等节点，目前只有 Y 个"
+            const peerMatch = result.reason.match(/首年规则：需要至少 (\d+) 个独立 IP 对等节点，目前只有 (\d+) 个/);
+            if (peerMatch) {
+              translatedReason = t("miningGuard.firstYearRuleInsufficientPeers", {
+                required: peerMatch[1],
+                current: peerMatch[2],
+              });
+            } else {
+              // Check for "首年规则：{reasons}"
+              const multipleReasonsMatch = result.reason.match(/首年规则：(.+)/);
+              if (multipleReasonsMatch) {
+                const reasons = multipleReasonsMatch[1];
+                // Translate individual reasons
+                let translatedReasons = reasons;
+                
+                // Translate "需要 ≥X 个独立对等节点（当前: Y）"
+                translatedReasons = translatedReasons.replace(/需要 ≥(\d+) 个独立对等节点（当前: (\d+)）/g, (_, required, current) => {
+                  return t("miningGuard.needAtLeastIndependentPeers", { required, current });
+                });
+                
+                // Translate "Quorum 分数 X < 要求 Y"
+                translatedReasons = translatedReasons.replace(/Quorum 分数 (\d+) < 要求 (\d+)/g, (_, current, required) => {
+                  return t("miningGuard.quorumScoreInsufficient", { current, required });
+                });
+                
+                // Translate "Bootstrap 未完成"
+                if (translatedReasons.includes("Bootstrap 未完成")) {
+                  translatedReasons = translatedReasons.replace("Bootstrap 未完成", t("miningGuard.bootstrapIncomplete"));
+                }
+                
+                // Translate "检测到严重状态漂移"
+                if (translatedReasons.includes("检测到严重状态漂移")) {
+                  translatedReasons = translatedReasons.replace("检测到严重状态漂移", t("miningGuard.criticalStateDrift"));
+                }
+                
+                translatedReason = t("miningGuard.firstYearRuleMultipleReasons", { reasons: translatedReasons });
+              } else {
+                // Remove "First year: " or "首年规则：" prefix for cleaner display
+                translatedReason = result.reason.replace(/^(First year: |首年规则：)/i, "");
+              }
+            }
+            
+            summary = translatedReason;
           } else {
-            summary = result.reason || (isZh ? "挖矿被阻止" : "Mining is blocked");
+            summary = result.reason || t("miningStatusBanner.miningIsBlocked");
           }
           reason = result.reason;
         }
@@ -166,9 +212,9 @@ export function MiningStatusBanner({
         setStatus({
           state: "BLOCKED",
           icon: "⛔",
-          label: isZh ? "状态检查失败" : "Status Check Failed",
+          label: t("miningStatusBanner.statusCheckFailed"),
           color: "#dc3545",
-          summary: isZh ? "无法检查挖矿状态" : "Cannot check mining status",
+          summary: t("miningStatusBanner.cannotCheckStatus"),
           canMine: false,
         });
       } finally {

@@ -7,6 +7,7 @@
 
 import React from "react";
 import type { DriftAssessment } from "../core/types.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 interface GlobalSentinelPanelProps {
   assessment: DriftAssessment | null;
@@ -21,8 +22,9 @@ export const GlobalSentinelPanel: React.FC<GlobalSentinelPanelProps> = ({
   onReassess,
   onSyncFromSnapshot,
   onStopMining,
-  locale = "en",
+  locale: _locale,
 }) => {
+  const { locale } = useI18n();
   const isZh = locale === "zh";
 
   if (!assessment) {
@@ -90,7 +92,13 @@ export const GlobalSentinelPanel: React.FC<GlobalSentinelPanelProps> = ({
               : (isZh ? "严重漂移" : "CRITICAL_DRIFT")}
           </strong>
         </div>
-        <p style={{ margin: 0, fontSize: "0.95rem" }}>{assessment.reason}</p>
+        <p style={{ margin: 0, fontSize: "0.95rem" }}>
+          {assessment.reason?.includes("Not enough peers for assessment") && assessment.minPeersRequired
+            ? (isZh 
+                ? `评估节点数不足（${assessment.peerCount} < ${assessment.minPeersRequired}）`
+                : `Not enough peers for assessment (${assessment.peerCount} < ${assessment.minPeersRequired})`)
+            : assessment.reason}
+        </p>
       </div>
 
       {/* Local View */}
@@ -282,11 +290,11 @@ export const GlobalSentinelPanel: React.FC<GlobalSentinelPanelProps> = ({
                   : `${Math.abs(assessment.driftBlocks)} blocks behind: Consider syncing from remote snapshot to catch up quickly`}
               </li>
             )}
-            {assessment.peerCount < 3 && (
+            {assessment.minPeersRequired && assessment.peerCount < assessment.minPeersRequired && (
               <li>
                 {isZh 
-                  ? "对等节点数不足：连接更多节点以获得更准确的评估" 
-                  : "Insufficient peers: Connect to more nodes for accurate assessment"}
+                  ? `对等节点数不足（${assessment.peerCount} < ${assessment.minPeersRequired}）：连接更多节点以获得更准确的评估` 
+                  : `Insufficient peers (${assessment.peerCount} < ${assessment.minPeersRequired}): Connect to more nodes for accurate assessment`}
               </li>
             )}
           </ul>

@@ -13,6 +13,7 @@ import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard } from "../../core/miningGuard.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { formatAddress } from "../../utils/format.js";
 
 interface MiningStatusBarProps {
   chainContext: ChainContext | null;
@@ -168,7 +169,8 @@ export function MiningStatusBar({
 
     // For INSUFFICIENT_PEERS, show friendly message
     if (miningGuardResult.code === "INSUFFICIENT_PEERS") {
-      const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? 3;
+      const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
+      const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? minPeersRequired;
       const currentPeers = miningGuardResult.details?.requiredIndependentPeers !== undefined 
         ? (miningGuardResult.details?.independentPeerCount ?? 0)
         : (miningGuardResult.details?.peerCount ?? 0);
@@ -244,7 +246,7 @@ export function MiningStatusBar({
         {miningWalletAddress && (
           <div style={{ fontSize: "0.9rem", color: "#666" }}>
             {t("miningStatusBar.miningWallet")}: <strong style={{ color: "#333", cursor: "pointer" }} title={miningWalletAddress}>
-              {miningWalletAddress.substring(0, 8)}...{miningWalletAddress.substring(miningWalletAddress.length - 6)}
+              {formatAddress(miningWalletAddress, 4, 3)}
             </strong>
           </div>
         )}

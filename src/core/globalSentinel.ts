@@ -216,6 +216,7 @@ export class GlobalStateSentinel {
         forkSuspected: false,
         healthLevel: "HEALTHY",
         reason: `Not enough peers for assessment (${validViews.length} < ${minPeers})`,
+        minPeersRequired: minPeers,
       };
     }
 
@@ -289,6 +290,7 @@ export class GlobalStateSentinel {
       forkSuspected,
       healthLevel,
       reason,
+      minPeersRequired: minPeers,
     };
   }
 }

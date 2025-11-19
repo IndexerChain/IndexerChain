@@ -6,6 +6,8 @@
 
 import { useState, useEffect } from "react";
 import type { ChainContext } from "../core/chain.js";
+import { formatAddress } from "../utils/format.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 export interface ConfigCheckResult {
   category: "chain" | "p2p" | "wallet" | "mining" | "storage" | "system";
@@ -24,6 +26,7 @@ interface ConfigCheckerProps {
 }
 
 export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMining }: ConfigCheckerProps) {
+  const { t } = useI18n();
   const [checks, setChecks] = useState<ConfigCheckResult[]>([]);
   const [expanded, setExpanded] = useState<boolean>(false);
 
@@ -34,16 +37,16 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     if (typeof window === "undefined") {
       results.push({
         category: "system",
-        name: "Browser Environment",
+        name: t("configChecker.browserEnvironment"),
         status: "error",
-        message: "Not running in browser",
+        message: t("configChecker.notRunningInBrowser"),
       });
     } else {
       results.push({
         category: "system",
-        name: "Browser Environment",
+        name: t("configChecker.browserEnvironment"),
         status: "pass",
-        message: "Running in browser",
+        message: t("configChecker.runningInBrowser"),
       });
     }
 
@@ -51,17 +54,17 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     if (typeof crypto === "undefined" || !crypto.subtle) {
       results.push({
         category: "system",
-        name: "WebCrypto API",
+        name: t("configChecker.webCryptoApi"),
         status: "error",
-        message: "WebCrypto API not available",
-        recommendation: "Use a modern browser (Chrome, Firefox, Safari, Edge)",
+        message: t("configChecker.webCryptoApiNotAvailable"),
+        recommendation: t("configChecker.webCryptoApiRecommendation"),
       });
     } else {
       results.push({
         category: "system",
-        name: "WebCrypto API",
+        name: t("configChecker.webCryptoApi"),
         status: "pass",
-        message: "WebCrypto API available",
+        message: t("configChecker.webCryptoApiAvailable"),
       });
     }
 
@@ -69,17 +72,17 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     if (typeof Worker === "undefined") {
       results.push({
         category: "system",
-        name: "Web Worker Support",
+        name: t("configChecker.webWorkerSupport"),
         status: "warning",
-        message: "Web Workers not available",
-        recommendation: "Mining will run on main thread (may block UI)",
+        message: t("configChecker.webWorkersNotAvailable"),
+        recommendation: t("configChecker.webWorkersRecommendation"),
       });
     } else {
       results.push({
         category: "system",
-        name: "Web Worker Support",
+        name: t("configChecker.webWorkerSupport"),
         status: "pass",
-        message: "Web Workers available",
+        message: t("configChecker.webWorkersAvailable"),
       });
     }
 
@@ -89,17 +92,17 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
       localStorage.removeItem("test");
       results.push({
         category: "storage",
-        name: "localStorage",
+        name: t("configChecker.localStorage"),
         status: "pass",
-        message: "localStorage available",
+        message: t("configChecker.localStorageAvailable"),
       });
     } catch (e) {
       results.push({
         category: "storage",
-        name: "localStorage",
+        name: t("configChecker.localStorage"),
         status: "error",
-        message: "localStorage not available",
-        recommendation: "Enable cookies/localStorage in browser settings",
+        message: t("configChecker.localStorageNotAvailable"),
+        recommendation: t("configChecker.localStorageRecommendation"),
       });
     }
 
@@ -110,9 +113,9 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
       // Network ID
       results.push({
         category: "chain",
-        name: "Network ID",
+        name: t("configChecker.networkId"),
         status: "pass",
-        message: `Network: ${params.networkId}`,
+        message: `${t("configChecker.network")}: ${params.networkId}`,
         value: params.networkId,
       });
 
@@ -120,18 +123,18 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
       if (params.initialDifficulty < 1) {
         results.push({
           category: "chain",
-          name: "Initial Difficulty",
+          name: t("configChecker.initialDifficulty"),
           status: "warning",
-          message: "Difficulty too low",
+          message: t("configChecker.difficultyTooLow"),
           value: params.initialDifficulty,
-          recommendation: "Set difficulty >= 1 for security",
+          recommendation: t("configChecker.difficultyRecommendation"),
         });
       } else {
         results.push({
           category: "chain",
-          name: "Initial Difficulty",
+          name: t("configChecker.initialDifficulty"),
           status: "pass",
-          message: `Difficulty: ${params.initialDifficulty}`,
+          message: `${t("configChecker.difficulty")}: ${params.initialDifficulty}`,
           value: params.initialDifficulty,
         });
       }
@@ -140,18 +143,18 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
       if (params.targetBlockTime < 5 || params.targetBlockTime > 60) {
         results.push({
           category: "chain",
-          name: "Target Block Time",
+          name: t("configChecker.targetBlockTime"),
           status: "warning",
-          message: "Block time outside recommended range",
+          message: t("configChecker.blockTimeOutsideRange"),
           value: params.targetBlockTime,
-          recommendation: "Recommended: 5-60 seconds",
+          recommendation: t("configChecker.blockTimeRecommendation"),
         });
       } else {
         results.push({
           category: "chain",
-          name: "Target Block Time",
+          name: t("configChecker.targetBlockTime"),
           status: "pass",
-          message: `${params.targetBlockTime}s per block`,
+          message: t("configChecker.secondsPerBlock", { seconds: params.targetBlockTime }),
           value: params.targetBlockTime,
         });
       }
@@ -160,18 +163,18 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
       if (params.lightNodeWindow && params.lightNodeWindow < 10) {
         results.push({
           category: "storage",
-          name: "Light Node Window",
+          name: t("configChecker.lightNodeWindow"),
           status: "warning",
-          message: "Window too small",
+          message: t("configChecker.windowTooSmall"),
           value: params.lightNodeWindow,
-          recommendation: "Recommended: >= 10 blocks for safety",
+          recommendation: t("configChecker.windowRecommendation"),
         });
       } else if (params.lightNodeWindow) {
         results.push({
           category: "storage",
-          name: "Light Node Window",
+          name: t("configChecker.lightNodeWindow"),
           status: "pass",
-          message: `Keeping ${params.lightNodeWindow} recent blocks`,
+          message: t("configChecker.keepingRecentBlocks", { count: params.lightNodeWindow }),
           value: params.lightNodeWindow,
         });
       }
@@ -180,18 +183,18 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
       if (params.snapshotInterval && params.snapshotInterval < 10) {
         results.push({
           category: "storage",
-          name: "Snapshot Interval",
+          name: t("configChecker.snapshotInterval"),
           status: "warning",
-          message: "Interval too frequent",
+          message: t("configChecker.intervalTooFrequent"),
           value: params.snapshotInterval,
-          recommendation: "Recommended: >= 10 blocks",
+          recommendation: t("configChecker.intervalRecommendation"),
         });
       } else if (params.snapshotInterval) {
         results.push({
           category: "storage",
-          name: "Snapshot Interval",
+          name: t("configChecker.snapshotInterval"),
           status: "pass",
-          message: `Snapshot every ${params.snapshotInterval} blocks`,
+          message: t("configChecker.snapshotEveryBlocks", { count: params.snapshotInterval }),
           value: params.snapshotInterval,
         });
       }
@@ -201,36 +204,36 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
         if (params.finalityCommitteeSize && (params.finalityCommitteeSize < 7 || params.finalityCommitteeSize > 21)) {
           results.push({
             category: "chain",
-            name: "Finality Committee Size",
+            name: t("configChecker.finalityCommitteeSize"),
             status: "warning",
-            message: "Committee size outside recommended range",
+            message: t("configChecker.committeeSizeOutsideRange"),
             value: params.finalityCommitteeSize,
-            recommendation: "Recommended: 7-21 members",
+            recommendation: t("configChecker.committeeSizeRecommendation"),
           });
         } else {
           results.push({
             category: "chain",
-            name: "Finality",
+            name: t("configChecker.finality"),
             status: "pass",
-            message: `Enabled (${params.finalityCommitteeSize || 11} members)`,
+            message: t("configChecker.finalityEnabled", { count: params.finalityCommitteeSize || 11 }),
             value: params.finalityEnabled,
           });
         }
       } else {
         results.push({
           category: "chain",
-          name: "Finality",
+          name: t("configChecker.finality"),
           status: "warning",
-          message: "Fast finality disabled",
-          recommendation: "Enable for faster confirmation",
+          message: t("configChecker.finalityDisabled"),
+          recommendation: t("configChecker.finalityRecommendation"),
         });
       }
     } else {
       results.push({
         category: "chain",
-        name: "Chain Context",
+        name: t("configChecker.chainContext"),
         status: "error",
-        message: "Chain not initialized",
+        message: t("configChecker.chainNotInitialized"),
       });
     }
 
@@ -238,17 +241,17 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     if (isP2PConnected) {
       results.push({
         category: "p2p",
-        name: "P2P Connection",
+        name: t("configChecker.p2pConnection"),
         status: "pass",
-        message: "Connected to network",
+        message: t("configChecker.connectedToNetwork"),
       });
     } else {
       results.push({
         category: "p2p",
-        name: "P2P Connection",
+        name: t("configChecker.p2pConnection"),
         status: "warning",
-        message: "Not connected",
-        recommendation: "Connect to P2P network for block sync",
+        message: t("configChecker.notConnected"),
+        recommendation: t("configChecker.p2pRecommendation"),
       });
     }
 
@@ -256,17 +259,17 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     if (nodeAddress) {
       results.push({
         category: "wallet",
-        name: "Node Address",
+        name: t("configChecker.nodeAddress"),
         status: "pass",
-        message: "Wallet initialized",
-        value: nodeAddress.substring(0, 16) + "...",
+        message: t("configChecker.walletInitialized"),
+        value: formatAddress(nodeAddress, 8, 8),
       });
     } else {
       results.push({
         category: "wallet",
-        name: "Node Address",
+        name: t("configChecker.nodeAddress"),
         status: "error",
-        message: "Wallet not initialized",
+        message: t("configChecker.walletNotInitialized"),
       });
     }
 
@@ -274,14 +277,14 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     if (isMining) {
       results.push({
         category: "mining",
-        name: "Mining Status",
+        name: t("configChecker.miningStatus"),
         status: "pass",
-        message: "Mining active",
+        message: t("configChecker.miningActive"),
       });
     }
 
     setChecks(results);
-  }, [chainContext, isP2PConnected, nodeAddress, isMining]);
+  }, [chainContext, isP2PConnected, nodeAddress, isMining, t]);
 
   const passCount = checks.filter((c) => c.status === "pass").length;
   const warningCount = checks.filter((c) => c.status === "warning").length;
@@ -334,6 +337,25 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
     }
   };
 
+  const getCategoryName = (category: string) => {
+    switch (category) {
+      case "system":
+        return t("configChecker.categorySystem");
+      case "storage":
+        return t("configChecker.categoryStorage");
+      case "chain":
+        return t("configChecker.categoryChain");
+      case "p2p":
+        return t("configChecker.categoryP2p");
+      case "wallet":
+        return t("configChecker.categoryWallet");
+      case "mining":
+        return t("configChecker.categoryMining");
+      default:
+        return category.toUpperCase();
+    }
+  };
+
   const groupedChecks = checks.reduce((acc, check) => {
     if (!acc[check.category]) {
       acc[check.category] = [];
@@ -364,9 +386,9 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
             {healthScore === 100 ? "✅" : healthScore >= 70 ? "⚠️" : "❌"}
           </span>
           <div>
-            <strong>Configuration Check</strong>
+            <strong>{t("configChecker.title")}</strong>
             <div style={{ fontSize: "0.85rem", color: "#666" }}>
-              {passCount}/{totalCount} passed • {warningCount} warnings • {errorCount} errors
+              {passCount}/{totalCount} {t("configChecker.passed")} • {warningCount} {t("configChecker.warnings")} • {errorCount} {t("configChecker.errors")}
             </div>
           </div>
         </div>
@@ -380,7 +402,7 @@ export function ConfigChecker({ chainContext, isP2PConnected, nodeAddress, isMin
           {Object.entries(groupedChecks).map(([category, categoryChecks]) => (
             <div key={category} style={{ marginBottom: "1.5rem" }}>
               <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#333", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                {getCategoryIcon(category)} {category.toUpperCase()}
+                {getCategoryIcon(category)} {getCategoryName(category)}
               </h3>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                 {categoryChecks.map((check, idx) => (
