@@ -23,6 +23,10 @@ interface MiningMainCardProps {
   onStartMining: () => void;
   onStopMining: () => void;
   locale: string;
+  // Phase 42: Referral system props
+  pendingInviteAddress?: string | null;
+  currentReferrerAddress?: string | null;
+  onInviteCodeSubmit?: (code: string) => void;
 }
 
 export function MiningMainCard({
@@ -38,10 +42,14 @@ export function MiningMainCard({
   onStartMining,
   onStopMining,
   locale,
+  pendingInviteAddress,
+  currentReferrerAddress,
+  onInviteCodeSubmit,
 }: MiningMainCardProps) {
   const [miningGuardResult, setMiningGuardResult] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [tooltip, setTooltip] = useState<string>("");
+  const [inviteCodeInput, setInviteCodeInput] = useState<string>("");
   const { t } = useI18n();
 
   const isZh = locale === "zh";
@@ -453,6 +461,97 @@ export function MiningMainCard({
           {isZh
             ? "⚠️ 此标签页是 FOLLOWER。只有本机的 LEADER 标签页可以在主网挖矿。"
             : "⚠️ This tab is FOLLOWER. Only the LEADER tab on this machine can mine on mainnet."}
+        </div>
+      )}
+
+      {/* Phase 42: Referral Invite Code Input */}
+      {!currentReferrerAddress && (
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "1rem",
+            background: "rgba(102, 126, 234, 0.1)",
+            borderRadius: "6px",
+            border: "1px solid #667eea",
+          }}
+        >
+          <div style={{ fontSize: "0.9rem", fontWeight: "bold", marginBottom: "0.75rem", color: "#667eea" }}>
+            {isZh ? "🎯 邀请码绑定" : "🎯 Referral Code"}
+          </div>
+          
+          {pendingInviteAddress ? (
+            <div style={{ fontSize: "0.85rem", color: "#28a745" }}>
+              {isZh 
+                ? `✅ 待绑定邀请地址: ${pendingInviteAddress.substring(0, 16)}... (挖矿时自动绑定)`
+                : `✅ Pending invite address: ${pendingInviteAddress.substring(0, 16)}... (will bind when mining starts)`}
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+              <input
+                type="text"
+                value={inviteCodeInput}
+                onChange={(e) => setInviteCodeInput(e.target.value)}
+                placeholder={isZh ? "输入邀请码或邀请地址" : "Enter invite code or address"}
+                style={{
+                  flex: 1,
+                  padding: "0.6rem",
+                  fontSize: "0.85rem",
+                  border: "1px solid #ddd",
+                  borderRadius: "4px",
+                  fontFamily: "monospace",
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (inviteCodeInput.trim() && onInviteCodeSubmit) {
+                    onInviteCodeSubmit(inviteCodeInput.trim());
+                    setInviteCodeInput("");
+                  }
+                }}
+                disabled={!inviteCodeInput.trim()}
+                style={{
+                  padding: "0.6rem 1rem",
+                  fontSize: "0.85rem",
+                  background: inviteCodeInput.trim() ? "#667eea" : "#ccc",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: inviteCodeInput.trim() ? "pointer" : "not-allowed",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isZh ? "绑定" : "Bind"}
+              </button>
+            </div>
+          )}
+          
+          <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic" }}>
+            {isZh
+              ? "💡 绑定邀请地址后，邀请人将获得你挖矿奖励的20%作为推荐奖励"
+              : "💡 After binding, your inviter will receive 20% of your mining rewards as referral bonus"}
+          </div>
+        </div>
+      )}
+
+      {/* Current Referrer Display */}
+      {currentReferrerAddress && (
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "0.75rem",
+            background: "rgba(40, 167, 69, 0.1)",
+            borderRadius: "6px",
+            border: "1px solid #28a745",
+            fontSize: "0.85rem",
+            color: "#155724",
+          }}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+            {isZh ? "✅ 已绑定邀请地址" : "✅ Referral Address Bound"}
+          </div>
+          <div style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+            {currentReferrerAddress.substring(0, 20)}...
+          </div>
         </div>
       )}
     </div>

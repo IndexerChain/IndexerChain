@@ -90,6 +90,7 @@ import { NetworkMiniHealthCard } from "./mining/NetworkMiniHealthCard.js";
 import { getOrCreateDeviceId } from "../core/ipSharingWeight.js";
 import { QuickStatusDashboard } from "./components/QuickStatusDashboard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
+import { DailyInfoBar } from "./components/DailyInfoBar.js";
 import "./index.css";
 
 /**
@@ -130,6 +131,10 @@ function App() {
   const [isP2PConnected, setIsP2PConnected] = useState<boolean>(false);
   const [nodeAddress, setNodeAddress] = useState<string>("");
   const [isSigning, setIsSigning] = useState<boolean>(false);
+  
+  // Phase 42: Referral system - pending invite address
+  const [pendingInviteAddress, setPendingInviteAddress] = useState<string | null>(null);
+  const [currentReferrerAddress, setCurrentReferrerAddress] = useState<string | null>(null);
   
   // Phase 7: Transfer form state
   const [transferTo, setTransferTo] = useState<string>("");
@@ -562,6 +567,61 @@ function App() {
     };
     saveState();
   }, [isMining, clusterMining, autoMining, bootstrapUrl, isMainnetMode, isP2PConnected]);
+
+  // Phase 42: Check for invite code in URL on mount
+  useEffect(() => {
+    const checkInviteCode = () => {
+      try {
+        // Check URL parameters: ?invite=xxx or ?ref=xxx
+        const urlParams = new URLSearchParams(window.location.search);
+        let inviteCode = urlParams.get("invite") || urlParams.get("ref");
+        
+        // Check URL path: /invite/xxx
+        if (!inviteCode) {
+          const pathMatch = window.location.pathname.match(/\/invite\/([^\/]+)/);
+          if (pathMatch) {
+            inviteCode = pathMatch[1];
+          }
+        }
+        
+        if (inviteCode) {
+          // Try to parse as referral code (base64 encoded address)
+          import("../core/referralSystem.js").then(({ parseReferralCode }) => {
+            const inviteAddress = parseReferralCode(inviteCode);
+            
+            if (inviteAddress) {
+              console.log("[App] Found invite code in URL, parsed address:", inviteAddress);
+              setPendingInviteAddress(inviteAddress);
+            } else if (inviteCode.startsWith("idc_")) {
+              // Also try direct address format (idc_...)
+              console.log("[App] Found invite address directly in URL:", inviteCode);
+              setPendingInviteAddress(inviteCode);
+            } else {
+              console.warn("[App] Invalid invite code format:", inviteCode);
+            }
+          }).catch((error) => {
+            // If import fails, try direct address format
+            if (inviteCode.startsWith("idc_")) {
+              console.log("[App] Found invite address directly in URL:", inviteCode);
+              setPendingInviteAddress(inviteCode);
+            } else {
+              console.warn("[App] Invalid invite code format:", inviteCode);
+            }
+          });
+        }
+        
+        // Check if user already has a referrer
+        const savedReferrer = localStorage.getItem("indexerchain_referrer_address");
+        if (savedReferrer) {
+          setCurrentReferrerAddress(savedReferrer);
+        }
+      } catch (error) {
+        console.error("[App] Failed to check invite code:", error);
+      }
+    };
+    
+    checkInviteCode();
+  }, []);
 
   // Initialize chain on mount
   useEffect(() => {
@@ -3455,11 +3515,55 @@ function App() {
       return;
     }
     
-    // Phase 30: Mining guard check
-    const { MiningGuard } = await import("../core/miningGuard.js");
+    // Phase 42: Register referral if pending invite address exists
     const walletStore = getMultiWalletStore();
     const miningWallet = walletStore.getMiningWallet();
     const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+    
+    if (pendingInviteAddress && minerAddr) {
+      try {
+        const { getReferralSystem } = await import("../core/referralSystem.js");
+        const { getOrCreateDeviceId } = await import("../core/ipSharingWeight.js");
+        const referralSystem = getReferralSystem();
+        const deviceId = getOrCreateDeviceId();
+        
+        // Get IP hash (simplified - in production would get from Shadow Node)
+        const ipHash = null; // Will be set by Shadow Node
+        
+        const registered = referralSystem.registerReferral(
+          pendingInviteAddress as any,
+          minerAddr as any,
+          deviceId,
+          ipHash || undefined
+        );
+        
+        if (registered) {
+          console.log(`[App] ✅ Referral registered: ${minerAddr} invited by ${pendingInviteAddress}`);
+          setCurrentReferrerAddress(pendingInviteAddress);
+          setPendingInviteAddress(null); // Clear pending
+          
+          // Save to localStorage
+          localStorage.setItem("indexerchain_referrer_address", pendingInviteAddress);
+          
+          // Show success message
+          setSuccessMessage(
+            locale === "zh"
+              ? `✅ 已绑定邀请地址: ${pendingInviteAddress.substring(0, 16)}...`
+              : `✅ Referral address bound: ${pendingInviteAddress.substring(0, 16)}...`
+          );
+          setTimeout(() => setSuccessMessage(""), 5000);
+        } else {
+          console.warn(`[App] ⚠️ Failed to register referral (may already have referrer or same IP/device)`);
+          // Don't show error - this is normal if user already has a referrer
+        }
+      } catch (error) {
+        console.error("[App] Failed to register referral:", error);
+        // Don't block mining if referral registration fails
+      }
+    }
+    
+    // Phase 30: Mining guard check
+    const { MiningGuard } = await import("../core/miningGuard.js");
     
     const guardResult = await MiningGuard.canMineNow(
       chainContext,
@@ -4771,6 +4875,138 @@ function App() {
           </div>
         )}
 
+        {/* Node Identity Bar - 显示在所有标签页上方 */}
+        {chainContext && (
+          <div style={{
+            padding: "1rem 1.5rem",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "white",
+            borderRadius: "8px",
+            marginBottom: "1rem",
+            boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)"
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "1.5rem"
+            }}>
+              {/* Left: Balance (最显眼) */}
+              {nodeAddress && (
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "1rem",
+                  flex: "1",
+                  minWidth: "200px"
+                }}>
+                  <div>
+                    <div style={{ fontSize: "0.85rem", opacity: 0.9, marginBottom: "0.25rem" }}>
+                      {t("wallet.balance")}
+                    </div>
+                    <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white" }}>
+                      {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Middle: Address */}
+              {nodeAddress && (
+                <div style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                  flex: "2",
+                  minWidth: "250px"
+                }}>
+                  <div style={{ fontSize: "0.85rem", opacity: 0.9 }}>
+                    {t("wallet.address")}
+                  </div>
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    flexWrap: "wrap"
+                  }}>
+                    <span style={{
+                      fontSize: "0.9rem",
+                      fontFamily: "monospace",
+                      color: "white",
+                      wordBreak: "break-all"
+                    }}>
+                      {nodeAddress}
+                    </span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(nodeAddress);
+                        setError(t("wallet.addressCopied"));
+                        setTimeout(() => setError(""), 2000);
+                      }}
+                      style={{
+                        padding: "0.4rem 0.8rem",
+                        fontSize: "0.85rem",
+                        background: "rgba(255, 255, 255, 0.3)",
+                        color: "white",
+                        border: "1px solid rgba(255, 255, 255, 0.5)",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        fontWeight: "500",
+                        whiteSpace: "nowrap",
+                        transition: "all 0.2s"
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = "rgba(255, 255, 255, 0.4)";
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = "rgba(255, 255, 255, 0.3)";
+                      }}
+                    >
+                      {t("common.copy")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              
+              {/* Right: Node ID */}
+              <div style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.5rem",
+                minWidth: "150px"
+              }}>
+                <div style={{ fontSize: "0.85rem", opacity: 0.9 }}>
+                  {t("wallet.nodeId")}
+                </div>
+                <div style={{
+                  fontSize: "0.9rem",
+                  fontFamily: "monospace",
+                  color: "white"
+                }}>
+                  {getOrCreateBrowserNodeId().substring(0, 16)}...
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Daily Info Bar - 每日信息栏（放在余额组件下面，标签栏上面） */}
+        {chainContext && nodeAddress && (() => {
+          const tip = chainContext.storage.getTip();
+          return (
+            <DailyInfoBar
+              chainContext={chainContext}
+              nodeAddress={nodeAddress}
+              currentHeight={tip?.header?.height || 0}
+              isMining={isMining}
+              clusterMining={clusterMining}
+              currentReferrerAddress={currentReferrerAddress}
+              locale={locale}
+            />
+          );
+        })()}
+
         {/* Tab Navigation */}
         <div className="tab-container">
           <div className="tab-nav desktop-only">
@@ -5740,53 +5976,6 @@ function App() {
           {/* Wallet Tab */}
           {activeTab === "wallet" && (
             <div className="tab-content active">
-              {/* Node Identity Section */}
-              <div className="status-card">
-                <h2>💼 {t("overview.nodeIdentity")}</h2>
-                <div className="status-item">
-                  <span className="label">{t("wallet.address")}:</span>
-                  <span className="value" style={{ fontSize: "0.9rem", wordBreak: "break-all" }}>
-                    {nodeAddress || t("common.loading")}
-                  </span>
-                  {nodeAddress && (
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(nodeAddress);
-                        setError(t("wallet.addressCopied"));
-                        setTimeout(() => setError(""), 2000);
-                      }}
-                      style={{
-                        marginLeft: "0.5rem",
-                        padding: "0.25rem 0.5rem",
-                        fontSize: "0.8rem",
-                        background: "#667eea",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {t("common.copy")}
-                    </button>
-                  )}
-                </div>
-                <div className="status-item">
-                  <span className="label">{t("wallet.nodeId")}:</span>
-                  <span className="value" style={{ fontSize: "0.8rem" }}>
-                    {getOrCreateBrowserNodeId().substring(0, 16)}...
-                  </span>
-                </div>
-                {/* Phase 7: Balance Display */}
-                {nodeAddress && chainContext && (
-                  <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                    <span className="label">{t("wallet.balance")}:</span>
-                    <span className="value" style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#667eea" }}>
-                      {chainContext.indexState.getBalance(nodeAddress as any).toFixed(2)} IDC
-                    </span>
-                  </div>
-                )}
-              </div>
-              
               {/* Phase 24: Multi-Wallet Manager */}
               <div className="status-card">
                 <h2>💼 {t("wallet.manager")}</h2>
@@ -6028,6 +6217,45 @@ function App() {
                       }
                     }}
                     locale={locale}
+                    pendingInviteAddress={pendingInviteAddress}
+                    currentReferrerAddress={currentReferrerAddress}
+                    onInviteCodeSubmit={async (code: string) => {
+                      try {
+                        const { parseReferralCode } = await import("../core/referralSystem.js");
+                        let inviteAddress: string | null = null;
+                        
+                        // Try to parse as referral code (base64 encoded address)
+                        inviteAddress = parseReferralCode(code);
+                        
+                        // If not a code, try direct address format
+                        if (!inviteAddress && code.startsWith("idc_")) {
+                          inviteAddress = code;
+                        }
+                        
+                        if (inviteAddress) {
+                          setPendingInviteAddress(inviteAddress);
+                          setSuccessMessage(
+                            locale === "zh"
+                              ? `✅ 邀请地址已保存，将在开始挖矿时自动绑定`
+                              : `✅ Invite address saved, will bind automatically when mining starts`
+                          );
+                          setTimeout(() => setSuccessMessage(""), 5000);
+                        } else {
+                          setError(
+                            locale === "zh"
+                              ? "❌ 无效的邀请码格式，请检查后重试"
+                              : "❌ Invalid invite code format, please check and try again"
+                          );
+                        }
+                      } catch (error) {
+                        console.error("[App] Failed to parse invite code:", error);
+                        setError(
+                          locale === "zh"
+                            ? "❌ 处理邀请码时出错，请重试"
+                            : "❌ Error processing invite code, please try again"
+                        );
+                      }
+                    }}
                   />
 
                   {/* Phase 38: Live Stats Card (挖矿时的实时统计，也是操作相关) */}

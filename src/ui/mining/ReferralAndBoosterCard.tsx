@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from "react";
 import { getReferralSystem } from "../../core/referralSystem.js";
-import { getActiveBoosterTracker } from "../../core/activeBooster.js";
+import { getActiveBoosterTracker, saveActiveBoosterData } from "../../core/activeBooster.js";
 import { IDC_MAX_SUPPLY, IDC_BLOCKS_PER_YEAR } from "../../core/idcEmission.js";
 import { uIDCToIDC } from "../../core/idcEmission.js";
 
@@ -27,6 +27,7 @@ export function ReferralAndBoosterCard({
 }: ReferralAndBoosterCardProps) {
   const [referralData, setReferralData] = useState<any>(null);
   const [activeBoosterData, setActiveBoosterData] = useState<any>(null);
+  const [isCheckingIn, setIsCheckingIn] = useState<boolean>(false);
   const isZh = locale === "zh";
 
   useEffect(() => {
@@ -72,6 +73,12 @@ export function ReferralAndBoosterCard({
         const consecutiveDays = activeBooster.getConsecutiveDays();
         const multiplier = activeBooster.getMultiplier();
         
+        // Check if active today by comparing last active date with today
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const lastActiveDate = (activeBooster as any).lastActiveDate;
+        const isActiveToday = lastActiveDate === todayStr;
+        
         // Calculate year for cap
         const year = Math.floor(currentHeight / Number(IDC_BLOCKS_PER_YEAR));
         let activeBoosterCap = 2.0;
@@ -101,7 +108,7 @@ export function ReferralAndBoosterCard({
           year,
           nextTierDays,
           nextTierMultiplier,
-          isActiveToday: consecutiveDays > 0, // Simplified check
+          isActiveToday,
         });
       } catch (error) {
         console.error("[ReferralAndBoosterCard] Failed to update data:", error);
@@ -203,9 +210,64 @@ export function ReferralAndBoosterCard({
           </h4>
           <div style={{ fontSize: "0.9rem" }}>
             <div style={{ marginBottom: "0.5rem", padding: "0.75rem", background: activeBoosterData.isActiveToday ? "#d4edda" : "#fff3cd", borderRadius: "6px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", alignItems: "center" }}>
                 <span>{isZh ? "今日是否签到" : "Today Active"}:</span>
-                <strong>{activeBoosterData.isActiveToday ? "✅ " + (isZh ? "是" : "Yes") : "❌ " + (isZh ? "否" : "No")}</strong>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <strong>{activeBoosterData.isActiveToday ? "✅ " + (isZh ? "是" : "Yes") : "❌ " + (isZh ? "否" : "No")}</strong>
+                  {!activeBoosterData.isActiveToday && (
+                    <button
+                      onClick={async () => {
+                        setIsCheckingIn(true);
+                        try {
+                          const activeBooster = getActiveBoosterTracker();
+                          activeBooster.markActive();
+                          saveActiveBoosterData();
+                          
+                          // Update UI immediately
+                          const consecutiveDays = activeBooster.getConsecutiveDays();
+                          const multiplier = activeBooster.getMultiplier();
+                          const year = Math.floor(currentHeight / Number(IDC_BLOCKS_PER_YEAR));
+                          let activeBoosterCap = 2.0;
+                          if (year === 0) {
+                            activeBoosterCap = 1.5;
+                          } else if (year < 3) {
+                            activeBoosterCap = 2.0;
+                          } else {
+                            activeBoosterCap = 2.5;
+                          }
+                          
+                          setActiveBoosterData({
+                            consecutiveDays,
+                            multiplier: Math.min(multiplier, activeBoosterCap),
+                            cap: activeBoosterCap,
+                            year,
+                            nextTierDays: 0,
+                            nextTierMultiplier: multiplier,
+                            isActiveToday: true,
+                          });
+                        } catch (error) {
+                          console.error("[ReferralAndBoosterCard] Failed to check in:", error);
+                        } finally {
+                          setIsCheckingIn(false);
+                        }
+                      }}
+                      disabled={isCheckingIn}
+                      style={{
+                        padding: "0.4rem 0.8rem",
+                        fontSize: "0.8rem",
+                        background: isCheckingIn ? "#ccc" : "#28a745",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: isCheckingIn ? "not-allowed" : "pointer",
+                        whiteSpace: "nowrap",
+                        fontWeight: "500",
+                      }}
+                    >
+                      {isCheckingIn ? (isZh ? "签到中..." : "Checking in...") : (isZh ? "签到" : "Check In")}
+                    </button>
+                  )}
+                </div>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
                 <span>{isZh ? "连续挖矿天数" : "Consecutive Days"}:</span>
