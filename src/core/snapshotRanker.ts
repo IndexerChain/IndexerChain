@@ -11,6 +11,7 @@
  */
 
 import type { SnapshotMeta, ChainParams } from "./types.js";
+import { logger } from "./logger.js";
 
 /**
  * Snapshot source information
@@ -228,7 +229,7 @@ export class SnapshotRanker {
     }
     
     if (stale.length > 0) {
-      console.log(`[Phase 20] Cleaned up ${stale.length} stale snapshot sources`);
+      logger.debug(`[Phase 20] Cleaned up ${stale.length} stale snapshot sources`);
     }
   }
   

@@ -11,6 +11,7 @@ import type { BrowserP2PNode } from "./p2p.js";
 import type { SnapshotMeta, SnapshotData } from "./types.js";
 import { chunkSnapshot, type ChunkedSnapshotInfo, type SnapshotChunk } from "./snapshotChunker.js";
 import { loadSnapshotByHeightSync, loadAllSnapshotMeta } from "./snapshot.js";
+import { logger } from "./logger.js";
 
 /**
  * Seeding configuration
@@ -143,7 +144,7 @@ export class SnapshotSeeder {
       }
     }
     
-    console.log(`[Phase 20] Loaded ${this.cachedSnapshots.size} snapshots for seeding`);
+    logger.debug(`[Phase 20] Loaded ${this.cachedSnapshots.size} snapshots for seeding`);
   }
   
   /**
@@ -256,7 +257,7 @@ export class SnapshotSeeder {
         this.activeRequests.delete(`${request.nodeId}_${cached.meta.height}`);
         
         const elapsed = Date.now() - request.startTime;
-        console.log(`[Phase 20] Seeded snapshot ${request.snapshotId} to ${nodeId} in ${elapsed}ms`);
+        logger.debug(`[Phase 20] Seeded snapshot ${request.snapshotId} to ${nodeId} in ${elapsed}ms`);
       } else if (chunkIndex < cached.chunks.length) {
         // Schedule next batch
         setTimeout(sendBatch, 10); // 10ms delay between batches

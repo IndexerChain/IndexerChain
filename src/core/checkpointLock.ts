@@ -8,6 +8,7 @@
 
 import type { ChainContext } from "./chain.js";
 import type { Block } from "./types.js";
+import { logger } from "./logger.js";
 
 /**
  * Checkpoint information
@@ -99,7 +100,7 @@ export class CheckpointLock {
 
     this.checkpoints.set(height, checkpoint);
     
-    console.log(`[Phase 31] Created checkpoint at height ${height}, hash: ${block.hash.substring(0, 16)}...`);
+    logger.debug(`[Phase 31] Created checkpoint at height ${height}, hash: ${block.hash.substring(0, 16)}...`);
 
     // Clean up old checkpoints (keep only last 10)
     const sortedHeights = Array.from(this.checkpoints.keys()).sort((a, b) => b - a);
@@ -173,7 +174,7 @@ export class CheckpointLock {
     checkpoint.finalized = true;
     checkpoint.finalitySignatures = signatures;
 
-    console.log(`[Phase 31] Finalized checkpoint at height ${height} with ${signatures.length} signatures`);
+    logger.debug(`[Phase 31] Finalized checkpoint at height ${height} with ${signatures.length} signatures`);
 
     return true;
   }
@@ -216,7 +217,7 @@ export class CheckpointLock {
       }
     }
 
-    console.log(`[Phase 31] Initialized ${this.checkpoints.size} checkpoints from chain`);
+    logger.debug(`[Phase 31] Initialized ${this.checkpoints.size} checkpoints from chain`);
   }
 }
 

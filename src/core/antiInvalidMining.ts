@@ -11,6 +11,7 @@ import type { Block, BlockHeader } from "./types.js";
 import type { ChainContext } from "./chain.js";
 import { hashBlockHeader } from "./crypto.js";
 import { calcMerkleRoot } from "./merkle.js";
+import { logger } from "./logger.js";
 
 /**
  * Mining epoch tracking
@@ -53,7 +54,7 @@ export class AntiInvalidMining {
       timestamp: Date.now(),
     };
 
-    console.log(`[Phase 31] Started mining epoch at height ${tip.header.height}, tipHash: ${tip.hash.substring(0, 16)}...`);
+    logger.debug(`[Phase 31] Started mining epoch at height ${tip.header.height}, tipHash: ${tip.hash.substring(0, 16)}...`);
   }
 
   /**
@@ -61,7 +62,7 @@ export class AntiInvalidMining {
    */
   stopMiningEpoch(): void {
     if (this.currentMiningEpoch) {
-      console.log(`[Phase 31] Stopped mining epoch at height ${this.currentMiningEpoch.height}`);
+      logger.debug(`[Phase 31] Stopped mining epoch at height ${this.currentMiningEpoch.height}`);
       this.currentMiningEpoch = null;
     }
   }
@@ -197,7 +198,7 @@ export class AntiInvalidMining {
     if (delegatorSignature) {
       // TODO: Verify ECDSA signature from delegator
       // This requires delegator public key and signature verification logic
-      console.log("[Phase 31] Delegator signature provided (verification not yet implemented)");
+      logger.debug("[Phase 31] Delegator signature provided (verification not yet implemented)");
     }
 
     return true;

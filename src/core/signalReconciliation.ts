@@ -7,6 +7,7 @@
 
 import type { ChainContext } from "./chain.js";
 import type { P2PNode } from "./p2p.js";
+import { logger } from "./logger.js";
 
 /**
  * Root node tip summary
@@ -63,7 +64,7 @@ export class SignalReconciliation {
     if (this.isRunning) return;
     this.isRunning = true;
     
-    console.log("[Phase 31] Starting Signal Reconciliation...");
+    logger.debug("[Phase 31] Starting Signal Reconciliation...");
     
     // Reconcile every 30 seconds
     this.reconciliationInterval = setInterval(() => {
@@ -92,7 +93,7 @@ export class SignalReconciliation {
       this.reconciliationInterval = null;
     }
     
-    console.log("[Phase 31] Stopped Signal Reconciliation.");
+    logger.debug("[Phase 31] Stopped Signal Reconciliation.");
   }
 
   /**
@@ -136,13 +137,13 @@ export class SignalReconciliation {
       if (!result.consistent) {
         console.warn("[Phase 31] Reconciliation inconsistency:", result);
       } else {
-        console.log("[Phase 31] Reconciliation consistent");
+        logger.debug("[Phase 31] Reconciliation consistent");
       }
 
       // Determine action based on result
       if (result.action === "FOLLOW_ROOT") {
         // Root matches P2P majority, we can trust root
-        console.log("[Phase 31] Following root node (consistent with P2P majority)");
+        logger.debug("[Phase 31] Following root node (consistent with P2P majority)");
       } else if (result.action === "FOLLOW_P2P_MAJORITY") {
         // P2P majority differs from root, follow majority
         console.warn("[Phase 31] Following P2P majority (root differs)");

@@ -8,6 +8,7 @@
  */
 
 import type { SnapshotData } from "./types.js";
+import { logger } from "./logger.js";
 
 /**
  * Chunk size: 32 KB (optimal for WebRTC)
@@ -199,7 +200,7 @@ export class SnapshotAssembler {
       };
       
       const elapsed = Date.now() - this.state.startTime;
-      console.log(`[Phase 20] Assembled snapshot ${this.state.snapshotId} in ${elapsed}ms`);
+      logger.debug(`[Phase 20] Assembled snapshot ${this.state.snapshotId} in ${elapsed}ms`);
       
       if (this.onComplete) {
         this.onComplete(snapshotData);

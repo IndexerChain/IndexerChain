@@ -14,6 +14,7 @@
 import type { ChainContext } from "./chain.js";
 import type { ChainParams, GlobalViewSummary, DriftAssessment, GlobalViewResponse } from "./types.js";
 import type { P2PNode } from "./p2p.js";
+import { logger } from "./logger.js";
 
 export class GlobalStateSentinel {
   private chainContext: ChainContext;
@@ -60,7 +61,7 @@ export class GlobalStateSentinel {
       this.performDriftCheck();
     }, intervalMs);
     
-    console.log(`[GlobalSentinel] Started (check interval: ${intervalMs}ms)`);
+    logger.debug(`[GlobalSentinel] Started (check interval: ${intervalMs}ms)`);
   }
 
   /**
@@ -75,7 +76,7 @@ export class GlobalStateSentinel {
       this.checkInterval = null;
     }
     
-    console.log("[GlobalSentinel] Stopped");
+    logger.debug("[GlobalSentinel] Stopped");
   }
 
   /**

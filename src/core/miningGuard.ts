@@ -18,6 +18,7 @@ import type { ChainContext } from "./chain.js";
 import type { P2PNode } from "./p2p.js";
 import { validateMainnetParams, isMainnet } from "./networkParams.js";
 import { getQuorumManager } from "./quorumManager.js";
+import { logger } from "./logger.js";
 
 /**
  * Phase 33: Mining permission level
@@ -84,7 +85,7 @@ export class MiningGuard {
     if (!p2pNode || !p2pNode.isConnected) {
       // If bootstrap is complete, we might still allow mining (Cold Start mode)
       if (bootstrapComplete) {
-        console.log(`[Phase 32] P2P disconnected but bootstrap complete - allowing Cold Start mining`);
+        logger.debug(`[Phase 32] P2P disconnected but bootstrap complete - allowing Cold Start mining`);
         // Continue to other checks, but note that we're in Cold Start mode
       } else {
         return {
@@ -135,7 +136,7 @@ export class MiningGuard {
     // This is for early network phase where nodes can mine based on signal server's rootTip
     const isColdStartMode = bootstrapComplete && peerCount === 0;
     if (isColdStartMode) {
-      console.log(`[Phase 37] Cold Start mode: bootstrapComplete=true, peers=0, allowing mining`);
+      logger.debug(`[Phase 37] Cold Start mode: bootstrapComplete=true, peers=0, allowing mining`);
       miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
     }
     
@@ -147,7 +148,7 @@ export class MiningGuard {
       // Genesis mode: Check minimal requirements
       // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
       if (quorumStatus.ready && quorumStatus.independentPeerCount >= 2) {
-        console.log(`[Phase 38] 🌟 Genesis Quorum Mode: Allowing mining at height 0 (independent peers: ${quorumStatus.independentPeerCount}, score: ${quorumStatus.totalScore})`);
+        logger.info(`[Phase 38] 🌟 Genesis Quorum Mode: Allowing mining at height 0 (independent peers: ${quorumStatus.independentPeerCount}, score: ${quorumStatus.totalScore})`);
         // Continue to other checks, but mining is allowed in Genesis mode
       } else {
         return {
@@ -233,9 +234,10 @@ export class MiningGuard {
         
         // Level 1: SAFE Mining - Mainnet admission rules satisfied + state lock OK
         miningMode = "SAFE";
-        console.log(`[Phase 35/36] Mainnet admission ready: Stage ${admissionStatus.stage}, Score ${admissionStatus.quorumScore} >= ${admissionStatus.requiredQuorumScore}, Independent peers ${admissionStatus.independentPeers} >= ${admissionStatus.requiredIndependentPeers}, State lock OK`);
+        logger.debug(`[Phase 35/36] Mainnet admission ready: Stage ${admissionStatus.stage}, Score ${admissionStatus.quorumScore} >= ${admissionStatus.requiredQuorumScore}, Independent peers ${admissionStatus.independentPeers} >= ${admissionStatus.requiredIndependentPeers}, State lock OK`);
       } else {
         // BLOCKED: Mainnet admission rules not satisfied
+        // Phase 39: Use requiredIndependentPeers for mainnet admission error message
         return {
           ok: false,
           mode: "BLOCKED",
@@ -243,11 +245,11 @@ export class MiningGuard {
           reason: `Mainnet admission not ready (${admissionStatus.stage} stage): Quorum score ${admissionStatus.quorumScore} < ${admissionStatus.requiredQuorumScore} or independent peers ${admissionStatus.independentPeers} < ${admissionStatus.requiredIndependentPeers}. ${admissionStatus.reasons.join("; ")}`,
           details: {
             peerCount,
-            requiredPeers: minPeersRequired,
+            requiredPeers: admissionStatus.requiredIndependentPeers, // Phase 39: Use requiredIndependentPeers for mainnet
+            requiredIndependentPeers: admissionStatus.requiredIndependentPeers,
             quorumScore: admissionStatus.quorumScore,
             requiredQuorumScore: admissionStatus.requiredQuorumScore,
             independentPeerCount: admissionStatus.independentPeers,
-            requiredIndependentPeers: admissionStatus.requiredIndependentPeers,
           },
         };
       }
@@ -257,15 +259,15 @@ export class MiningGuard {
     } else if (allowLocalMining && isLocalMiningMode) {
       // Level 3: LOCAL_ONLY Mining - Training mode
       miningMode = "LOCAL_ONLY";
-      console.log(`[Phase 33] Local-only mining mode enabled (peers: ${peerCount})`);
+      logger.debug(`[Phase 33] Local-only mining mode enabled (peers: ${peerCount})`);
     } else if (bootstrapComplete && peerCount === 0) {
       // Phase 37: Cold Start mode - bootstrap complete but no peers yet
       miningMode = "GUARDED";
-      console.log(`[Phase 37] Cold Start mining mode: bootstrapComplete=true, peers=0`);
+      logger.debug(`[Phase 37] Cold Start mining mode: bootstrapComplete=true, peers=0`);
     } else if (allowGuardedMining) {
       // Level 2: GUARDED Mining - Dev/testnet with warnings
       miningMode = "GUARDED";
-      console.log(`[Phase 33] Guarded mining mode: ${peerCount} peers < ${minPeersRequired} (dev/testnet mode)`);
+      logger.debug(`[Phase 33] Guarded mining mode: ${peerCount} peers < ${minPeersRequired} (dev/testnet mode)`);
     } else if (isMainnetNetwork && !quorumStatus.ready && !bootstrapComplete) {
       // BLOCKED: Mainnet quorum not satisfied
       return {
@@ -385,7 +387,7 @@ export class MiningGuard {
         
         // Log warning in dev/testnet or initialization phase, but don't block
         if (finalityLag > maxFinalityLag && shouldRelaxCheck) {
-          console.log(`[Phase 36] Finality lag ${finalityLag} > ${maxFinalityLag}, but allowing mining (${isInitializationPhase ? 'initialization phase' : 'dev/testnet mode'})`);
+          logger.debug(`[Phase 36] Finality lag ${finalityLag} > ${maxFinalityLag}, but allowing mining (${isInitializationPhase ? 'initialization phase' : 'dev/testnet mode'})`);
         }
       }
     }
@@ -439,9 +441,17 @@ export class MiningGuard {
           : `🚫 Mining Ready: BLOCKED - Node not synced (local height: ${result.details?.localHeight || 0})`;
       
       case "INSUFFICIENT_PEERS":
+        // Phase 39: Show independent peers requirement for mainnet, or total peers for dev/testnet
+        const requiredPeers = result.details?.requiredIndependentPeers ?? result.details?.requiredPeers ?? 3;
+        const currentPeers = result.details?.requiredIndependentPeers !== undefined 
+          ? (result.details?.independentPeerCount ?? 0)
+          : (result.details?.peerCount ?? 0);
+        const peerLabel = result.details?.requiredIndependentPeers !== undefined
+          ? (isZh ? "独立节点" : "independent peers")
+          : (isZh ? "对等节点" : "peers");
         return isZh
-          ? `🚫 挖矿就绪：已阻止 - 对等节点不足（${result.details?.peerCount || 0} < ${result.details?.requiredPeers || 3}）`
-          : `🚫 Mining Ready: BLOCKED - Insufficient peers (${result.details?.peerCount || 0} < ${result.details?.requiredPeers || 3})`;
+          ? `🚫 挖矿就绪：已阻止 - ${peerLabel}不足（${currentPeers} < ${requiredPeers}）`
+          : `🚫 Mining Ready: BLOCKED - Insufficient ${peerLabel} (${currentPeers} < ${requiredPeers})`;
       
       case "NOT_FINALIZED":
         return isZh

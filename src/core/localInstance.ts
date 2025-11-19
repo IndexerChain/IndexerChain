@@ -10,6 +10,8 @@
  * - Automatic role assignment and heartbeat
  */
 
+import { logger } from "./logger.js";
+
 export type LocalInstanceRole = "LEADER" | "FOLLOWER";
 
 export interface LocalInstanceInfo {
@@ -138,7 +140,7 @@ export class LocalInstanceCoordinator {
           const timeSinceCleared = Date.now() - parseInt(clearedTime, 10);
           // If cleared less than 10 seconds ago, ignore it
           if (timeSinceCleared < 10000) {
-            console.log(`[LocalInstance] Ignoring stored leader ${loadedInfo.instanceId} - it was manually cleared ${timeSinceCleared}ms ago`);
+            logger.debug(`[LocalInstance] Ignoring stored leader ${loadedInfo.instanceId} - it was manually cleared ${timeSinceCleared}ms ago`);
             this.leaderInfo = null;
             localStorage.removeItem(STORAGE_KEY_LEADER);
             localStorage.removeItem(clearedKey);
@@ -155,11 +157,11 @@ export class LocalInstanceCoordinator {
         const age = Date.now() - this.leaderInfo.lastSeenAt;
         if (age > LEADER_TIMEOUT_MS) {
           // Leader timed out, clear it
-          console.log(`[LocalInstance] Leader ${this.leaderInfo.instanceId} timed out (age: ${age}ms), clearing`);
+          logger.debug(`[LocalInstance] Leader ${this.leaderInfo.instanceId} timed out (age: ${age}ms), clearing`);
           this.leaderInfo = null;
           localStorage.removeItem(STORAGE_KEY_LEADER);
         } else {
-          console.log(`[LocalInstance] Loaded leader ${this.leaderInfo.instanceId} (age: ${age}ms)`);
+          logger.debug(`[LocalInstance] Loaded leader ${this.leaderInfo.instanceId} (age: ${age}ms)`);
         }
       } catch {
         this.leaderInfo = null;
@@ -177,7 +179,7 @@ export class LocalInstanceCoordinator {
       const oldInstanceId = this.leaderInfo.instanceId;
       
       if (force || age > LEADER_TIMEOUT_MS) {
-        console.log(`[LocalInstance] ${force ? 'Force' : 'Manually'} clearing ${force && age <= LEADER_TIMEOUT_MS ? 'active' : 'stale'} leader ${oldInstanceId} (age: ${age}ms)`);
+        logger.debug(`[LocalInstance] ${force ? 'Force' : 'Manually'} clearing ${force && age <= LEADER_TIMEOUT_MS ? 'active' : 'stale'} leader ${oldInstanceId} (age: ${age}ms)`);
         
         // Clear leader info
         this.leaderInfo = null;
@@ -190,10 +192,10 @@ export class LocalInstanceCoordinator {
         // Trigger election to become leader
         this.performElection();
       } else {
-        console.log(`[LocalInstance] Leader ${this.leaderInfo.instanceId} is still active (age: ${age}ms), not clearing. Use force=true to override.`);
+        logger.debug(`[LocalInstance] Leader ${this.leaderInfo.instanceId} is still active (age: ${age}ms), not clearing. Use force=true to override.`);
       }
     } else {
-      console.log(`[LocalInstance] No leader info to clear`);
+      logger.debug(`[LocalInstance] No leader info to clear`);
       // Even if no leader info, try to become leader
       this.performElection();
     }
@@ -269,7 +271,7 @@ export class LocalInstanceCoordinator {
         const timeSinceCleared = Date.now() - parseInt(clearedTime, 10);
         // Ignore LEADER_STATUS from cleared instance for 10 seconds
         if (timeSinceCleared < 10000) {
-          console.log(`[LocalInstance] Ignoring LEADER_STATUS from manually cleared instance ${info.instanceId} (cleared ${timeSinceCleared}ms ago)`);
+          logger.debug(`[LocalInstance] Ignoring LEADER_STATUS from manually cleared instance ${info.instanceId} (cleared ${timeSinceCleared}ms ago)`);
           return;
         } else {
           // Clean up the flag after 10 seconds

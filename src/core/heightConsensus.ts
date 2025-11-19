@@ -6,6 +6,7 @@
 
 import type { ChainContext } from "./chain.js";
 import type { P2PNode } from "./p2p.js";
+import { logger } from "./logger.js";
 
 /**
  * Height vote from peer
@@ -54,7 +55,7 @@ export class HeightConsensusManager {
     if (this.isRunning) return;
     this.isRunning = true;
     
-    console.log("[Phase 31] Starting Height Consensus Manager...");
+    logger.debug("[Phase 31] Starting Height Consensus Manager...");
     
     // Broadcast height vote every 30 seconds
     this.voteInterval = setInterval(() => {
@@ -90,7 +91,7 @@ export class HeightConsensusManager {
       this.voteInterval = null;
     }
     
-    console.log("[Phase 31] Stopped Height Consensus Manager.");
+    logger.debug("[Phase 31] Stopped Height Consensus Manager.");
   }
 
   /**

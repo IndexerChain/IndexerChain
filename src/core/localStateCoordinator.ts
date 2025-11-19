@@ -20,6 +20,7 @@ import { applyDelta } from "./snapshotDelta.js";
 import { computeSnapshotStateHash } from "./snapshotVerify.js";
 import { getMultiWalletStore } from "./multiWallet.js";
 import { getNoteStore } from "./privacy/noteStore.js";
+import { logger } from "./logger.js";
 
 const BROADCAST_CHANNEL_STATE = "indexerchain_local_state_v1";
 const STATE_SYNC_INTERVAL_MS = 1000; // Leader broadcasts state every 1 second
@@ -343,7 +344,7 @@ export class LocalStateCoordinator {
       leaderInfo.tipHash !== localTipHash
     ) {
       // Out of sync, trigger sync
-      console.log(`[LocalStateSync] Out of sync detected. Leader: height=${leaderInfo.height}, hash=${leaderInfo.tipHash.substring(0, 16)}... Local: height=${localEpoch}, hash=${localTipHash.substring(0, 16)}...`);
+      logger.debug(`[LocalStateSync] Out of sync detected. Leader: height=${leaderInfo.height}, hash=${leaderInfo.tipHash.substring(0, 16)}... Local: height=${localEpoch}, hash=${localTipHash.substring(0, 16)}...`);
       this.triggerLocalFastSync();
     } else {
       // Check state commitment if available
@@ -473,7 +474,7 @@ export class LocalStateCoordinator {
     this.notifyStateSync();
     
     try {
-      console.log("[LocalStateSync] Starting local fast sync...");
+      logger.debug("[LocalStateSync] Starting local fast sync...");
       
       // Request snapshot from leader
       const snapshotResponse = await this.requestLocalSnapshot();
@@ -481,7 +482,7 @@ export class LocalStateCoordinator {
       if (!snapshotResponse) {
         // No snapshot available - this is normal if there's no leader or leader has no snapshot
         // We'll sync via blocks instead, which is fine
-        console.log("[LocalStateSync] No snapshot available from leader, will sync via blocks instead");
+        logger.debug("[LocalStateSync] No snapshot available from leader, will sync via blocks instead");
         this.syncInfo = {
           lastSyncEpoch: this.leaderEpoch,
           lastSyncTime: Date.now(),
@@ -506,7 +507,7 @@ export class LocalStateCoordinator {
           lastSyncStateCommitment: this.leaderStateCommitment,
           syncStatus: "synced",
         };
-        console.log("[LocalStateSync] Local fast sync completed successfully");
+        logger.debug("[LocalStateSync] Local fast sync completed successfully");
       } else {
         throw new Error("State consistency check failed after sync");
       }
@@ -761,7 +762,7 @@ export class LocalStateCoordinator {
         });
       } else {
         // Leader hasn't reported state yet - this is normal, just log at debug level
-        console.log("[LocalStateSync] Waiting for leader state update (leaderEpoch: 0)");
+        logger.debug("[LocalStateSync] Waiting for leader state update (leaderEpoch: 0)");
       }
     }
     
@@ -880,9 +881,9 @@ export class LocalStateCoordinator {
           this.currentTipHash = storedTipHash;
           this.currentStateCommitment = storedStateCommitment || "";
           
-          console.log(`[LocalStateSync] Loaded shared state from localStorage: height=${height}, tipHash=${storedTipHash.substring(0, 16)}...`);
+          logger.debug(`[LocalStateSync] Loaded shared state from localStorage: height=${height}, tipHash=${storedTipHash.substring(0, 16)}...`);
         } else {
-          console.log(`[LocalStateSync] Stored state is too old (${Math.round(age / 1000)}s), ignoring`);
+          logger.debug(`[LocalStateSync] Stored state is too old (${Math.round(age / 1000)}s), ignoring`);
         }
       }
     } catch (error) {
@@ -912,7 +913,7 @@ export class LocalStateCoordinator {
           const localTipHash = tip?.hash || "";
           
           if (height > localHeight || storedTipHash !== localTipHash) {
-            console.log(`[LocalStateSync] Detected state update in another tab: height ${localHeight} -> ${height}`);
+            logger.debug(`[LocalStateSync] Detected state update in another tab: height ${localHeight} -> ${height}`);
             // Trigger local fast sync
             this.triggerLocalFastSync();
           }

@@ -14,6 +14,7 @@ import { MiningEpochManager } from "./miningEpoch.js";
 import { NodeNonceRangeManager } from "./nonceRangeManager.js";
 import type { NonceRange } from "./globalNonceAllocator.js";
 import type { RuntimeManager } from "./runtimeManager.js";
+import { logger } from "./logger.js";
 
 /**
  * Worker statistics
@@ -166,7 +167,7 @@ export class MinerCluster {
       }
     }
 
-    console.log(`[MinerCluster] Configured: workers=${newWorkerCount}, dutyCycle=${newDutyCycle.toFixed(2)}`);
+    logger.debug(`[MinerCluster] Configured: workers=${newWorkerCount}, dutyCycle=${newDutyCycle.toFixed(2)}`);
   }
 
   /**
@@ -279,7 +280,7 @@ export class MinerCluster {
       this.workerCount = this.workers.length;
     }
 
-    console.log(`[MinerCluster] Added ${count} workers, total: ${this.workers.length}`);
+    logger.debug(`[MinerCluster] Added ${count} workers, total: ${this.workers.length}`);
   }
 
   /**
@@ -301,7 +302,7 @@ export class MinerCluster {
     }
 
     this.workerCount = this.workers.length;
-    console.log(`[MinerCluster] Removed ${toRemove} workers, total: ${this.workers.length}`);
+    logger.debug(`[MinerCluster] Removed ${toRemove} workers, total: ${this.workers.length}`);
   }
 
   /**
@@ -318,7 +319,7 @@ export class MinerCluster {
     const tip = params.candidateBlock.header.prevHash || "genesis";
     const height = params.candidateBlock.header.height;
     const epochId = this.epochManager.newEpoch(height, tip);
-    console.log(`[MinerCluster] Starting mining with epoch: ${epochId.substring(0, 32)}...`);
+    logger.debug(`[MinerCluster] Starting mining with epoch: ${epochId.substring(0, 32)}...`);
 
     // Phase 37-B: Set global nonce range (or null for local-only mode)
     this.nodeRangeManager.setGlobalRange(params.globalNonceRange ?? null);
@@ -377,7 +378,7 @@ export class MinerCluster {
       worker.onProgress((event) => {
         // Phase 37-A: Epoch validation is done in MinerClient, but double-check here
         if (!this.epochManager.isValid(event.miningEpochId)) {
-          console.log(`[MinerCluster] Discarding stale PROGRESS from worker ${workerId}`);
+          logger.debug(`[MinerCluster] Discarding stale PROGRESS from worker ${workerId}`);
           return;
         }
 
@@ -393,7 +394,7 @@ export class MinerCluster {
       worker.onFound((event) => {
         // Phase 37-A: Validate epoch before processing FOUND
         if (!this.epochManager.isValid(event.miningEpochId)) {
-          console.log(`[MinerCluster] Discarding stale FOUND from worker ${workerId}`);
+          logger.debug(`[MinerCluster] Discarding stale FOUND from worker ${workerId}`);
           return;
         }
 
@@ -425,7 +426,7 @@ export class MinerCluster {
         // Phase 37-A: Validate epoch (but allow STOPPED from any epoch for cleanup)
         // Only discard if it's a stale exhausted/error event
         if (event.reason === "exhausted" && !this.epochManager.isValid(event.miningEpochId)) {
-          console.log(`[MinerCluster] Discarding stale EXHAUSTED from worker ${workerId}`);
+          logger.debug(`[MinerCluster] Discarding stale EXHAUSTED from worker ${workerId}`);
           return;
         }
 
@@ -445,7 +446,7 @@ export class MinerCluster {
       });
 
       // Start worker with nonce range (handlers already registered above)
-      console.log(`[MinerCluster] Starting worker ${workerId}: nonceStart=${nonceStart}, nonceEnd=${nonceEnd}, difficulty=${params.difficulty}`);
+      logger.debug(`[MinerCluster] Starting worker ${workerId}: nonceStart=${nonceStart}, nonceEnd=${nonceEnd}, difficulty=${params.difficulty}`);
       // Phase 37-D: Use current duty cycle (may have been set by configure())
       const effectiveDutyCycle = params.dutyCycle ?? this.currentDutyCycle;
       this.currentDutyCycle = effectiveDutyCycle;
@@ -461,7 +462,7 @@ export class MinerCluster {
       });
 
       this.workers.push(worker);
-      console.log(`[MinerCluster] Worker ${workerId} started, total workers: ${this.workers.length}`);
+      logger.debug(`[MinerCluster] Worker ${workerId} started, total workers: ${this.workers.length}`);
     }
 
     // Initialize cluster stats immediately after creating workers
@@ -514,7 +515,7 @@ export class MinerCluster {
     // Phase 37-A: Check if epoch is still valid
     const currentEpoch = this.epochManager.getCurrent();
     if (!currentEpoch) {
-      console.log(`[MinerCluster] Cannot assign new range: epoch is not active`);
+      logger.debug(`[MinerCluster] Cannot assign new range: epoch is not active`);
       return;
     }
 
@@ -524,7 +525,7 @@ export class MinerCluster {
     
     if (!subRange) {
       // Global range exhausted
-      console.log(`[MinerCluster] Cannot assign new range to worker ${workerId}: global range exhausted`);
+      logger.debug(`[MinerCluster] Cannot assign new range to worker ${workerId}: global range exhausted`);
       if (this.nodeRangeManager.isExhausted()) {
         // Notify listeners that global range is exhausted
         for (const handler of this.onExhaustedGlobalRangeHandlers) {
@@ -628,7 +629,7 @@ export class MinerCluster {
       }
 
       // Try to recover by assigning new nonce range
-      console.log(`[MinerCluster] Attempting to recover worker ${workerId}...`);
+      logger.debug(`[MinerCluster] Attempting to recover worker ${workerId}...`);
       
       // Destroy old worker and create new one
       worker.destroy();
@@ -723,7 +724,7 @@ export class MinerCluster {
         miningEpochId: currentEpoch,
       });
 
-      console.log(`[MinerCluster] Worker ${workerId} recovered successfully`);
+      logger.debug(`[MinerCluster] Worker ${workerId} recovered successfully`);
     }, this.RECOVERY_DELAY_MS);
   }
 

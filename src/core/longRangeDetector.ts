@@ -7,6 +7,7 @@
 
 import type { ChainContext } from "./chain.js";
 import type { P2PNode } from "./p2p.js";
+import { logger } from "./logger.js";
 
 /**
  * Checkpoint state commitment response from peer
@@ -56,7 +57,7 @@ export class LongRangeDetector {
     if (this.isRunning) return;
     this.isRunning = true;
     
-    console.log("[Phase 31] Starting Long-range Divergence Detector...");
+    logger.debug("[Phase 31] Starting Long-range Divergence Detector...");
     
     // Check every 5 minutes
     this.checkInterval = setInterval(() => {
@@ -85,7 +86,7 @@ export class LongRangeDetector {
       this.checkInterval = null;
     }
     
-    console.log("[Phase 31] Stopped Long-range Divergence Detector.");
+    logger.debug("[Phase 31] Stopped Long-range Divergence Detector.");
   }
 
   /**

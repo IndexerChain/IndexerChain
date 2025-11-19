@@ -7,6 +7,7 @@
  */
 
 import type { Block } from "./types.js";
+import { logger } from "./logger.js";
 
 /**
  * Phase 37-C: Compact block header for mining
@@ -200,7 +201,7 @@ export class MinerClient {
       };
       
       // Log successful worker initialization
-      console.log("Miner worker initialized successfully");
+      logger.debug("Miner worker initialized successfully");
       
       // Add message handler
       this.worker.onmessage = (event: MessageEvent<MinerWorkerEvent>) => {
@@ -236,7 +237,7 @@ export class MinerClient {
       const isValid = this.epochValidator(event.miningEpochId);
       if (!isValid) {
         // Discard stale event from old epoch
-        console.log(`[MinerClient] Discarding stale event from old epoch: ${event.type}, epochId=${event.miningEpochId?.substring(0, 16)}...`);
+        logger.debug(`[MinerClient] Discarding stale event from old epoch: ${event.type}, epochId=${event.miningEpochId?.substring(0, 16)}...`);
         return;
       }
     }
@@ -247,7 +248,7 @@ export class MinerClient {
         this.updateHashRate(event.startedAt, event.hashesTried);
         // Debug: Log first few progress events
         if (event.hashesTried <= 10) {
-          console.log(`[MinerClient] Received PROGRESS: hashesTried=${event.hashesTried}, handlers=${this.progressHandlers.size}`);
+          logger.debug(`[MinerClient] Received PROGRESS: hashesTried=${event.hashesTried}, handlers=${this.progressHandlers.size}`);
           if (this.progressHandlers.size === 0) {
             console.warn(`[MinerClient] WARNING: No progress handlers registered! This will cause stats not to update.`);
           }
@@ -470,11 +471,11 @@ export class MinerClient {
       miningEpochId: args.miningEpochId,
     };
 
-    console.log(`[MinerClient] Starting mining with nonceStart=${args.nonceStart}, nonceEnd=${args.nonceEnd}, dutyCycle=${this.dutyCycle}`);
+    logger.debug(`[MinerClient] Starting mining with nonceStart=${args.nonceStart}, nonceEnd=${args.nonceEnd}, dutyCycle=${this.dutyCycle}`);
     this.worker.postMessage(command);
     this.isMining = true;
     this.startStatsUpdate();
-    console.log(`[MinerClient] Mining started, worker readyState: ${this.worker ? 'ready' : 'null'}`);
+    logger.debug(`[MinerClient] Mining started, worker readyState: ${this.worker ? 'ready' : 'null'}`);
   }
 
   /**

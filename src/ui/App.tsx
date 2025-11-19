@@ -70,6 +70,9 @@ import { MiningReadinessChipList } from "./mining/MiningReadinessChipList.js";
 import { MiningWarningsPanel } from "./mining/MiningWarningsPanel.js";
 import { MiningLiveStatsCard } from "./mining/MiningLiveStatsCard.js";
 import { MiningOnboardingDialog } from "./mining/MiningOnboardingDialog.js";
+import { MiningStatusBanner } from "./mining/MiningStatusBanner.js";
+import { GenesisQuorumBanner } from "./mining/GenesisQuorumBanner.js";
+import { MultiTerminalSyncNotice } from "./mining/MultiTerminalSyncNotice.js";
 import { QuickStatusDashboard } from "./components/QuickStatusDashboard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
 import "./index.css";
@@ -156,6 +159,13 @@ function App() {
       return false;
     }
   });
+  // Phase 39: Use ref to immediately track onboarding completion (avoids async state update issue)
+  const onboardingCompletedRef = useRef<boolean>(onboardingCompleted);
+  
+  // Phase 39: Sync ref with state when state changes
+  useEffect(() => {
+    onboardingCompletedRef.current = onboardingCompleted;
+  }, [onboardingCompleted]);
   
   // Phase 26: Runtime Manager
   const [runtimeManager] = useState(() => {
@@ -883,7 +893,7 @@ function App() {
           repairManager.startRepair(
             driftCheck,
             () => {
-              console.log("[Phase 36] State repair completed successfully");
+              logger.debug("[Phase 36] State repair completed successfully");
             },
             (error) => {
               console.error("[Phase 36] State repair failed:", error);
@@ -930,7 +940,7 @@ function App() {
     // Phase 17: Handle NEW_BLOCK_HEADER (fast relay)
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("NEW_BLOCK_HEADER", async (compactHeader: any, sender: string) => {
-      console.log("[Phase 17] Received NEW_BLOCK_HEADER from", sender, "height:", compactHeader.height);
+      logger.debug("[Phase 17] Received NEW_BLOCK_HEADER from", sender, "height:", compactHeader.height);
       const { handleReceivedBlockHeader } = await import("../core/sync.js");
       const result = await handleReceivedBlockHeader(compactHeader, chainContext, p2p, sender);
       
@@ -942,7 +952,7 @@ function App() {
         
         // Phase 17: If should restart mining, stop current mining and restart
         if (result.shouldRestartMining) {
-          console.log("[Phase 17] New block header received, restarting mining...");
+          logger.debug("[Phase 17] New block header received, restarting mining...");
           
           // Phase 19: If global pool enabled, reset worker nodes
           if (globalPoolEnabled) {
@@ -976,7 +986,7 @@ function App() {
 
     // Phase 17: Handle REQUEST_BLOCK_BODY
     p2p.onMessage("REQUEST_BLOCK_BODY", async (request: { hash: string; height: number }, sender: string) => {
-      console.log("[Phase 17] Received REQUEST_BLOCK_BODY from", sender, "hash:", request.hash);
+      logger.debug("[Phase 17] Received REQUEST_BLOCK_BODY from", sender, "hash:", request.hash);
       // Try to find block by hash (search through all blocks)
       let block: Block | null = null;
       const allBlocks = chainContext.storage.getAllBlocks();
@@ -990,14 +1000,14 @@ function App() {
         // Send block body to requesting peer
         p2p.broadcast("BLOCK_BODY", block);
       } else {
-        console.log(`[Phase 17] Block ${request.hash} not found in local storage`);
+        logger.debug(`[Phase 17] Block ${request.hash} not found in local storage`);
       }
     });
 
     // Phase 17: Handle BLOCK_BODY
     // Phase 21: Pass sender for peer reputation tracking
     p2p.onMessage("BLOCK_BODY", async (block: Block, sender: string) => {
-      console.log("[Phase 17] Received BLOCK_BODY from", sender, "height:", block.header.height);
+      logger.debug("[Phase 17] Received BLOCK_BODY from", sender, "height:", block.header.height);
       const { handleReceivedBlockBody } = await import("../core/sync.js");
       const result = await handleReceivedBlockBody(block, chainContext, sender);
       if (result.handled) {
@@ -1710,7 +1720,7 @@ function App() {
 
     // Phase 32: Handle BOOTSTRAP_RESPONSE from signal server
     p2p.onMessage("BOOTSTRAP_RESPONSE", async (payload: any, sender: string) => {
-      console.log(`[Phase 32] Received BOOTSTRAP_RESPONSE from ${sender}`, {
+      logger.debug(`[Phase 32] Received BOOTSTRAP_RESPONSE from ${sender}`, {
         latestHeight: payload.latestHeight,
         latestHeaderHash: payload.latestHeaderHash?.substring(0, 16) + "...",
         hasHeader: !!payload.latestHeader,
@@ -1746,17 +1756,17 @@ function App() {
         const snapshotInterval = chainContext.params.snapshotInterval || 1000;
         
         if (heightDiff >= snapshotInterval) {
-          console.log(`[Phase 32] ✅ Worker has snapshot meta at height ${payload.latestSnapshotMeta.height}, triggering snapshot download (height diff: ${heightDiff})`);
+          logger.debug(`[Phase 32] ✅ Worker has snapshot meta at height ${payload.latestSnapshotMeta.height}, triggering snapshot download (height diff: ${heightDiff})`);
           
           // Trigger snapshot download from Worker's snapshot meta
           if (snapshotDownloader) {
             setTimeout(async () => {
               try {
-                console.log(`[Phase 32] Starting snapshot download from Worker snapshot meta (height: ${payload.latestSnapshotMeta.height})`);
+                logger.debug(`[Phase 32] Starting snapshot download from Worker snapshot meta (height: ${payload.latestSnapshotMeta.height})`);
                 snapshotDownloader.downloadSnapshot(payload.latestSnapshotMeta, {}, (progress) => {
-                  console.log(`[Phase 32] Snapshot download progress: ${progress.percent.toFixed(1)}% (${progress.receivedChunks}/${progress.totalChunks} chunks)`);
+                  logger.debug(`[Phase 32] Snapshot download progress: ${progress.percent.toFixed(1)}% (${progress.receivedChunks}/${progress.totalChunks} chunks)`);
                 }).then(() => {
-                  console.log(`[Phase 32] ✅ Snapshot downloaded successfully from Worker at height ${payload.latestSnapshotMeta.height}`);
+                  logger.debug(`[Phase 32] ✅ Snapshot downloaded successfully from Worker at height ${payload.latestSnapshotMeta.height}`);
                   // Snapshot will be applied automatically by the downloader
                 }).catch((error) => {
                   console.error(`[Phase 32] ❌ Failed to download snapshot from Worker:`, error);
@@ -1771,7 +1781,7 @@ function App() {
       
       // Phase 32: If bootstrap state is empty (latestHeight: 0), fall back to P2P query
       if (networkHeight === 0 || !payload.latestHeader) {
-        console.log(`[Phase 32] Bootstrap state is empty (height: ${networkHeight}), falling back to P2P network query`);
+        logger.debug(`[Phase 32] Bootstrap state is empty (height: ${networkHeight}), falling back to P2P network query`);
         
         // Mark bootstrap as complete (even though we don't have valid data)
         // This allows mining guard to proceed, but we'll rely on P2P for sync
@@ -1780,10 +1790,10 @@ function App() {
         // Query network height via P2P (if we have peers)
         const peerCount = p2p.getPeerCount();
         if (peerCount > 0) {
-          console.log(`[Phase 32] Querying network height from ${peerCount} peer(s) via GLOBAL_VIEW_REQUEST`);
+          logger.debug(`[Phase 32] Querying network height from ${peerCount} peer(s) via GLOBAL_VIEW_REQUEST`);
           p2p.broadcast("GLOBAL_VIEW_REQUEST", {});
         } else {
-          console.log(`[Phase 32] No peers available yet, requesting peers more aggressively...`);
+          logger.debug(`[Phase 32] No peers available yet, requesting peers more aggressively...`);
           // Request peers more frequently when we don't have any
           p2p.requestPeers();
           
@@ -1796,7 +1806,7 @@ function App() {
         // Also request blocks aggressively if we're at a low height
         // Even without peers, we'll request so that when peers connect, they can respond
         if (localHeight < 100) {
-          console.log(`[Phase 32] Requesting blocks aggressively for initial sync (local height: ${localHeight})`);
+          logger.debug(`[Phase 32] Requesting blocks aggressively for initial sync (local height: ${localHeight})`);
           if (peerCount > 0) {
             p2p.broadcast("REQUEST_BLOCKS", {
               fromHeight: localHeight + 1,
@@ -1804,7 +1814,7 @@ function App() {
             });
           } else {
             // Store request for when peers connect
-            console.log(`[Phase 32] Storing block request for when peers connect`);
+            logger.debug(`[Phase 32] Storing block request for when peers connect`);
             if (typeof window !== "undefined") {
               (window as any).pendingBlockRequest = {
                 fromHeight: localHeight + 1,
@@ -1824,7 +1834,7 @@ function App() {
         const result = await bootstrapManager.processBootstrapResponse(payload);
         
         if (result.success) {
-          console.log(`[Phase 32] Bootstrap sync ${result.synced ? 'completed' : 'skipped (already up to date)'}`, result.actions);
+          logger.debug(`[Phase 32] Bootstrap sync ${result.synced ? 'completed' : 'skipped (already up to date)'}`, result.actions);
           setBootstrapComplete(bootstrapManager.isBootstrapComplete());
           
           // Only update if we got a valid network height
@@ -1839,7 +1849,7 @@ function App() {
               progress: networkHeight > 0 ? Math.min(100, Math.max(0, (localHeight / networkHeight) * 100)) : 0,
             });
             
-            console.log(`[Phase 32] Updated sync status: behindBy=${behindBy}, progress=${Math.round((localHeight / networkHeight) * 100)}%`);
+            logger.debug(`[Phase 32] Updated sync status: behindBy=${behindBy}, progress=${Math.round((localHeight / networkHeight) * 100)}%`);
           } else {
             console.warn(`[Phase 32] Bootstrap response has invalid network height (${networkHeight}), not updating sync status`);
           }
@@ -1849,19 +1859,19 @@ function App() {
           if (result.synced && result.newHeight && result.newHeight > localHeight) {
             const heightDiff = result.newHeight - localHeight;
             
-            console.log(`[Phase 32] Bootstrap indicates we need to sync: ${heightDiff} blocks behind (local: ${localHeight}, target: ${result.newHeight})`);
+            logger.debug(`[Phase 32] Bootstrap indicates we need to sync: ${heightDiff} blocks behind (local: ${localHeight}, target: ${result.newHeight})`);
             
             // Request blocks via P2P (if we have peers)
             const peerCount = p2p.getPeerCount();
             if (peerCount > 0) {
-              console.log(`[Phase 32] Requesting ${heightDiff} blocks from ${peerCount} peer(s) to sync to height ${result.newHeight}`);
+              logger.debug(`[Phase 32] Requesting ${heightDiff} blocks from ${peerCount} peer(s) to sync to height ${result.newHeight}`);
               p2p.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: result.newHeight,
               });
             } else {
               // Store request for when peers connect
-              console.log(`[Phase 32] No peers yet, storing block request for when peers connect`);
+              logger.debug(`[Phase 32] No peers yet, storing block request for when peers connect`);
               if (typeof window !== "undefined") {
                 (window as any).pendingBootstrapBlockRequest = {
                   fromHeight: localHeight + 1,
@@ -1880,7 +1890,7 @@ function App() {
             const snapshotInterval = chainContext.params.snapshotInterval || 1000;
             
             if (heightDiff >= snapshotInterval) {
-              console.log(`[Phase 32] Large height difference (${heightDiff}), triggering snapshot sync`);
+              logger.debug(`[Phase 32] Large height difference (${heightDiff}), triggering snapshot sync`);
               (window as any).pendingBootstrapSnapshot = payload.latestSnapshotMeta;
             }
           }
@@ -1907,7 +1917,7 @@ function App() {
       const localTip = chainContext.storage.getTip();
       const localHeight = localTip?.header.height ?? -1;
       
-      console.log(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
+      logger.debug(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
       
       // Phase 37: Store rootTip info for debug overlay
       // Phase 38: Also store snapshot meta for later use
@@ -1941,13 +1951,13 @@ function App() {
           
           const result = await bootstrapManager.processBootstrapResponse(bootstrapResponse);
           if (result.success) {
-            console.log(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE: ${result.actions.join(", ")}`);
+            logger.debug(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE: ${result.actions.join(", ")}`);
             if (result.newHeight) {
-              console.log(`[Phase 32] Synced to height ${result.newHeight}`);
+              logger.debug(`[Phase 32] Synced to height ${result.newHeight}`);
             }
             // Phase 37: Mark bootstrap as complete after successful sync
             setBootstrapComplete(true);
-            console.log(`[Phase 37] Bootstrap sync from ROOT_TIP_UPDATE successful, marking bootstrapComplete=true`);
+            logger.debug(`[Phase 37] Bootstrap sync from ROOT_TIP_UPDATE successful, marking bootstrapComplete=true`);
           } else {
             console.warn(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE failed: ${result.error}`);
           }
@@ -1960,7 +1970,7 @@ function App() {
       if (rootHeight > localHeight) {
         const heightDiff = rootHeight - localHeight;
         if (heightDiff > 200) { // Only request if significantly behind
-          console.log(`[Phase 32] Root tip update: behind by ${heightDiff} blocks, requesting sync`);
+          logger.debug(`[Phase 32] Root tip update: behind by ${heightDiff} blocks, requesting sync`);
           p2p.broadcast("REQUEST_BLOCKS", {
             fromHeight: localHeight + 1,
             toHeight: rootHeight,
@@ -1973,7 +1983,7 @@ function App() {
     if (typeof window !== "undefined") {
       window.addEventListener("peer-connected", (event: any) => {
         const { peerCount } = event.detail || {};
-        console.log(`[Phase 37] Peer connected event: peerCount=${peerCount}`);
+        logger.debug(`[Phase 37] Peer connected event: peerCount=${peerCount}`);
         
         // Execute pending bootstrap block request if we have one
         const pendingRequest = (window as any).pendingBootstrapBlockRequest;
@@ -1983,14 +1993,14 @@ function App() {
           
           // Only execute if request is recent (< 5 minutes)
           if (age < 300000) {
-            console.log(`[Phase 37] Executing pending bootstrap block request: ${fromHeight} to ${toHeight} (age: ${Math.round(age / 1000)}s)`);
+            logger.debug(`[Phase 37] Executing pending bootstrap block request: ${fromHeight} to ${toHeight} (age: ${Math.round(age / 1000)}s)`);
             p2p.broadcast("REQUEST_BLOCKS", {
               fromHeight,
               toHeight,
             });
             delete (window as any).pendingBootstrapBlockRequest;
           } else {
-            console.log(`[Phase 37] Pending bootstrap block request expired (age: ${Math.round(age / 1000)}s), removing`);
+            logger.debug(`[Phase 37] Pending bootstrap block request expired (age: ${Math.round(age / 1000)}s), removing`);
             delete (window as any).pendingBootstrapBlockRequest;
           }
         }
@@ -2274,7 +2284,7 @@ function App() {
         // Setup finalized block callback
         finalityManager.onFinalized((blockHash: string) => {
           setFinalizedBlocks((prev) => new Set([...prev, blockHash]));
-          console.log(`[Phase 22] Block ${blockHash.substring(0, 16)}... finalized with certificate`);
+          logger.debug(`[Phase 22] Block ${blockHash.substring(0, 16)}... finalized with certificate`);
         });
         
         // Update stats periodically
@@ -2367,7 +2377,7 @@ function App() {
           });
           sentinel.start();
           setGlobalSentinel(sentinel);
-          console.log("[GlobalSentinel] Initialized and started");
+          logger.debug("[GlobalSentinel] Initialized and started");
         }
 
         // Phase 31: Initialize Mainnet Stability components
@@ -2387,7 +2397,7 @@ function App() {
               .sort((a, b) => b.height - a.height)[0];
             
             if (closestMeta) {
-              console.log(`[Phase 31] Found snapshot at height ${closestMeta.height} for repair`);
+              logger.debug(`[Phase 31] Found snapshot at height ${closestMeta.height} for repair`);
               setError(locale === "zh" 
                 ? `⚠️ 检测到长程分叉，建议重置链并同步到高度 ${result.majorityHeight}（快照高度：${closestMeta.height}）` 
                 : `⚠️ Long-range fork detected, recommend resetting chain and syncing to height ${result.majorityHeight} (snapshot at ${closestMeta.height})`);
@@ -2414,7 +2424,7 @@ function App() {
         const consensus = new HeightConsensusManager(updatedContext, p2pNode);
         consensus.setOnConsensusAction(async (result) => {
           if (result.action === "SYNC") {
-            console.log("[Phase 31] Height consensus: forcing sync");
+            logger.debug("[Phase 31] Height consensus: forcing sync");
             // Request blocks to sync
             if (p2pNode.broadcast) {
               const localTip = updatedContext.storage.getTip();
@@ -2506,15 +2516,15 @@ function App() {
         const localHeight = localTip?.header.height ?? -1;
         const peerCount = p2pNode.getPeerCount();
         
-        console.log(`[Phase 32] Connected to P2P network. Local height: ${localHeight}, Connected peers: ${peerCount}`);
+        logger.debug(`[Phase 32] Connected to P2P network. Local height: ${localHeight}, Connected peers: ${peerCount}`);
         
         // Phase 32: Request bootstrap data from signal server
-        console.log(`[Phase 32] Requesting bootstrap data from signal server...`);
+        logger.debug(`[Phase 32] Requesting bootstrap data from signal server...`);
         const requestId = `${Date.now()}_${Math.random()}`;
         
         // Check if sendToSignalServer method exists
         if (typeof (p2pNode as any).sendToSignalServer === 'function') {
-          console.log(`[Phase 32] Sending REQUEST_BOOTSTRAP via sendToSignalServer`);
+          logger.debug(`[Phase 32] Sending REQUEST_BOOTSTRAP via sendToSignalServer`);
           (p2pNode as any).sendToSignalServer("REQUEST_BOOTSTRAP", {
             requestId,
             wantSnapshotMeta: true,
@@ -2532,7 +2542,7 @@ function App() {
               wantHeaders: true,
               headerCount: 200,
             }));
-            console.log(`[Phase 32] Sent REQUEST_BOOTSTRAP via WebSocket directly`);
+            logger.debug(`[Phase 32] Sent REQUEST_BOOTSTRAP via WebSocket directly`);
           } else {
             console.error(`[Phase 32] Cannot send REQUEST_BOOTSTRAP: WebSocket not available or not open`);
           }
@@ -2577,7 +2587,7 @@ function App() {
         // Phase 32: Listen for peer connection events to execute pending block requests
         const handlePeerConnected = (event: CustomEvent) => {
           const { peerId, peerCount: newPeerCount } = event.detail;
-          console.log(`[Phase 32] Peer connected: ${peerId.substring(0, 16)}... (total: ${newPeerCount})`);
+          logger.debug(`[Phase 32] Peer connected: ${peerId.substring(0, 16)}... (total: ${newPeerCount})`);
           
           // Get current local height
           const localTip = chainContext.storage.getTip();
@@ -2586,27 +2596,27 @@ function App() {
           // Execute pending block request if we have one
           if (typeof window !== "undefined" && (window as any).pendingBlockRequest) {
             const pending = (window as any).pendingBlockRequest;
-            console.log(`[Phase 32] Executing pending block request now that peer is connected: ${pending.fromHeight}-${pending.toHeight}`);
+            logger.debug(`[Phase 32] Executing pending block request now that peer is connected: ${pending.fromHeight}-${pending.toHeight}`);
             p2pNode.broadcast("REQUEST_BLOCKS", pending);
             delete (window as any).pendingBlockRequest;
           }
           
           // Immediately query network height from the new peer
           if (newPeerCount > 0) {
-            console.log(`[Phase 32] Querying network height from ${newPeerCount} peer(s)...`);
+            logger.debug(`[Phase 32] Querying network height from ${newPeerCount} peer(s)...`);
             p2pNode.broadcast("GLOBAL_VIEW_REQUEST", {});
             
             // If local height is 0 or very low, immediately request blocks
             // This ensures new nodes sync quickly
             if (localHeight <= 0) {
-              console.log(`[Phase 32] Local height is ${localHeight}, immediately requesting blocks from height 1`);
+              logger.debug(`[Phase 32] Local height is ${localHeight}, immediately requesting blocks from height 1`);
               p2pNode.broadcast("REQUEST_BLOCKS", {
                 fromHeight: 1,
                 toHeight: 500, // Request first 500 blocks
               });
             } else if (localHeight < 100) {
               // If height is low, also request aggressively
-              console.log(`[Phase 32] Local height is low (${localHeight}), requesting blocks aggressively`);
+              logger.debug(`[Phase 32] Local height is low (${localHeight}), requesting blocks aggressively`);
               p2pNode.broadcast("REQUEST_BLOCKS", {
                 fromHeight: localHeight + 1,
                 toHeight: localHeight + 500,
@@ -2792,7 +2802,8 @@ function App() {
     if (!chainContext) return;
     
     // Phase 38: Check onboarding for first-time users
-    if (!onboardingCompleted && !isMining && !clusterMining) {
+    // Phase 39: Use ref to check immediately (avoids async state update issue)
+    if (!onboardingCompletedRef.current && !isMining && !clusterMining) {
       setShowOnboarding(true);
       return;
     }
@@ -3130,7 +3141,7 @@ function App() {
         setClusterWorkerCount(actualWorkerCount);
       }
       
-      console.log(`[Cluster Mining] Starting with ${actualWorkerCount} workers, duty cycle: ${dutyCycle}`);
+      logger.debug(`[Cluster Mining] Starting with ${actualWorkerCount} workers, duty cycle: ${dutyCycle}`);
       
       await minerCluster.startMining({
         candidateBlock,
@@ -3162,7 +3173,8 @@ function App() {
     if (!chainContext) return;
     
     // Phase 38: Check onboarding for first-time users
-    if (!onboardingCompleted && !isMining && !clusterMining) {
+    // Phase 39: Use ref to check immediately (avoids async state update issue)
+    if (!onboardingCompletedRef.current && !isMining && !clusterMining) {
       setShowOnboarding(true);
       return;
     }
@@ -3939,6 +3951,64 @@ function App() {
           {/* Overview Tab - P0-2: Simplified with Quick Status Dashboard */}
           {activeTab === "overview" && (
             <div className="tab-content active">
+              {/* Phase 39: Mining Status Banner - Top of Overview */}
+              {chainContext && (
+                <>
+                  <MiningStatusBanner
+                    chainContext={chainContext}
+                    p2pNode={chainContext?.p2p || null}
+                    finalityManager={finalityManager}
+                    localRole={localCoordinator.getRole()}
+                    bootstrapComplete={bootstrapComplete}
+                    nodeAddress={nodeAddress}
+                    isMining={isMining}
+                    onStartMining={handleStartMining}
+                    onStopMining={handleStopMining}
+                    onViewDetails={() => setActiveTab("network")}
+                    locale={locale}
+                  />
+
+                  {/* Phase 39: Multi-terminal Sync Notice */}
+                  <MultiTerminalSyncNotice
+                    chainContext={chainContext}
+                    locale={locale}
+                  />
+
+                  {/* Phase 39: Genesis Quorum Banner */}
+                  <GenesisQuorumBanner
+                    chainContext={chainContext}
+                    p2pNode={chainContext?.p2p || null}
+                    bootstrapComplete={bootstrapComplete}
+                    locale={locale}
+                  />
+
+                  {/* Phase 39: Multi-terminal Sync Info */}
+                  <div
+                    className="status-card"
+                    style={{
+                      marginBottom: "1.5rem",
+                      background: "rgba(23, 162, 184, 0.05)",
+                      border: "1px solid #17a2b8",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.9rem", color: "#666", lineHeight: "1.6" }}>
+                      {locale === "zh" ? (
+                        <>
+                          💡 <strong>自动同步说明：</strong>本节点的区块高度、余额和状态会自动与网络多数节点保持一致。
+                          如遇高度不一致或余额异常，系统会自动暂停挖矿并进行修复。
+                        </>
+                      ) : (
+                        <>
+                          💡 <strong>Auto-Sync Info:</strong> This node's block height, balance, and state automatically
+                          stay consistent with the network majority. If height inconsistency or balance anomalies are
+                          detected, mining will be automatically paused and repaired.
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
               {/* P0-2: Quick Status Dashboard */}
               {chainContext && (
                 <QuickStatusDashboard
@@ -4939,7 +5009,8 @@ function App() {
                     miningMode={miningMode}
                     onStartMining={() => {
                       // Check if first time - show onboarding
-                      if (!onboardingCompleted && !isMining && !clusterMining) {
+                      // Phase 39: Use ref to check immediately (avoids async state update issue)
+                      if (!onboardingCompletedRef.current && !isMining && !clusterMining) {
                         setShowOnboarding(true);
                         return;
                       }
@@ -5178,6 +5249,8 @@ function App() {
                     
                     // Always mark onboarding as completed for this session
                     // dontShowAgain only controls whether to persist to localStorage
+                    // Phase 39: Update ref immediately to avoid async state update issue
+                    onboardingCompletedRef.current = true;
                     setOnboardingCompleted(true);
                     
                     if (dontShowAgain) {

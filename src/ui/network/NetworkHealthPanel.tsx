@@ -9,6 +9,7 @@ import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard, type MainnetAdmissionStatus, type NetworkStage } from "../../core/miningGuard.js";
 import { QuorumPanel } from "./QuorumPanel.js";
+import { MiningReadinessReasons } from "../mining/MiningReadinessReasons.js";
 
 interface NetworkHealthPanelProps {
   chainContext: ChainContext | null;
@@ -262,54 +263,15 @@ export function NetworkHealthPanel({
           </div>
         </div>
 
-        {/* Detailed Check Report */}
-        {!readinessInfo.canMine && (
-          <div
-            style={{
-              marginTop: "1rem",
-              padding: "1rem",
-              background: "#fff3cd",
-              borderRadius: "8px",
-              border: "1px solid #ffc107",
-            }}
-          >
-            <h4 style={{ margin: 0, marginBottom: "0.75rem", color: "#856404" }}>
-              {isZh ? "❌ 详细检查报告" : "❌ Detailed Check Report"}
-            </h4>
-            <div style={{ fontSize: "0.9rem", color: "#856404" }}>
-              <div style={{ marginBottom: "0.5rem" }}>
-                <strong>{isZh ? "原因:" : "Reason:"}</strong> {readinessInfo.reason}
-              </div>
-              <div style={{ marginTop: "0.75rem" }}>
-                <strong>{isZh ? "检查项:" : "Checks:"}</strong>
-                <ul style={{ margin: "0.5rem 0", paddingLeft: "1.5rem" }}>
-                  <li>
-                    {isZh ? "独立 Peer:" : "Unique Peers:"} {readinessInfo.uniquePeers} (
-                    {readinessInfo.uniquePeers >= 2 ? "✅" : "❌"} {isZh ? "需要 ≥2" : "need ≥2"})
-                  </li>
-                  <li>
-                    {isZh ? "Quorum 分数:" : "Quorum Score:"} {readinessInfo.quorumScore} /{" "}
-                    {readinessInfo.threshold} (
-                    {readinessInfo.quorumScore >= readinessInfo.threshold ? "✅" : "❌"})
-                  </li>
-                  <li>
-                    {isZh ? "Bootstrap 完成:" : "Bootstrap Completed:"}{" "}
-                    {readinessInfo.bootstrapCompleted ? "✅" : "❌"}
-                  </li>
-                  <li>
-                    {isZh ? "本地角色:" : "Local Role:"} {readinessInfo.localRole} (
-                    {readinessInfo.localRole === "LEADER" ? "✅" : "❌"}{" "}
-                    {isZh ? "需要 LEADER" : "need LEADER"})
-                  </li>
-                  <li>
-                    {isZh ? "钱包有效:" : "Wallet Valid:"}{" "}
-                    {readinessInfo.details.walletValid ? "✅" : "❌"}
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Phase 39: Human-readable reasons list */}
+        <MiningReadinessReasons
+          chainContext={chainContext}
+          p2pNode={p2pNode}
+          finalityManager={finalityManager}
+          localRole={localRole}
+          bootstrapComplete={bootstrapComplete}
+          locale={locale}
+        />
       </div>
 
       {/* Phase 35: Mainnet Admission Status */}
