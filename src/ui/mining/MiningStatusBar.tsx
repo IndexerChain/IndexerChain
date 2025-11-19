@@ -12,6 +12,7 @@ import { useState, useEffect } from "react";
 import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard } from "../../core/miningGuard.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 interface MiningStatusBarProps {
   chainContext: ChainContext | null;
@@ -42,12 +43,12 @@ export function MiningStatusBar({
   shadowNodeClient,
   deviceId,
   onShowDetails,
-  locale,
+  locale: _locale,
 }: MiningStatusBarProps) {
   const [miningGuardResult, setMiningGuardResult] = useState<any>(null);
   const [activeMinerId, setActiveMinerId] = useState<string | null>(null);
   const [isActiveMiner, setIsActiveMiner] = useState<boolean>(false);
-  const isZh = locale === "zh";
+  const { t } = useI18n();
 
   // Check mining readiness
   useEffect(() => {
@@ -100,7 +101,7 @@ export function MiningStatusBar({
       return {
         color: "#28a745",
         icon: "🟢",
-        label: isZh ? "正在挖矿 · Leader" : "Mining · Leader",
+        label: t("miningStatusBar.miningLeader"),
       };
     }
 
@@ -108,7 +109,7 @@ export function MiningStatusBar({
       return {
         color: "#666",
         icon: "⚪",
-        label: isZh ? "检查中..." : "Checking...",
+        label: t("miningStatus.checking"),
       };
     }
 
@@ -118,28 +119,28 @@ export function MiningStatusBar({
         return {
           color: "#28a745",
           icon: "🟢",
-          label: isZh ? "就绪 · 可以挖矿" : "Ready · Can Mine",
+          label: t("miningStatusBar.readyCanMine"),
         };
       } else if (mode === "GUARDED") {
         return {
           color: "#ffc107",
           icon: "🟡",
-          label: isZh ? "等待条件 · 受限模式" : "Waiting · Limited Mode",
+          label: t("miningStatusBar.waitingLimitedMode"),
         };
       } else {
         return {
           color: "#17a2b8",
           icon: "🔵",
-          label: isZh ? "本地模式" : "Local Mode",
+          label: t("miningStatusBar.localMode"),
         };
       }
     } else {
       // Get main reason
-      const reason = miningGuardResult.reason || (isZh ? "条件未满足" : "Conditions Not Met");
+      const reason = miningGuardResult.reason || t("miningStatusBar.conditionsNotMet");
       return {
         color: "#dc3545",
         icon: "🔴",
-        label: isZh ? `无法挖矿 · ${reason}` : `Cannot Mine · ${reason}`,
+        label: `${t("miningStatus.cannotStartMining")} · ${reason}`,
       };
     }
   };
@@ -154,7 +155,7 @@ export function MiningStatusBar({
     if (!miningGuardResult || miningGuardResult.ok) return null;
 
     if (miningGuardResult.code === "NOT_ACTIVE_MINER") {
-      return isZh ? "本设备不是 Active Miner" : "Not Active Miner";
+      return t("miningStatusBar.notActiveMiner");
     }
 
     // First year mode: Use friendly reason message (requiredQuorumScore === 50)
@@ -172,15 +173,13 @@ export function MiningStatusBar({
         ? (miningGuardResult.details?.independentPeerCount ?? 0)
         : (miningGuardResult.details?.peerCount ?? 0);
       const peerLabel = miningGuardResult.details?.requiredIndependentPeers !== undefined
-        ? (isZh ? "独立节点" : "independent peers")
-        : (isZh ? "对等节点" : "peers");
+        ? t("miningStatus.independentPeers")
+        : t("network.peers");
       
       // First year mode: Show friendly message
       if (isFirstYearMode) {
         if (currentPeers < 1) {
-          return isZh 
-            ? `需要至少 1 个独立节点（当前: ${currentPeers}），建议 ≥2 个`
-            : `Need at least 1 independent peer (current: ${currentPeers}), recommend ≥2`;
+          return t("miningStatus.needAtLeastOnePeer", { current: currentPeers });
         }
         // If peers are sufficient but bootstrap not complete, show bootstrap message
         if (miningGuardResult.reason?.includes("Bootstrap")) {
@@ -190,9 +189,7 @@ export function MiningStatusBar({
       
       // Normal mode: Show peer count
       if (currentPeers < requiredPeers) {
-        return isZh
-          ? `${peerLabel}不足（${currentPeers} < ${requiredPeers}）`
-          : `Insufficient ${peerLabel} (${currentPeers} < ${requiredPeers})`;
+        return t("miningStatus.insufficientPeers", { current: currentPeers, required: requiredPeers, peerLabel });
       }
     }
 
@@ -200,7 +197,7 @@ export function MiningStatusBar({
       const score = miningGuardResult.details.quorumScore;
       const required = miningGuardResult.details.requiredQuorumScore || 80;
       if (score < required) {
-        return isZh ? `Quorum 分数不足（${score}/${required}）` : `Quorum Score Insufficient (${score}/${required})`;
+        return t("miningStatus.quorumScoreInsufficient", { score, required });
       }
     }
 
@@ -242,11 +239,11 @@ export function MiningStatusBar({
       {/* Middle: Height & Wallet */}
       <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", flex: 1, justifyContent: "center" }}>
         <div style={{ fontSize: "0.9rem", color: "#666" }}>
-          {isZh ? "当前高度" : "Height"}: <strong style={{ color: "#333" }}>Local: {localHeight}</strong> · <strong style={{ color: "#333" }}>Network: {networkHeight}</strong>
+          {t("miningStatusBar.height")}: <strong style={{ color: "#333" }}>Local: {localHeight}</strong> · <strong style={{ color: "#333" }}>Network: {networkHeight}</strong>
         </div>
         {miningWalletAddress && (
           <div style={{ fontSize: "0.9rem", color: "#666" }}>
-            {isZh ? "挖矿钱包" : "Mining Wallet"}: <strong style={{ color: "#333", cursor: "pointer" }} title={miningWalletAddress}>
+            {t("miningStatusBar.miningWallet")}: <strong style={{ color: "#333", cursor: "pointer" }} title={miningWalletAddress}>
               {miningWalletAddress.substring(0, 8)}...{miningWalletAddress.substring(miningWalletAddress.length - 6)}
             </strong>
           </div>
@@ -258,11 +255,11 @@ export function MiningStatusBar({
         {shadowNodeClient && (
           <div style={{ fontSize: "0.85rem", color: isActiveMiner ? "#28a745" : "#ffc107" }}>
             {isActiveMiner ? (
-              <span>✅ {isZh ? "本设备为 Active Miner" : "This Device is Active Miner"}</span>
+              <span>✅ {t("miningStatusBar.thisDeviceIsActiveMiner")}</span>
             ) : activeMinerId ? (
-              <span>⚠️ {isZh ? "另一个设备正在挖矿" : "Another Device is Mining"}</span>
+              <span>⚠️ {t("miningStatusBar.anotherDeviceIsMining")}</span>
             ) : (
-              <span>⚪ {isZh ? "未设置 Active Miner" : "No Active Miner"}</span>
+              <span>⚪ {t("miningStatusBar.noActiveMiner")}</span>
             )}
           </div>
         )}
@@ -278,7 +275,7 @@ export function MiningStatusBar({
             color: "#495057",
           }}
         >
-          {isZh ? "详情" : "Details"}
+          {t("miningStatusBar.details")}
         </button>
       </div>
     </div>

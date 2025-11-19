@@ -23,6 +23,7 @@
 
 import type { P2PNode } from "./p2p.js";
 import type { ChainContext } from "./chain.js";
+import type { ChainParams } from "./types.js";
 import { isMainnet } from "./networkParams.js";
 import { logger } from "./logger.js";
 import { getYear } from "./idcEmission.js";
@@ -312,6 +313,61 @@ export class QuorumManager {
     const localHeight = localTip?.header.height ?? 0;
     const year = getYear(localHeight);
     return year === 0; // Year 0 is the first year
+  }
+
+  /**
+   * Phase 45: Calculate network age in years based on genesis timestamp
+   */
+  getNetworkAgeYears(chainParams: ChainParams): number {
+    if (!chainParams.genesisTimestamp) {
+      return 0; // No genesis timestamp, assume new network
+    }
+    const now = Date.now() / 1000; // Current time in seconds
+    const deltaSec = Math.max(0, now - chainParams.genesisTimestamp);
+    return deltaSec / (365 * 24 * 3600); // Convert to years
+  }
+
+  /**
+   * Phase 45: Get required quorum score based on network age and height
+   * 
+   * Dynamic threshold strategy:
+   * - First year (age < 1 year OR height < 50,000): ≥ 40 (very lenient)
+   * - 1-3 years: ≥ 80 (moderate)
+   * - 3+ years: Use Phase 35 stage-based thresholds (mature/secure)
+   */
+  getRequiredQuorumScore(chainParams: ChainParams, context: { height: number }): number {
+    const ageYears = this.getNetworkAgeYears(chainParams);
+    const height = context.height;
+
+    // Phase 45: Ultra-lenient "First Year Mode"
+    // First year OR height < 50,000: Only require 40 points
+    // Goal: Allow network to start with just 2 real independent nodes
+    if (ageYears < 1 || height < 50_000) {
+      return 40;
+    }
+
+    // Phase 45: 1-3 years: Moderate threshold
+    if (ageYears < 3) {
+      return 80;
+    }
+
+    // Phase 45: 3+ years: Use Phase 35 stage-based strategy
+    // Get network stage and use corresponding threshold
+    const stage = this.getNetworkStage();
+    const thresholds = chainParams.mainnetQuorumThresholds || DEFAULT_MAINNET_THRESHOLDS.quorumScore;
+    
+    switch (stage) {
+      case "coldStart":
+        return thresholds.coldStart || 80;
+      case "earlyGrowth":
+        return thresholds.earlyGrowth || 150;
+      case "mature":
+        return thresholds.mature || 250;
+      case "secure":
+        return thresholds.secure || 400;
+      default:
+        return 80; // Fallback
+    }
   }
 
   /**
@@ -762,11 +818,11 @@ export class QuorumManager {
       return DEFAULT_THRESHOLDS.devnet;
     }
     
-    // Phase 35: Use mainnet admission thresholds
+    // Phase 45: Use dynamic threshold based on network age
     if (isMainnet && this.chainContext) {
-      const stage = this.getNetworkStage();
-      const thresholds = this.chainContext.params.mainnetQuorumThresholds || DEFAULT_MAINNET_THRESHOLDS.quorumScore;
-      return thresholds[stage];
+      const localTip = this.chainContext.storage.getTip();
+      const height = localTip?.header.height ?? 0;
+      return this.getRequiredQuorumScore(this.chainContext.params, { height });
     }
     
     // Fallback to old logic

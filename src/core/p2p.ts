@@ -128,15 +128,19 @@ export class BrowserP2PNode implements P2PNode {
   private connectionManager: ConnectionManager | null = null;
   private currentBootstrapUrl: string | null = null;
   private isManualDisconnect: boolean = false; // Track if disconnect was intentional
+  private signalServers: string[] = []; // Phase 45: Multiple signal servers
+  private currentSignalServerIndex: number = -1; // Phase 45: Current signal server index
 
   constructor(nodeId: string) {
     this.nodeId = nodeId;
+    // Phase 45: Load cached peers from localStorage
+    this.loadCachedPeers();
   }
 
   /**
-   * Connect to bootstrap server (WebSocket signaling server)
+   * Phase 45: Connect to a single signal server (internal method)
    */
-  async connect(bootstrapUrl: string): Promise<void> {
+  private async connectToSingleServer(bootstrapUrl: string): Promise<void> {
     if (this.isConnected) {
       logger.warn("Already connected to P2P network");
       return;
@@ -226,10 +230,32 @@ export class BrowserP2PNode implements P2PNode {
           this.ws = null;
 
           // Phase 40: Auto-reconnect if not manual disconnect
-          if (!this.isManualDisconnect && this.currentBootstrapUrl) {
-            logger.info("[P2P] Connection closed unexpectedly, will attempt auto-reconnect...");
-            if (this.connectionManager) {
-              this.connectionManager.startReconnect();
+          // Phase 45: Try next signal server if available
+          if (!this.isManualDisconnect) {
+            if (this.signalServers.length > 0 && this.currentSignalServerIndex >= 0) {
+              // Try next signal server
+              const nextIndex = (this.currentSignalServerIndex + 1) % this.signalServers.length;
+              if (nextIndex !== this.currentSignalServerIndex) {
+                logger.info(`[Phase 45] Connection closed, trying next signal server (${nextIndex + 1}/${this.signalServers.length})...`);
+                setTimeout(async () => {
+                  try {
+                    await this.connectWithMultipleServers(this.signalServers);
+                  } catch (error) {
+                    logger.error(`[Phase 45] Failed to reconnect to any signal server:`, error);
+                    if (this.connectionManager) {
+                      this.connectionManager.startReconnect();
+                    }
+                  }
+                }, 1000);
+                return;
+              }
+            }
+            
+            if (this.currentBootstrapUrl) {
+              logger.info("[P2P] Connection closed unexpectedly, will attempt auto-reconnect...");
+              if (this.connectionManager) {
+                this.connectionManager.startReconnect();
+              }
             }
           }
 
@@ -275,6 +301,75 @@ export class BrowserP2PNode implements P2PNode {
         );
       }
     });
+  }
+
+  /**
+   * Phase 45: Connect to multiple signal servers with fallback
+   */
+  async connectWithMultipleServers(signalServers: string[]): Promise<void> {
+    if (this.isConnected) {
+      logger.warn("Already connected to P2P network");
+      return;
+    }
+
+    if (!signalServers || signalServers.length === 0) {
+      throw new Error("No signal servers provided");
+    }
+
+    this.signalServers = [...signalServers];
+    
+    // Phase 45: Try cached peers first (P2P bootstrap)
+    const cachedPeers = this.getCachedPeers();
+    if (cachedPeers.length > 0) {
+      logger.info(`[Phase 45] Found ${cachedPeers.length} cached peers, attempting direct P2P connection...`);
+      // Try to connect to cached peers directly (this would require WebRTC offer/answer exchange)
+      // For now, we'll still use signal server but prioritize cached peers
+    }
+
+    // Phase 45: Randomly select initial signal server
+    const shuffled = [...signalServers].sort(() => Math.random() - 0.5);
+    
+    let lastError: Error | null = null;
+    for (let i = 0; i < shuffled.length; i++) {
+      const url = shuffled[i];
+      this.currentSignalServerIndex = signalServers.indexOf(url);
+      
+      try {
+        logger.info(`[Phase 45] Attempting to connect to signal server ${i + 1}/${shuffled.length}: ${url}`);
+        await this.connectToSingleServer(url);
+        logger.info(`[Phase 45] Successfully connected to signal server: ${url}`);
+        this.currentBootstrapUrl = url;
+        return;
+      } catch (error) {
+        logger.warn(`[Phase 45] Failed to connect to ${url}:`, error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        // Continue to next server
+      }
+    }
+
+    // All servers failed
+    throw new Error(
+      `Failed to connect to any signal server. Tried ${shuffled.length} server(s). Last error: ${lastError?.message || "Unknown error"}`
+    );
+  }
+
+  /**
+   * Connect to bootstrap server (WebSocket signaling server)
+   * Phase 45: Enhanced to support single URL or multiple URLs
+   */
+  async connect(bootstrapUrl: string | string[]): Promise<void> {
+    if (this.isConnected) {
+      logger.warn("Already connected to P2P network");
+      return;
+    }
+
+    // Phase 45: Handle multiple signal servers
+    if (Array.isArray(bootstrapUrl)) {
+      return this.connectWithMultipleServers(bootstrapUrl);
+    }
+
+    // Single URL - use internal method
+    return this.connectToSingleServer(bootstrapUrl);
   }
 
   /**
@@ -449,6 +544,9 @@ export class BrowserP2PNode implements P2PNode {
         const joinAckPeerIds: string[] = message.peers || [];
         logger.debug(`[P2P] Processing ${joinAckPeerIds.length} peers from JOIN_ACK`);
         
+        // Phase 45: Cache peer list from JOIN_ACK
+        this.cachePeers(joinAckPeerIds);
+        
         for (const peerId of joinAckPeerIds) {
           if (peerId !== this.nodeId && !this.peers.has(peerId)) {
             logger.debug(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
@@ -587,6 +685,9 @@ export class BrowserP2PNode implements P2PNode {
         // Received list of peers, initiate WebRTC connections
         const peerIds: string[] = message.peers || [];
         logger.debug(`[P2P] Processing ${peerIds.length} peers, current connections: ${this.peers.size}`);
+        
+        // Phase 45: Cache peer list to localStorage
+        this.cachePeers(peerIds);
         
         if (peerIds.length === 0) {
           logger.debug("[P2P] Received empty peer list - no other nodes online (this is normal if you're the first node)");
@@ -1148,6 +1249,59 @@ export class BrowserP2PNode implements P2PNode {
       type: "request-peers",
       nodeId: this.nodeId,
     });
+  }
+
+  /**
+   * Phase 45: Cache peer list to localStorage for P2P bootstrap
+   */
+  private cachePeers(peerIds: string[]): void {
+    if (typeof window === "undefined") return;
+    
+    try {
+      const cacheData = {
+        peerIds: peerIds.filter(id => id !== this.nodeId),
+        timestamp: Date.now(),
+        nodeId: this.nodeId,
+      };
+      localStorage.setItem("indexerchain_cached_peers", JSON.stringify(cacheData));
+      logger.debug(`[Phase 45] Cached ${cacheData.peerIds.length} peers to localStorage`);
+    } catch (error) {
+      logger.warn("[Phase 45] Failed to cache peers:", error);
+    }
+  }
+
+  /**
+   * Phase 45: Load cached peers from localStorage
+   */
+  private loadCachedPeers(): string[] {
+    if (typeof window === "undefined") return [];
+    
+    try {
+      const cached = localStorage.getItem("indexerchain_cached_peers");
+      if (!cached) return [];
+      
+      const data = JSON.parse(cached);
+      const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+      
+      if (Date.now() - data.timestamp > maxAge) {
+        // Cache expired
+        localStorage.removeItem("indexerchain_cached_peers");
+        return [];
+      }
+      
+      logger.debug(`[Phase 45] Loaded ${data.peerIds?.length || 0} cached peers from localStorage`);
+      return data.peerIds || [];
+    } catch (error) {
+      logger.warn("[Phase 45] Failed to load cached peers:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Phase 45: Get cached peers
+   */
+  getCachedPeers(): string[] {
+    return this.loadCachedPeers();
   }
 }
 

@@ -193,6 +193,10 @@ export interface ChainParams {
     mature: number; // Minimum independent peers for mature, default 3
     secure: number; // Minimum independent peers for secure mode, default 5
   };
+  
+  // Phase 45: Multi-Signal Resilient Network Architecture
+  signalServers?: string[]; // Multiple signal server URLs for redundancy, e.g., ["wss://signal1.indexerchain.com", "wss://signal2.indexerchain.com"]
+  shadowNodeUrls?: string[]; // Multiple shadow node URLs for redundancy, e.g., ["https://signal1.indexerchain.com", "https://signal2.indexerchain.com"]
 }
 
 /**

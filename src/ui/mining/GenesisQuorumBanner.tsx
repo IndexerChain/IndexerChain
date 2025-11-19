@@ -10,6 +10,7 @@ import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { getQuorumManager } from "../../core/quorumManager.js";
 import { MiningGuard } from "../../core/miningGuard.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 interface GenesisQuorumBannerProps {
   chainContext: ChainContext | null;
@@ -22,7 +23,7 @@ export function GenesisQuorumBanner({
   chainContext,
   p2pNode,
   bootstrapComplete,
-  locale,
+  locale: _locale,
 }: GenesisQuorumBannerProps) {
   const [isGenesis, setIsGenesis] = useState(false);
   const [requirements, setRequirements] = useState<{
@@ -32,7 +33,7 @@ export function GenesisQuorumBanner({
     stablePeers: boolean;
   } | null>(null);
 
-  const isZh = locale === "zh";
+  const { t } = useI18n();
 
   useEffect(() => {
     if (!chainContext || !p2pNode) {
@@ -117,7 +118,7 @@ export function GenesisQuorumBanner({
               color: allRequirementsMet ? "#155724" : "#856404",
             }}
           >
-            {isZh ? "Genesis Quorum Mode" : "Genesis Quorum Mode"}
+            {t("genesisQuorum.bootstrapIncomplete")}
           </div>
           <div
             style={{
@@ -130,13 +131,9 @@ export function GenesisQuorumBanner({
             {(() => {
               const isFirstYear = chainContext ? MiningGuard.isFirstYear(chainContext) : false;
               if (isFirstYear) {
-                return isZh
-                  ? "当前网络处于创世阶段（第一年模式），当有 ≥ 2 个独立节点在线、Quorum 分数 ≥ 50 并且已完成引导同步后，即可开始挖出第一个区块。第一年规则更宽松，更容易启动网络。"
-                  : "The network is currently in Genesis phase (First Year Mode). Once there are ≥ 2 independent peers online, Quorum score ≥ 50, and bootstrap sync is complete, you can start mining the first block. First year rules are more relaxed for easier network startup.";
+                return t("genesisQuorum.firstYearModeDesc");
               } else {
-                return isZh
-                  ? "当前网络处于创世阶段，当有 ≥ 2 个独立节点在线并且已完成引导同步后，即可开始挖出第一个区块。"
-                  : "The network is currently in Genesis phase. Once there are ≥ 2 independent peers online and bootstrap sync is complete, you can start mining the first block.";
+                return t("genesisQuorum.normalModeDesc");
               }
             })()}
           </div>
@@ -152,41 +149,33 @@ export function GenesisQuorumBanner({
               }}
             >
               <div style={{ fontWeight: "bold", marginBottom: "0.5rem", color: "#856404" }}>
-                {isZh ? "当前状态：" : "Current Status:"}
+                {t("genesisQuorum.currentStatus")}
               </div>
               <ul style={{ margin: 0, paddingLeft: "1.5rem", color: "#666" }}>
                 {requirements.independentPeers < requirements.requiredPeers && (
                   <li>
-                    {isZh
-                      ? `独立节点：${requirements.independentPeers} / ${requirements.requiredPeers}（需要至少 ${requirements.requiredPeers} 个）`
-                      : `Independent Peers: ${requirements.independentPeers} / ${requirements.requiredPeers} (need at least ${requirements.requiredPeers})`}
+                    {t("genesisQuorum.independentPeersStatus", { current: requirements.independentPeers, required: requirements.requiredPeers })}
                     <br />
                     <span style={{ fontSize: "0.85rem", fontStyle: "italic", color: "#999" }}>
-                      {isZh
-                        ? "💡 当前只有你一个节点在线，请再启动一台设备或让朋友连接 signal.indexerchain.com。"
-                        : "💡 Currently only you are online, please start another device or ask a friend to connect to signal.indexerchain.com."}
+                      💡 {t("genesisQuorum.onlyOneNodeOnline")}
                     </span>
                   </li>
                 )}
                 {!requirements.bootstrapComplete && (
                   <li>
-                    {isZh ? "Bootstrap 未完成" : "Bootstrap incomplete"}
+                    {t("genesisQuorum.bootstrapIncomplete")}
                     <br />
                     <span style={{ fontSize: "0.85rem", fontStyle: "italic", color: "#999" }}>
-                      {isZh
-                        ? "💡 正在同步根节点状态，请稍等..."
-                        : "💡 Syncing root node state, please wait..."}
+                      💡 {t("genesisQuorum.syncingRootNode")}
                     </span>
                   </li>
                 )}
                 {!requirements.stablePeers && (
                   <li>
-                    {isZh ? "对等节点在线时间不足" : "Peer online duration insufficient"}
+                    {t("genesisQuorum.peerOnlineDurationInsufficient")}
                     <br />
                     <span style={{ fontSize: "0.85rem", fontStyle: "italic", color: "#999" }}>
-                      {isZh
-                        ? "💡 对等节点在线时间未满 2 分钟，请稍等片刻再尝试。"
-                        : "💡 Peer online duration less than 2 minutes, please wait a moment before trying again."}
+                      💡 {t("genesisQuorum.waitForPeerOnlineDuration")}
                     </span>
                   </li>
                 )}
@@ -205,9 +194,7 @@ export function GenesisQuorumBanner({
                 color: "#155724",
               }}
             >
-              ✅ {isZh
-                ? "所有条件已满足，可以开始挖出第一个区块！"
-                : "All conditions met, ready to mine the first block!"}
+              ✅ {t("genesisQuorum.allConditionsMet")}
             </div>
           )}
         </div>

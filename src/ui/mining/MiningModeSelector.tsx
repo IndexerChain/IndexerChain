@@ -4,6 +4,8 @@
  * Allows user to choose between Solo, Local Cluster, and Global Pool mining modes
  */
 
+import { useI18n } from "../../i18n/useI18n.js";
+
 interface MiningModeSelectorProps {
   miningMode: "solo" | "cluster" | "global-pool";
   onModeChange: (mode: "solo" | "cluster" | "global-pool") => void;
@@ -19,43 +21,37 @@ export function MiningModeSelector({
   isFollower,
   canUseGlobalPool,
   globalPoolReason,
-  locale,
+  locale: _locale,
 }: MiningModeSelectorProps) {
-  const isZh = locale === "zh";
+  const { t } = useI18n();
 
   const modes = [
     {
       id: "solo" as const,
-      label: isZh ? "单机挖矿" : "Solo",
-      description: isZh
-        ? "使用单个 Worker 进行挖矿，适合低功耗设备"
-        : "Mine with a single worker, suitable for low-power devices",
+      label: t("miningModeSelector.solo"),
+      description: t("miningModeSelector.soloDesc"),
       icon: "⛏️",
     },
     {
       id: "cluster" as const,
-      label: isZh ? "本地集群" : "Local Cluster",
-      description: isZh
-        ? "使用多个 Worker 并行挖矿，提高算力"
-        : "Use multiple workers for parallel mining, higher hash rate",
+      label: t("miningModeSelector.localCluster"),
+      description: t("miningModeSelector.localClusterDesc"),
       icon: "⚡",
     },
     {
       id: "global-pool" as const,
-      label: isZh ? "全局矿池" : "Global Pool",
-      description: isZh
-        ? "加入全局矿池，与其他节点协作挖矿"
-        : "Join global pool, collaborate with other nodes",
+      label: t("miningModeSelector.globalPool"),
+      description: t("miningModeSelector.globalPoolDesc"),
       icon: "🌐",
       disabled: !canUseGlobalPool,
-      disabledReason: globalPoolReason || (isZh ? "需要更高的 Quorum 分数" : "Requires higher Quorum score"),
+      disabledReason: globalPoolReason || t("miningModeSelector.requiresHigherQuorum"),
     },
   ];
 
   return (
     <div style={{ marginBottom: "1.5rem" }}>
       <h3 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.1rem" }}>
-        {isZh ? "挖矿模式" : "Mining Mode"}
+        {t("miningModeSelector.miningMode")}
       </h3>
 
       {isFollower && (
@@ -70,9 +66,7 @@ export function MiningModeSelector({
             color: "#0c5460",
           }}
         >
-          {isZh
-            ? "⚠️ 此实例为 FOLLOWER（只读模式），所有挖矿模式已禁用"
-            : "⚠️ This instance is FOLLOWER (read-only), all mining modes are disabled"}
+          ⚠️ {t("miningModeSelector.followerMiningDisabled")}
         </div>
       )}
 

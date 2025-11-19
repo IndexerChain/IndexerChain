@@ -684,6 +684,9 @@ export interface Translations {
       bind: string;
       referralAddressBound: string;
       errorCheckingMiningStatus: string;
+      needAtLeastOnePeer: string;
+      insufficientPeers: string;
+      quorumScoreInsufficient: string;
     };
 
     // Network & Security
@@ -841,11 +844,36 @@ export interface Translations {
       independentPeerCount: string;
       peerAnalysis: string;
       peerId: string;
+      rule2: string;
+      firstYearMode: string;
+      howToGetScore: string;
+      calculationTitle: string;
+      ipIndependence: string;
+      availability: string;
+      heightReliability: string;
+      heightReliabilityFirstYear: string;
+      latency: string;
+      latencyFirstYear: string;
+      finalityParticipation: string;
+      gsnContribution: string;
+      firstYearModeNote: string;
+      summaryNormal: string;
+      summaryFirstYear: string;
+      firstYearRelaxedNote: string;
     };
 
     // Genesis Quorum
     genesisQuorum: {
       bootstrapIncomplete: string;
+      firstYearModeDesc: string;
+      normalModeDesc: string;
+      currentStatus: string;
+      independentPeersStatus: string;
+      onlyOneNodeOnline: string;
+      syncingRootNode: string;
+      peerOnlineDurationInsufficient: string;
+      waitForPeerOnlineDuration: string;
+      allConditionsMet: string;
     };
 
     // Mining Status Banner
@@ -1648,6 +1676,9 @@ export const translations: Record<Locale, Translations> = {
       bind: "绑定",
       referralAddressBound: "✅ 已绑定邀请地址",
       errorCheckingMiningStatus: "检查挖矿状态时出错",
+      needAtLeastOnePeer: "需要至少 1 个独立节点（当前: {current}），建议 ≥2 个",
+      insufficientPeers: "{peerLabel}不足（{current} < {required}）",
+      quorumScoreInsufficient: "Quorum 分数不足（{score}/{required}）",
     },
     networkSecurity: {
       networkSecurityStatus: "🛡️ 网络 & 安全状态",
@@ -1787,9 +1818,34 @@ export const translations: Record<Locale, Translations> = {
       independentPeerCount: "独立 Peer 数",
       peerAnalysis: "Peer 分析表",
       peerId: "Peer ID",
+      rule2: "规则 2: Quorum 分数需要 ≥ {required} (当前: {current})",
+      firstYearMode: "（第一年模式）",
+      howToGetScore: "如何获得分数？",
+      calculationTitle: "Quorum 分数计算方式：",
+      ipIndependence: "• IP 独立性：0-30 分（不同 IP 地址 = 30 分，相同 IP = 0 分）",
+      availability: "• 可用性：0-20 分（在线 > 2 分钟 = 20 分）",
+      heightReliability: "• 高度可靠性：0-20 分（高度匹配多数 = 20 分）",
+      heightReliabilityFirstYear: "• 高度可靠性：0-15 分（第一年：默认 15 分，即使高度未知）",
+      latency: "• 延迟：0-10 分（< 200ms = 10 分）",
+      latencyFirstYear: "• 延迟：0-10 分（第一年：默认 ≥5 分，<200ms = 10 分）",
+      finalityParticipation: "• 最终性参与：0-10 分（参与最终性投票）",
+      gsnContribution: "• GSN 贡献：0-10 分（提供快照区块）",
+      firstYearModeNote: "• 第一年模式：最终性参与和 GSN 贡献不计分（固定 0 分）",
+      summaryNormal: "每个节点最高 100 分，总分数 = 所有节点的分数之和",
+      summaryFirstYear: "第一年模式：每个节点最高 75 分（30+20+15+10），总分数 = 所有节点的分数之和。要求 ≥50 分即可挖矿。",
+      firstYearRelaxedNote: "💡 第一年规则更宽松，便于网络启动。第二年后将自动恢复严格模式（要求 ≥100 分，3 个独立节点）。",
     },
     genesisQuorum: {
-      bootstrapIncomplete: "Bootstrap 未完成",
+      bootstrapIncomplete: "Genesis Quorum Mode",
+      firstYearModeDesc: "当前网络处于创世阶段（第一年模式），当有 ≥ 2 个独立节点在线、Quorum 分数 ≥ 50 并且已完成引导同步后，即可开始挖出第一个区块。第一年规则更宽松，更容易启动网络。",
+      normalModeDesc: "当前网络处于创世阶段，当有 ≥ 2 个独立节点在线并且已完成引导同步后，即可开始挖出第一个区块。",
+      currentStatus: "当前状态：",
+      independentPeersStatus: "独立节点：{current} / {required}（需要至少 {required} 个）",
+      onlyOneNodeOnline: "当前只有你一个节点在线，请再启动一台设备或让朋友连接 signal.indexerchain.com。",
+      syncingRootNode: "正在同步根节点状态，请稍等...",
+      peerOnlineDurationInsufficient: "对等节点在线时间不足",
+      waitForPeerOnlineDuration: "对等节点在线时间未满 2 分钟，请稍等片刻再尝试。",
+      allConditionsMet: "所有条件已满足，可以开始挖出第一个区块！",
     },
     miningStatusBanner: {
       coldStart: "冷启动",
@@ -2568,6 +2624,9 @@ export const translations: Record<Locale, Translations> = {
       bind: "Bind",
       referralAddressBound: "✅ Referral Address Bound",
       errorCheckingMiningStatus: "Error checking mining status",
+      needAtLeastOnePeer: "Need at least 1 independent peer (current: {current}), recommend ≥2",
+      insufficientPeers: "Insufficient {peerLabel} ({current} < {required})",
+      quorumScoreInsufficient: "Quorum Score Insufficient ({score}/{required})",
     },
     networkSecurity: {
       networkSecurityStatus: "🛡️ Network & Security Status",
@@ -2707,9 +2766,34 @@ export const translations: Record<Locale, Translations> = {
       independentPeerCount: "Independent Peer Count",
       peerAnalysis: "Peer Analysis",
       peerId: "Peer ID",
+      rule2: "Rule 2: Quorum score must be ≥ {required} (current: {current})",
+      firstYearMode: " (First Year Mode)",
+      howToGetScore: "How is score calculated?",
+      calculationTitle: "Quorum Score Calculation:",
+      ipIndependence: "• IP Independence: 0-30 points (different IP = 30, same IP = 0)",
+      availability: "• Availability: 0-20 points (online > 2 minutes = 20)",
+      heightReliability: "• Height Reliability: 0-20 points (height matches majority = 20)",
+      heightReliabilityFirstYear: "• Height Reliability: 0-15 points (First Year: default 15, even if height unknown)",
+      latency: "• Latency: 0-10 points (< 200ms = 10)",
+      latencyFirstYear: "• Latency: 0-10 points (First Year: default ≥5, <200ms = 10)",
+      finalityParticipation: "• Finality Participation: 0-10 points (participates in finality votes)",
+      gsnContribution: "• GSN Contribution: 0-10 points (serves snapshot chunks)",
+      firstYearModeNote: "• First Year Mode: Finality Participation and GSN Contribution not counted (fixed 0)",
+      summaryNormal: "Each peer can score up to 100 points. Total score = sum of all peer scores",
+      summaryFirstYear: "First Year Mode: Each peer can score up to 75 points (30+20+15+10). Total score = sum of all peer scores. Require ≥50 to mine.",
+      firstYearRelaxedNote: "💡 First year rules are more relaxed for easier network startup. After year 1, strict mode will be automatically enabled (require ≥100 score, 3 independent peers).",
     },
     genesisQuorum: {
-      bootstrapIncomplete: "Bootstrap incomplete",
+      bootstrapIncomplete: "Genesis Quorum Mode",
+      firstYearModeDesc: "The network is currently in Genesis phase (First Year Mode). Once there are ≥ 2 independent peers online, Quorum score ≥ 50, and bootstrap sync is complete, you can start mining the first block. First year rules are more relaxed for easier network startup.",
+      normalModeDesc: "The network is currently in Genesis phase. Once there are ≥ 2 independent peers online and bootstrap sync is complete, you can start mining the first block.",
+      currentStatus: "Current Status:",
+      independentPeersStatus: "Independent Peers: {current} / {required} (need at least {required})",
+      onlyOneNodeOnline: "Currently only you are online, please start another device or ask a friend to connect to signal.indexerchain.com.",
+      syncingRootNode: "Syncing root node state, please wait...",
+      peerOnlineDurationInsufficient: "Peer online duration insufficient",
+      waitForPeerOnlineDuration: "Peer online duration less than 2 minutes, please wait a moment before trying again.",
+      allConditionsMet: "All conditions met, ready to mine the first block!",
     },
     miningStatusBanner: {
       coldStart: "Cold Start",

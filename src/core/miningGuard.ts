@@ -251,6 +251,9 @@ export class MiningGuard {
     // This is important for Cold Start phase: even with 0 peers, if bootstrapComplete === true,
     // we should allow mining (subject to QuorumScore and other checks)
     
+    // Phase 45: First year requires only 2 independent peers (define early)
+    const MIN_PEERS_FIRST_YEAR = 2;
+    
     // Check 1: P2P connection to signal server (required for bootstrap)
     if (!p2pNode || !p2pNode.isConnected) {
       // If bootstrap is complete, we might still allow mining (Cold Start mode)
@@ -264,7 +267,7 @@ export class MiningGuard {
           reason: "Not connected to P2P network and bootstrap not complete",
           details: {
             peerCount: 0,
-            requiredPeers: 3,
+            requiredPeers: MIN_PEERS_FIRST_YEAR, // Phase 45: Use first year minimum
           },
         };
       }
@@ -295,8 +298,16 @@ export class MiningGuard {
       finalityManager
     );
     
-    // Phase 33: Three-tier mining permission levels (with quorum support)
-    const minPeersRequired = chainContext.params.minPeersRequired ?? 3;
+    // Phase 45: Dynamic minimum peers based on network age
+    // First year (age < 1 year OR height < 50,000): Require only 2 independent peers
+    const tip = chainContext.storage.getTip();
+    const currentHeight = tip?.header.height ?? 0;
+    const networkAgeYears = quorumManager.getNetworkAgeYears(chainContext.params);
+    const isFirstYearModeForPeers = (networkAgeYears < 1 || currentHeight < 50_000) && isMainnetNetwork;
+    
+    const minPeersRequired = isFirstYearModeForPeers 
+      ? MIN_PEERS_FIRST_YEAR 
+      : (chainContext.params.minPeersRequired ?? 3);
     const allowGuardedMining = chainContext.params.allowGuardedMining ?? (!isMainnetNetwork); // Auto-enable for dev/testnet
     const allowLocalMining = chainContext.params.allowLocalMining ?? false;
     
@@ -316,12 +327,12 @@ export class MiningGuard {
       miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
     }
     
-    // 🟦 First Year (Year 0-1) - Relaxed Rules
-    // First year: Only check minimal requirements, don't block on QuorumScore/StateLock/Finality
-    const isFirstYearMode = this.isFirstYear(chainContext) && isMainnetNetwork;
+    // Phase 45: First Year Mode - Ultra-lenient rules
+    // First year (age < 1 year OR height < 50,000): Only check minimal requirements
+    const isFirstYearMode = (networkAgeYears < 1 || currentHeight < 50_000) && isMainnetNetwork;
     
     if (isFirstYearMode && p2pNode) {
-      // First year requirements: ≥2 independent IPs, bootstrapComplete, no critical state drift
+      // Phase 45: First year requirements: ≥2 independent IPs, Quorum ≥ 40, bootstrapComplete, no critical state drift
       // Check state drift (only critical drift blocks mining)
       let stateDriftCritical = false;
       try {
@@ -331,50 +342,81 @@ export class MiningGuard {
         const driftCheck = driftDetector.checkDrift();
         stateDriftCritical = driftCheck.hasDrift && driftCheck.severity === "critical";
       } catch (e) {
-        logger.debug("[First Year] State drift check failed, assuming no critical drift:", e);
+        logger.debug("[Phase 45 First Year] State drift check failed, assuming no critical drift:", e);
       }
       
-      // First year: Check independent peers, Quorum score, and bootstrap status
-      // First year requires: ≥2 independent peers, Quorum ≥ 50, bootstrapComplete, no critical drift
-      const firstYearRequiredQuorum = 50;
-      const firstYearRequiredPeers = 2;
+      // Phase 45: Get dynamic required quorum score (first year = 40)
+      const firstYearRequiredQuorumScore = quorumManager.getRequiredQuorumScore(chainContext.params, { height: currentHeight });
+      const firstYearRequiredPeers = MIN_PEERS_FIRST_YEAR;
       
-      if (quorumStatus.independentPeerCount >= firstYearRequiredPeers && 
-          quorumStatus.totalScore >= firstYearRequiredQuorum &&
-          bootstrapComplete && 
-          !stateDriftCritical) {
-        logger.info(`[First Year] ✅ Allowing mining (SAFE): ${quorumStatus.independentPeerCount} independent peers, Quorum ${quorumStatus.totalScore} ≥ ${firstYearRequiredQuorum}, bootstrap complete, no critical drift`);
+      // Phase 45: Check independent peers first (must have ≥2)
+      if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "INSUFFICIENT_PEERS",
+          reason: `首年规则：需要至少 ${firstYearRequiredPeers} 个独立 IP 对等节点，目前只有 ${quorumStatus.independentPeerCount} 个`,
+          details: {
+            peerCount,
+            requiredPeers: firstYearRequiredPeers,
+            independentPeerCount: quorumStatus.independentPeerCount,
+            quorumScore: quorumStatus.totalScore,
+            requiredQuorumScore: firstYearRequiredQuorumScore,
+          },
+        };
+      }
+      
+      // Phase 45: Check quorum score (first year = 40)
+      if (quorumStatus.totalScore < firstYearRequiredQuorumScore) {
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "INSUFFICIENT_PEERS",
+          reason: `规则 2：当前 Quorum 分数为 ${quorumStatus.totalScore}，首年要求 ≥ ${firstYearRequiredQuorumScore}`,
+          details: {
+            peerCount,
+            requiredPeers: firstYearRequiredPeers,
+            quorumScore: quorumStatus.totalScore,
+            requiredQuorumScore: firstYearRequiredQuorumScore,
+            independentPeerCount: quorumStatus.independentPeerCount,
+          },
+        };
+      }
+      
+      // Phase 45: All first year requirements met
+      if (bootstrapComplete && !stateDriftCritical) {
+        logger.info(`[Phase 45 First Year] ✅ Allowing mining (SAFE): ${quorumStatus.independentPeerCount} independent peers, Quorum ${quorumStatus.totalScore} ≥ ${firstYearRequiredQuorumScore}, bootstrap complete, no critical drift`);
         miningMode = "SAFE";
         // Skip all StateLock/Finality checks for first year (but Quorum score is checked above)
         // Continue to wallet/network checks, then return success
       } else {
-        // First year: Still need minimal requirements
+        // Phase 45: First year: Still need minimal requirements
         const reasons: string[] = [];
         if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
-          reasons.push(`Need ≥${firstYearRequiredPeers} independent peers (current: ${quorumStatus.independentPeerCount})`);
+          reasons.push(`需要 ≥${firstYearRequiredPeers} 个独立对等节点（当前: ${quorumStatus.independentPeerCount}）`);
         }
-        if (quorumStatus.totalScore < firstYearRequiredQuorum) {
-          reasons.push(`Quorum score ${quorumStatus.totalScore} < required ${firstYearRequiredQuorum}`);
+        if (quorumStatus.totalScore < firstYearRequiredQuorumScore) {
+          reasons.push(`Quorum 分数 ${quorumStatus.totalScore} < 要求 ${firstYearRequiredQuorumScore}`);
         }
         if (!bootstrapComplete) {
-          reasons.push("Bootstrap not complete");
+          reasons.push("Bootstrap 未完成");
         }
         if (stateDriftCritical) {
-          reasons.push("Critical state drift detected");
+          reasons.push("检测到严重状态漂移");
         }
         
         return {
           ok: false,
           mode: "BLOCKED",
           code: "INSUFFICIENT_PEERS",
-          reason: `First year: ${reasons.join(", ")}`,
+          reason: `首年规则：${reasons.join(", ")}`,
           details: {
             peerCount,
             requiredPeers: firstYearRequiredPeers,
             quorumScore: quorumStatus.totalScore,
-            requiredQuorumScore: firstYearRequiredQuorum, // First year: Quorum ≥ 50
+            requiredQuorumScore: firstYearRequiredQuorumScore,
             independentPeerCount: quorumStatus.independentPeerCount,
-            requiredIndependentPeers: firstYearRequiredPeers, // First year: min 2 independent peers
+            requiredIndependentPeers: firstYearRequiredPeers, // Phase 45: First year: min 2 independent peers
             networkStage: "GENESIS_QUORUM", // Use existing stage type
             networkStageInfo: {
               stage: "GENESIS_QUORUM",
@@ -566,6 +608,29 @@ export class MiningGuard {
       };
     } else {
       // BLOCKED: Not enough peers and guarded mining not allowed
+      // First year mode: Use independent peer count and requirement
+      const isFirstYearModeForError = this.isFirstYear(chainContext) && isMainnetNetwork;
+      if (isFirstYearModeForError && p2pNode) {
+        const quorumManager = getQuorumManager();
+        quorumManager.initialize(p2pNode, chainContext);
+        const quorumStatus = quorumManager.getQuorumStatus();
+        const requiredIndependentPeers = 2; // First year: min 2 independent peers
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "INSUFFICIENT_PEERS",
+          reason: `First year: Need ≥${requiredIndependentPeers} independent peers (current: ${quorumStatus.independentPeerCount})`,
+          details: {
+            peerCount,
+            requiredPeers: requiredIndependentPeers,
+            independentPeerCount: quorumStatus.independentPeerCount,
+            requiredIndependentPeers: requiredIndependentPeers,
+            quorumScore: quorumStatus.totalScore,
+            requiredQuorumScore: 50, // First year: Quorum ≥ 50
+          },
+        };
+      }
+      
       return {
         ok: false,
         mode: "BLOCKED",
@@ -639,20 +704,7 @@ export class MiningGuard {
     }
 
     // Check 5: Synchronization status
-    const localTip = chainContext.storage.getTip();
-    let localHeight = 0;
-    
-    if (localTip) {
-      localHeight = localTip.header.height;
-    } else {
-      // No local tip - this is normal for a new chain (only genesis block exists)
-      // Don't block mining if we're at height 0 - this is expected for a new node
-      // The sync check should compare with network height, not just check if tip exists
-      // For now, we'll allow mining at height 0 and let natural sync happen
-      localHeight = 0;
-    }
-    
-    // Note: We don't block mining just because localHeight is 0
+    // Note: We don't block mining just because height is 0
     // The real sync check should compare local height with network height from peers
     // For now, we'll allow mining and let the sync happen naturally
     
@@ -667,7 +719,8 @@ export class MiningGuard {
       const finalityStats = finalityManager.getStats();
       if (finalityStats) {
         const finalizedHeight = finalityStats.finalizedHeight || 0;
-        const finalityLag = localHeight - finalizedHeight;
+        const finalityLocalHeight = tip?.header.height ?? 0;
+        const finalityLag = finalityLocalHeight - finalizedHeight;
         const maxFinalityLag = 5; // Allow up to 5 blocks unfinalized
         
         // Phase 39: Use network stage to determine if we should relax finality check
@@ -684,9 +737,9 @@ export class MiningGuard {
             code: "NOT_FINALIZED",
             reason: `Too many unfinalized blocks: ${finalityLag} > ${maxFinalityLag}`,
             details: {
-              localHeight,
+              localHeight: finalityLocalHeight,
               finalizedHeight,
-              tipHeight: localHeight,
+              tipHeight: finalityLocalHeight,
               finalityLag,
               isFinalityInitializationPhase: false,
               networkStage,
@@ -762,7 +815,7 @@ export class MiningGuard {
       ok: true,
       mode: miningMode,
       details: {
-        localHeight,
+        localHeight: currentHeight,
         peerCount,
         requiredPeers: minPeersRequired,
         quorumScore: quorumStatus.totalScore,

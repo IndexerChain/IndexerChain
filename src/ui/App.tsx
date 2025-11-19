@@ -2781,22 +2781,9 @@ function App() {
 
   // Connect to P2P network
   const handleConnectP2P = async () => {
-    // Use default URL if bootstrapUrl is not set
-    const urlToUse = bootstrapUrl || DEFAULT_MAINNET_SIGNALING;
-    
     if (!chainContext) {
       setError("Chain context not ready. Please wait...");
       return;
-    }
-    
-    if (!urlToUse) {
-      setError("Please enter a bootstrap server URL (e.g., ws://localhost:8080)");
-      return;
-    }
-    
-    // Update bootstrapUrl if using default
-    if (!bootstrapUrl) {
-      setBootstrapUrl(urlToUse);
     }
 
     try {
@@ -2806,10 +2793,34 @@ function App() {
       const p2pNode = new BrowserP2PNode(nodeId);
       p2pNodeRef.current = p2pNode;
 
+      // Phase 45: Use multiple signal servers from chainParams if available
+      const params = await getDefaultChainParams();
+      let signalServersToUse: string[] = [];
+      
+      if (params.signalServers && params.signalServers.length > 0) {
+        // Use signal servers from chainParams
+        signalServersToUse = params.signalServers;
+        logger.info(`[Phase 45] Using ${signalServersToUse.length} signal server(s) from chainParams`);
+      } else {
+        // Fallback to single URL
+        const urlToUse = bootstrapUrl || DEFAULT_MAINNET_SIGNALING;
+        if (!urlToUse) {
+          setError("Please enter a bootstrap server URL (e.g., ws://localhost:8080)");
+          return;
+        }
+        signalServersToUse = [urlToUse];
+        
+        // Update bootstrapUrl if using default
+        if (!bootstrapUrl) {
+          setBootstrapUrl(urlToUse);
+        }
+      }
+
       // Phase 40: Setup connection manager for auto-reconnect
       await import("../core/connectionManager.js");
+      const primaryUrl = signalServersToUse[0];
       p2pNode.setupConnectionManager({
-        bootstrapUrl: urlToUse,
+        bootstrapUrl: primaryUrl,
         reconnectInterval: 1500,
         maxReconnectAttempts: -1, // Infinite
         heartbeatInterval: 10000, // 10 seconds
@@ -2817,69 +2828,97 @@ function App() {
         enableSessionPersistence: true,
       });
 
-      await p2pNode.connect(urlToUse);
+      // Phase 45: Connect using multiple signal servers
+      if (signalServersToUse.length > 1) {
+        await p2pNode.connect(signalServersToUse);
+      } else {
+        await p2pNode.connect(signalServersToUse[0]);
+      }
       p2pNode.requestPeers();
 
-      // Phase 40: Initialize Shadow Node for mobile persistence
+      // Phase 45: Initialize Shadow Node with multiple URLs for mobile persistence
       try {
-        // Shadow Node uses the same worker as signaling server, just different path
-        const shadowNodeUrl = isMainnetMode 
-          ? "https://signal.indexerchain.com" 
-          : urlToUse.replace("ws://", "http://").replace("wss://", "https://");
+        // Phase 45: Use multiple shadow node URLs from chainParams if available
+        let shadowNodeUrls: string[] = [];
         
-        const shadowNode = new ShadowNodeClient({
-          shadowNodeUrl: shadowNodeUrl,
-          nodeId: nodeId,
-          autoReconnect: true,
-          reconnectInterval: 5000,
-        });
-        
-        shadowNodeRef.current = shadowNode;
-        
-        // Initialize shadow session
-        const shadowInitialized = await shadowNode.initialize();
-        if (shadowInitialized) {
-          logger.info("[ShadowNode] Shadow node initialized successfully");
-          
-          // Listen for state updates
-          shadowNode.onStateUpdate((state) => {
-            setShadowNodeState(state);
-            logger.debug(`[ShadowNode] State updated: height=${state.latestHeight}`);
-            
-            // Phase 42: Update HeightSyncManager with shadow state
-            if (chainContext && p2pNodeRef.current) {
-              const heightSyncManager = getHeightSyncManager();
-              heightSyncManager.init(chainContext, p2pNodeRef.current);
-              heightSyncManager.updateShadowState({
-                height: state.latestHeight,
-                tipHash: state.latestHeaderHash,
-                stateCommitment: state.stateCommitment,
-              });
-            }
-          });
-          
-          // Phase 42: Listen for active miner changes
-          shadowNode.onActiveMinerChange((activeMinerId) => {
-            if (activeMinerId && shadowNode.getSessionId()) {
-              const sessionId = shadowNode.getSessionId();
-              const nodeId = p2pNodeRef.current?.nodeId || "";
-              const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
-              
-              if (activeMinerId !== minerId && isMining) {
-                // Another device took over - stop mining
-                logger.warn("[ActiveMiner] Another device took over mining, stopping...");
-                handleStopMining();
-              }
-            }
-          });
-          
-          // Listen for connection changes
-          shadowNode.onConnectionChange((connected) => {
-            setShadowNodeConnected(connected);
-            logger.info(`[ShadowNode] Connection status: ${connected ? 'connected' : 'disconnected'}`);
-          });
+        if (params.shadowNodeUrls && params.shadowNodeUrls.length > 0) {
+          shadowNodeUrls = params.shadowNodeUrls;
+          logger.info(`[Phase 45] Using ${shadowNodeUrls.length} shadow node URL(s) from chainParams`);
         } else {
-          logger.warn("[ShadowNode] Failed to initialize shadow node (non-critical)");
+          // Fallback: derive from signal servers
+          shadowNodeUrls = signalServersToUse.map(url => 
+            url.replace("ws://", "http://").replace("wss://", "https://")
+          );
+        }
+        
+        // Phase 45: Try multiple shadow nodes
+        let shadowNodeInitialized = false;
+        for (const shadowNodeUrl of shadowNodeUrls) {
+          try {
+            const shadowNode = new ShadowNodeClient({
+              shadowNodeUrl: shadowNodeUrl,
+              nodeId: nodeId,
+              autoReconnect: true,
+              reconnectInterval: 5000,
+            });
+            
+            shadowNodeRef.current = shadowNode;
+            
+            // Initialize shadow session
+            const initialized = await shadowNode.initialize();
+            if (initialized) {
+              logger.info(`[Phase 45] Shadow node initialized successfully with ${shadowNodeUrl}`);
+              shadowNodeInitialized = true;
+              
+              // Listen for state updates
+              shadowNode.onStateUpdate((state) => {
+                setShadowNodeState(state);
+                logger.debug(`[ShadowNode] State updated: height=${state.latestHeight}`);
+                
+                // Phase 42: Update HeightSyncManager with shadow state
+                if (chainContext && p2pNodeRef.current) {
+                  const heightSyncManager = getHeightSyncManager();
+                  heightSyncManager.init(chainContext, p2pNodeRef.current);
+                  heightSyncManager.updateShadowState({
+                    height: state.latestHeight,
+                    tipHash: state.latestHeaderHash,
+                    stateCommitment: state.stateCommitment,
+                  });
+                }
+              });
+              
+              // Phase 42: Listen for active miner changes
+              shadowNode.onActiveMinerChange((activeMinerId) => {
+                if (activeMinerId && shadowNode.getSessionId()) {
+                  const sessionId = shadowNode.getSessionId();
+                  const nodeId = p2pNodeRef.current?.nodeId || "";
+                  const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+                  
+                  if (activeMinerId !== minerId && isMining) {
+                    // Another device took over - stop mining
+                    logger.warn("[ActiveMiner] Another device took over mining, stopping...");
+                    handleStopMining();
+                  }
+                }
+              });
+              
+              // Listen for connection changes
+              shadowNode.onConnectionChange((connected) => {
+                setShadowNodeConnected(connected);
+                logger.info(`[ShadowNode] Connection status: ${connected ? 'connected' : 'disconnected'}`);
+              });
+              
+              // Successfully initialized, break out of loop
+              break;
+            }
+          } catch (error) {
+            logger.warn(`[Phase 45] Failed to initialize shadow node with ${shadowNodeUrl}:`, error);
+            // Continue to next shadow node URL
+          }
+        }
+        
+        if (!shadowNodeInitialized) {
+          logger.warn("[Phase 45] Failed to initialize any shadow node (non-critical)");
         }
       } catch (error) {
         logger.warn("[ShadowNode] Shadow node initialization error (non-critical):", error);

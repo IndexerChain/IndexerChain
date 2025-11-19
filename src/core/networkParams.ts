@@ -41,6 +41,19 @@ export const MAINNET_PARAMS: ChainParams = {
     // Mainnet snapshot endpoints (to be configured)
     // "https://snap.indexerchain.com/api/v1/snapshots"
   ],
+  // Phase 45: Multi-Signal Resilient Network Architecture
+  signalServers: [
+    "wss://signal.indexerchain.com",
+    // Additional signal servers can be added here:
+    // "wss://signal2.indexerchain.com",
+    // "wss://signal3.indexerchain.com",
+  ],
+  shadowNodeUrls: [
+    "https://signal.indexerchain.com",
+    // Additional shadow node URLs can be added here:
+    // "https://signal2.indexerchain.com",
+    // "https://signal3.indexerchain.com",
+  ],
   // Phase 21: Peer reputation and security parameters
   peerScoreEnabled: true,
   peerScoreDecayIntervalMs: 60_000,
