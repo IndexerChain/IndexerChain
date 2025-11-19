@@ -9,10 +9,17 @@
  */
 
 import type { ChainContext } from "./chain.js";
-import type { P2PNode } from "./p2p.js";
+import type { P2PNode, BrowserP2PNode } from "./p2p.js";
 import { getStateDriftDetector, type StateDriftResult } from "./stateDriftDetector.js";
 import { getStateCommitGossip } from "./stateCommitGossip.js";
 import { getStateLockManager } from "./stateLockManager.js";
+import { 
+  findNearestFullSnapshot, 
+  loadSnapshotByHeight,
+  loadDeltaSnapshotsAfter 
+} from "./snapshot.js";
+import { IndexState } from "./indexState.js";
+import { applyDelta } from "./snapshotDelta.js";
 
 /**
  * State repair status
@@ -41,6 +48,10 @@ export class StateRepairManager {
   };
   private onRepairComplete?: () => void;
   private onRepairFailed?: (error: string) => void;
+  private lastRepairAttempt: number = 0;
+  private repairCooldownMs: number = 60000; // 1 minute cooldown between repairs
+  private consecutiveFailures: number = 0;
+  private maxConsecutiveFailures: number = 3;
 
   private static instance: StateRepairManager;
 
@@ -74,6 +85,31 @@ export class StateRepairManager {
       return;
     }
 
+    // Check cooldown period
+    const now = Date.now();
+    const timeSinceLastRepair = now - this.lastRepairAttempt;
+    if (timeSinceLastRepair < this.repairCooldownMs) {
+      console.warn(`[Phase 36] Repair cooldown active (${Math.ceil((this.repairCooldownMs - timeSinceLastRepair) / 1000)}s remaining)`);
+      return;
+    }
+
+    // Check if we've had too many consecutive failures
+    if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+      console.error(`[Phase 36] Too many consecutive repair failures (${this.consecutiveFailures}), skipping repair`);
+      if (onFailed) {
+        onFailed("Too many consecutive repair failures, please check your network connection and try resetting chain data");
+      }
+      return;
+    }
+
+    // Check if we have enough peers to determine majority
+    const gossip = getStateCommitGossip();
+    const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
+    if (commits.length < 2) {
+      console.warn(`[Phase 36] Not enough peers to determine majority (${commits.length} peers), skipping repair`);
+      return;
+    }
+
     this.onRepairComplete = onComplete;
     this.onRepairFailed = onFailed;
     this.repairStatus = {
@@ -82,6 +118,7 @@ export class StateRepairManager {
       step: "paused",
       startedAt: Date.now(),
     };
+    this.lastRepairAttempt = now;
 
     console.log(`[Phase 36] Starting state repair:`, driftResult);
 
@@ -117,12 +154,18 @@ export class StateRepairManager {
 
       console.log(`[Phase 36] State repair completed successfully`);
 
+      // Reset consecutive failures on success
+      this.consecutiveFailures = 0;
+
       if (this.onRepairComplete) {
         this.onRepairComplete();
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       console.error(`[Phase 36] State repair failed:`, errorMessage);
+
+      // Increment consecutive failures
+      this.consecutiveFailures++;
 
       this.repairStatus.step = "failed";
       this.repairStatus.error = errorMessage;
@@ -151,20 +194,40 @@ export class StateRepairManager {
     }
 
     const targetHeight = driftResult.majorityHeight;
+    
+    // First, check if we have a local snapshot at or before target height
+    const localSnapshot = findNearestFullSnapshot(targetHeight);
+    if (localSnapshot && localSnapshot.height >= targetHeight - 100) {
+      // We have a recent snapshot, use it
+      console.log(`[Phase 36] Using local snapshot at height ${localSnapshot.height}`);
+      return;
+    }
+
+    // Try to get snapshot from peers
     const gossip = getStateCommitGossip();
     const commits = gossip.getStateCommitsForHeight(targetHeight);
 
     if (commits.length === 0) {
-      throw new Error(`No peers available for height ${targetHeight}`);
+      // No peers available, but we might have a local snapshot
+      if (localSnapshot) {
+        console.log(`[Phase 36] No peers available, using local snapshot at height ${localSnapshot.height}`);
+        return;
+      }
+      throw new Error(`No peers available and no local snapshot for height ${targetHeight}`);
     }
 
-    // Request snapshot from peers (this would trigger snapshot sync)
-    // For now, we'll use the existing snapshot sync mechanism
     console.log(`[Phase 36] Requesting snapshot for height ${targetHeight} from ${commits.length} peer(s)`);
 
-    // The actual snapshot request would be handled by the existing sync mechanism
-    // This is a placeholder for the actual implementation
-    await this.delay(1000);
+    // Try to request snapshot metadata from peers
+    if (this.p2pNode && 'broadcast' in this.p2pNode) {
+      const browserP2p = this.p2pNode as BrowserP2PNode;
+      browserP2p.broadcast("REQUEST_SNAPSHOT_META", {
+        targetHeight: targetHeight,
+      });
+      
+      // Wait a bit for responses
+      await this.delay(2000);
+    }
   }
 
   /**
@@ -175,16 +238,87 @@ export class StateRepairManager {
       throw new Error("Chain context not available");
     }
 
-    console.log(`[Phase 36] Rebuilding state to match majority at height ${driftResult.majorityHeight}`);
+    const targetHeight = driftResult.majorityHeight;
+    console.log(`[Phase 36] Rebuilding state to match majority at height ${targetHeight}`);
 
-    // This would trigger a full state rebuild from snapshot
-    // The actual implementation would:
-    // 1. Load the latest snapshot
-    // 2. Apply all blocks from snapshot height to target height
-    // 3. Verify state commitment matches
+    // Find the nearest full snapshot
+    const fullSnapMeta = findNearestFullSnapshot(targetHeight);
+    if (!fullSnapMeta) {
+      throw new Error(`No snapshot found at or before height ${targetHeight}`);
+    }
 
-    // For now, this is a placeholder
-    await this.delay(2000);
+    console.log(`[Phase 36] Found snapshot at height ${fullSnapMeta.height}, rebuilding state...`);
+
+    // Load the full snapshot
+    const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
+    if (!fullSnap || !fullSnap.indexState) {
+      throw new Error(`Failed to load snapshot at height ${fullSnapMeta.height}`);
+    }
+
+    // Restore state from snapshot
+    const restoredState = IndexState.fromSnapshot(fullSnap.indexState);
+    const restoredInternalState = (restoredState as any).getInternalState();
+    const currentInternalState = (this.chainContext.indexState as any).getInternalState();
+
+    // Clear current state and restore from snapshot
+    currentInternalState.clear();
+    for (const [ns, kvMap] of restoredInternalState) {
+      const newMap = new Map(kvMap);
+      currentInternalState.set(ns, newMap);
+    }
+
+    // Restore privacy state (commitments, nullifiers)
+    const restoredCommitments = (restoredState as any).getCommitments?.() || (restoredState as any).commitments;
+    const restoredNullifiers = (restoredState as any).getNullifierSet?.() || (restoredState as any).nullifierSet;
+
+    if (restoredCommitments) {
+      (this.chainContext.indexState as any).commitments = new Map(restoredCommitments);
+    }
+    if (restoredNullifiers) {
+      (this.chainContext.indexState as any).nullifierSet = new Set(restoredNullifiers);
+    }
+
+    // Apply delta snapshots if any
+    const deltaMetas = loadDeltaSnapshotsAfter(fullSnapMeta.height, targetHeight);
+    for (const deltaMeta of deltaMetas) {
+      const deltaSnap = await loadSnapshotByHeight(deltaMeta.height);
+      if (deltaSnap && deltaSnap.delta) {
+        await applyDelta(deltaSnap.delta, (op: any) => {
+          this.chainContext!.indexState.applyOperation(op, undefined);
+        });
+      }
+    }
+
+    // Replay blocks from snapshot height to target height
+    const blocksToReplay = this.chainContext.storage.getAllBlocks().filter(
+      b => b.header.height > fullSnapMeta.height && b.header.height <= targetHeight
+    );
+
+    // Sort blocks by height
+    blocksToReplay.sort((a, b) => a.header.height - b.header.height);
+
+    console.log(`[Phase 36] Replaying ${blocksToReplay.length} blocks from height ${fullSnapMeta.height + 1} to ${targetHeight}`);
+
+    for (const block of blocksToReplay) {
+      this.chainContext.indexState.applyBlock(block);
+    }
+
+    console.log(`[Phase 36] State rebuilt from snapshot (height ${fullSnapMeta.height}) + ${blocksToReplay.length} blocks`);
+
+    // After rebuilding, verify that the tip's state commitment matches what we expect
+    // If it doesn't, the blocks themselves might have wrong state commitments
+    const tip = this.chainContext.storage.getTip();
+    if (tip && tip.header.height === targetHeight) {
+      const computedStateCommitment = await this.computeCurrentStateCommitment();
+      if (computedStateCommitment && driftResult.majorityStateCommitment) {
+        if (computedStateCommitment !== driftResult.majorityStateCommitment) {
+          console.warn(`[Phase 36] Rebuilt state commitment (${computedStateCommitment.substring(0, 16)}...) doesn't match majority (${driftResult.majorityStateCommitment.substring(0, 16)}...). Blocks may have incorrect state commitments.`);
+          // This is a warning, not an error - we'll let verification handle it
+        } else {
+          console.log(`[Phase 36] Rebuilt state commitment matches majority`);
+        }
+      }
+    }
   }
 
   /**
@@ -248,6 +382,24 @@ export class StateRepairManager {
    */
   isRepairing(): boolean {
     return this.repairStatus.repairing;
+  }
+
+  /**
+   * Compute current state commitment from index state
+   */
+  private async computeCurrentStateCommitment(): Promise<string | null> {
+    if (!this.chainContext) {
+      return null;
+    }
+
+    try {
+      const { computeSnapshotStateHash } = await import("./snapshotVerify.js");
+      const snapshot = this.chainContext.indexState.toSnapshot();
+      return await computeSnapshotStateHash(snapshot);
+    } catch (error) {
+      console.error(`[Phase 36] Failed to compute state commitment:`, error);
+      return null;
+    }
   }
 
   /**

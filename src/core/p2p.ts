@@ -506,13 +506,32 @@ export class BrowserP2PNode implements P2PNode {
             (window as any).lastRootTipStateCommitment = message.rootTip.stateCommitment || null;
           }
           
+          // Try to forward to registered handlers first
           const handlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
           if (handlers && handlers.size > 0) {
             for (const handler of handlers) {
               handler({ rootTip: message.rootTip }, "signal-server");
             }
           } else {
-            logger.warn(`[P2P] ⚠️ No handlers registered for ROOT_TIP_UPDATE - bootstrap sync may not work`);
+            // If no handlers registered yet, queue the rootTip for later processing
+            // This can happen if JOIN_ACK arrives before useEffect registers handlers
+            logger.debug(`[P2P] ROOT_TIP_UPDATE handlers not yet registered, will be processed when handlers are available`);
+            // Store rootTip temporarily - handlers will check for pending rootTip when they register
+            if (typeof window !== "undefined") {
+              (window as any).pendingRootTipFromJoinAck = message.rootTip;
+            }
+            // Also try to trigger handler registration check after a short delay
+            setTimeout(() => {
+              const delayedHandlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
+              if (delayedHandlers && delayedHandlers.size > 0 && typeof window !== "undefined" && (window as any).pendingRootTipFromJoinAck) {
+                const pendingRootTip = (window as any).pendingRootTipFromJoinAck;
+                delete (window as any).pendingRootTipFromJoinAck;
+                logger.debug(`[P2P] Processing queued rootTip from JOIN_ACK`);
+                for (const handler of delayedHandlers) {
+                  handler({ rootTip: pendingRootTip }, "signal-server");
+                }
+              }
+            }, 1000);
           }
         }
         break;
@@ -570,7 +589,7 @@ export class BrowserP2PNode implements P2PNode {
         logger.debug(`[P2P] Processing ${peerIds.length} peers, current connections: ${this.peers.size}`);
         
         if (peerIds.length === 0) {
-          logger.warn("[P2P] ⚠️ Received empty peer list - no other nodes online or signal server issue");
+          logger.debug("[P2P] Received empty peer list - no other nodes online (this is normal if you're the first node)");
         }
         
         for (const peerId of peerIds) {

@@ -167,6 +167,7 @@ export class ShadowSession {
   async fetch(request) {
     const upgradeHeader = request.headers.get('Upgrade');
     
+    // Handle WebSocket upgrade requests
     if (upgradeHeader === 'websocket') {
       return this.handleBrowserConnection(request);
     }
@@ -174,25 +175,56 @@ export class ShadowSession {
     // Handle HTTP requests
     const url = new URL(request.url);
     
-    if (url.pathname === '/init' && request.method === 'POST') {
+    // Extract path after /shadow/{sessionId} if present
+    let path = url.pathname;
+    if (path.startsWith('/shadow/')) {
+      const parts = path.split('/');
+      // Remove /shadow/{sessionId} prefix
+      path = '/' + parts.slice(3).join('/') || '/';
+    }
+    
+    if (path === '/init' && request.method === 'POST') {
       return this.handleInit(request);
     }
     
-    if (url.pathname === '/sync' && request.method === 'GET') {
+    if (path === '/sync' && request.method === 'GET') {
       return this.handleSync(request);
     }
     
-    if (url.pathname === '/ping' && request.method === 'POST') {
+    if (path === '/ping' && request.method === 'POST') {
       return new Response(JSON.stringify({ 
         status: 'ok', 
         lastHeartbeat: this.lastHeartbeat,
         cachedState: this.cachedState,
       }), {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
       });
     }
     
-    return new Response('Not Found', { status: 404 });
+    // If path is just /shadow/{sessionId} or /, it's a WebSocket connection attempt
+    if ((path === '/' || path === '') && upgradeHeader !== 'websocket') {
+      return new Response(JSON.stringify({ 
+        service: 'Shadow Session',
+        sessionId: this.sessionId?.substring(0, 16) + '...',
+        status: 'ready',
+        usage: 'Connect via WebSocket or POST /init',
+      }), {
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+    
+    return new Response('Not Found', { 
+      status: 404,
+      headers: { 
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
   }
 
   /**
@@ -204,10 +236,13 @@ export class ShadowSession {
       const { sessionId, nodeId } = data;
       
       if (!sessionId || !nodeId) {
-        return new Response(JSON.stringify({ error: 'Missing sessionId or nodeId' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        });
+      return new Response(JSON.stringify({ error: 'Missing sessionId or nodeId' }), {
+        status: 400,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
       }
       
       this.sessionId = sessionId;
@@ -227,13 +262,19 @@ export class ShadowSession {
         sessionId: this.sessionId,
         cachedState: this.cachedState,
       }), {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
       });
     } catch (error) {
       console.error(`[ShadowSession] Init error:`, error);
       return new Response(JSON.stringify({ error: error.message }), {
         status: 500,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
       });
     }
   }
@@ -248,7 +289,10 @@ export class ShadowSession {
       lastHeartbeat: this.lastHeartbeat,
       isConnected: this.isConnected,
     }), {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
     });
   }
 

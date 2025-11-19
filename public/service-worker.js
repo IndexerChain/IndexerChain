@@ -55,15 +55,17 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        // Cache successful responses (only for http/https requests)
-        // Skip caching for chrome-extension://, data:, blob:, etc.
-        if (response.status === 200 && (url.protocol === 'http:' || url.protocol === 'https:')) {
+        // Cache successful responses (only for GET requests and http/https protocols)
+        // Skip caching for POST, PUT, DELETE, etc. and non-http(s) schemes
+        if (response.status === 200 && 
+            request.method === 'GET' && 
+            (url.protocol === 'http:' || url.protocol === 'https:')) {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             try {
               cache.put(request, responseToCache);
             } catch (error) {
-              // Ignore cache errors (e.g., unsupported scheme)
+              // Ignore cache errors (e.g., unsupported scheme, POST requests)
               console.warn('[Service Worker] Failed to cache request:', error);
             }
           });
@@ -96,12 +98,12 @@ self.addEventListener('periodicsync', (event) => {
 // Keepalive function
 async function performKeepalive() {
   try {
+    // Use GET instead of POST to avoid cache issues
     const response = await fetch(KEEPALIVE_ENDPOINT, {
-      method: 'POST',
+      method: 'GET',
       headers: {
-        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
       },
-      body: JSON.stringify({ timestamp: Date.now() }),
       keepalive: true, // Critical: keeps connection alive
     });
     

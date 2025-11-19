@@ -372,8 +372,23 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // CORS headers for all responses
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: corsHeaders,
+      });
+    }
+
     // Phase 40: Handle Shadow Node routes
-    if (url.pathname.startsWith('/shadow/') || url.pathname === '/shadow') {
+    // Support both /shadow/... and /init?sessionId=... patterns
+    if (url.pathname.startsWith('/shadow/') || url.pathname === '/shadow' || url.pathname === '/init') {
       // Extract sessionId from path or query
       let sessionId = url.searchParams.get('sessionId');
       
@@ -382,21 +397,37 @@ export default {
         sessionId = parts[2];
       }
       
-      if (!sessionId && url.pathname !== '/shadow') {
+      if (!sessionId && url.pathname !== '/shadow' && url.pathname !== '/init') {
         return new Response(JSON.stringify({ error: 'Missing sessionId' }), {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
         });
       }
       
-      // For /shadow without sessionId, return info
-      if (!sessionId) {
+      // For /shadow or /init without sessionId, return info
+      if (!sessionId && (url.pathname === '/shadow' || url.pathname === '/init')) {
         return new Response(JSON.stringify({ 
           service: 'Shadow Node',
           status: 'ready',
-          usage: 'POST /shadow/{sessionId}/init to initialize a session',
+          usage: 'POST /init?sessionId=... or POST /shadow/{sessionId}/init to initialize a session',
         }), {
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
+      }
+      
+      if (!sessionId) {
+        return new Response(JSON.stringify({ error: 'Missing sessionId' }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
         });
       }
       
@@ -405,30 +436,35 @@ export default {
       const session = env.SHADOW_SESSION.get(sessionIdObj);
       
       // Forward request to session
-      return session.fetch(request);
+      const response = await session.fetch(request);
+      
+      // For WebSocket upgrades, return the response as-is (can't modify WebSocket responses)
+      const upgradeHeader = request.headers.get('Upgrade');
+      if (upgradeHeader === 'websocket' || response.status === 101) {
+        return response;
+      }
+      
+      // For HTTP responses, add CORS headers
+      const newHeaders = new Headers(response.headers);
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        newHeaders.set(key, value);
+      });
+      
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders,
+      });
     }
 
     // Handle keepalive endpoint for PWA persistence
-    if (url.pathname === '/keepalive' && request.method === 'POST') {
+    if (url.pathname === '/keepalive' && (request.method === 'POST' || request.method === 'GET')) {
       return new Response('ok', {
         status: 200,
         headers: {
           'Content-Type': 'text/plain',
           'Cache-Control': 'no-cache',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        },
-      });
-    }
-
-    // Handle CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          ...corsHeaders,
         },
       });
     }

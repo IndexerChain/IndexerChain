@@ -2126,6 +2126,15 @@ function App() {
     p2p.onMessage("ROOT_TIP_UPDATE", async (payload: any, _sender: string) => {
       if (!chainContext) return;
       
+      // Check if there's a pending rootTip from JOIN_ACK that we should process first
+      if (typeof window !== "undefined" && (window as any).pendingRootTipFromJoinAck) {
+        const pendingRootTip = (window as any).pendingRootTipFromJoinAck;
+        delete (window as any).pendingRootTipFromJoinAck;
+        logger.debug(`[Phase 32] Processing pending rootTip from JOIN_ACK`);
+        // Process the pending rootTip with the same logic below
+        payload = { rootTip: pendingRootTip };
+      }
+      
       // Handle both old format (payload.latestHeight) and new format (payload.rootTip)
       const rootTip = payload.rootTip || payload;
       const rootHeight = rootTip.latestHeight || payload.latestHeight || 0;
@@ -2506,9 +2515,10 @@ function App() {
 
       // Phase 40: Initialize Shadow Node for mobile persistence
       try {
+        // Shadow Node uses the same worker as signaling server, just different path
         const shadowNodeUrl = isMainnetMode 
-          ? "https://shadow.indexerchain.com" 
-          : urlToUse.replace("ws://", "http://").replace("wss://", "https://").replace("/signal", "/shadow");
+          ? "https://signal.indexerchain.com" 
+          : urlToUse.replace("ws://", "http://").replace("wss://", "https://");
         
         const shadowNode = new ShadowNodeClient({
           shadowNodeUrl: shadowNodeUrl,
