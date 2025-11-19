@@ -2,21 +2,21 @@
 
 ## 部署信息
 
-**部署时间**: 2024-11-19  
+**部署时间**: 2024-12-19  
 **Worker 名称**: `indexerchain-signaling`  
 **自定义域名**: `signal.indexerchain.com`  
-**当前版本 ID**: `8efe8c33-eb3d-421b-a6a1-be0ffae64328`
+**当前版本 ID**: `38bcf192-6e9b-4cc5-b700-b6714e998041`
 
 ## 部署详情
 
 ### Worker 配置
 
 - **入口文件**: `src/index.js`
+- **上传大小**: 33.35 KiB (gzip: 6.00 KiB)
 - **Durable Objects**:
   - `SIGNALING_ROOM` (SignalingRoom) - 信令房间，管理所有 P2P 连接
   - `SHADOW_SESSION` (ShadowSession) - Shadow Node 会话，用于移动端持久连接
 - **路由**: `signal.indexerchain.com/*`
-- **上传大小**: 24.06 KiB (gzip: 4.77 KiB)
 
 ### 功能特性
 
@@ -94,66 +94,59 @@ wrangler tail
 - **Metrics**: 请求数、错误率、响应时间
 - **Logs**: 实时日志
 - **Settings**: Worker 配置
-- **Deployments**: 部署历史
+- **Durable Objects**: 查看持久化状态
 
 ### 常用命令
 
 ```bash
-cd workers
-
 # 查看实时日志
+cd workers
 wrangler tail
-
-# 查看部署历史
-wrangler deployments list
 
 # 重新部署
 wrangler deploy
 
 # 查看 Worker 信息
 wrangler whoami
+
+# 本地开发测试
+wrangler dev
 ```
 
-## 下一步
+## 更新部署
 
-1. ✅ **部署完成** - 信号服务器已成功部署
-2. ✅ **域名配置** - 自定义域名已配置
-3. ✅ **应用配置** - 应用已配置为使用该服务器
-4. 🔄 **测试连接** - 在应用中测试连接
-5. 📊 **监控** - 在 Cloudflare Dashboard 中监控运行状态
+如果需要更新 Worker 代码：
 
-## 故障排查
-
-### 如果连接失败
-
-1. **检查 Worker 状态**
-   ```bash
-   cd workers
-   wrangler tail
-   ```
-
-2. **检查域名 DNS**
-   - 确保 `signal.indexerchain.com` 的 CNAME 记录指向 Worker
-   - 在 Cloudflare Dashboard 中检查 DNS 配置
-
-3. **检查应用配置**
-   - 确认 `DEFAULT_MAINNET_SIGNALING` 使用 `wss://signal.indexerchain.com`
-   - 检查浏览器控制台是否有错误
-
-### 如果看到错误
-
-查看 Cloudflare Dashboard 中的日志，或运行：
 ```bash
-wrangler tail --format pretty
+cd workers
+wrangler deploy
 ```
 
-## 部署成功！🎉
+部署会自动更新，无需停机。
 
-信号服务器现在可以为全球用户提供服务了！
+## 故障排除
 
----
+### WebSocket 连接失败
 
-**部署文档**: `workers/DEPLOY_INSTRUCTIONS.md`  
-**配置文档**: `workers/CONFIGURE_DOMAIN.md`  
-**Worker 代码**: `workers/src/index.js`
+1. 检查 Worker 是否正常运行：访问 Cloudflare Dashboard
+2. 检查 URL 是否正确（使用 `wss://` 而不是 `ws://`）
+3. 查看日志：`wrangler tail`
 
+### 自定义域名不工作
+
+1. 检查 DNS 记录是否正确
+2. 检查 CNAME 是否指向正确的 Worker
+3. 等待 DNS 传播（可能需要几分钟）
+
+## 性能指标
+
+- **免费额度**: 每天 100,000 次请求
+- **并发连接**: 每个 Worker 实例最多约 30,000 个并发 WebSocket 连接
+- **自动扩缩容**: Cloudflare 会根据流量自动创建多个 Worker 实例
+
+## 相关文档
+
+- [Cloudflare Workers 文档](https://developers.cloudflare.com/workers/)
+- [Wrangler CLI 文档](https://developers.cloudflare.com/workers/wrangler/)
+- [WebSocket 支持](https://developers.cloudflare.com/workers/learning/using-websockets/)
+- [Durable Objects](https://developers.cloudflare.com/workers/learning/using-durable-objects/)

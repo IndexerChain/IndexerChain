@@ -49,7 +49,6 @@ export async function handleReceivedBlock(
     const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
     const reputationManager = getGlobalPeerReputationManager(context.params);
     if (reputationManager.isBanned(sender)) {
-      console.log(`[Phase 21] Ignoring block from banned peer: ${sender.substring(0, 16)}...`);
       return { handled: false, error: "Peer is banned" };
     }
   }
@@ -101,9 +100,6 @@ export async function handleReceivedBlock(
     
     // If requested blocks are below our minimum (pruned), we need snapshot
     if (requestedFromHeight < minHeight) {
-      console.log(
-        `[Phase 10] Requested blocks from ${requestedFromHeight} are pruned (min: ${minHeight}), need snapshot`
-      );
       // In light node mode, we can't provide old blocks
       // The peer should use snapshot + recent blocks instead
       // For now, we'll still request, but the peer may not have them
@@ -162,7 +158,6 @@ export async function handleReceivedBlocks(
         if (gap > 1) {
           // If local height is 0 and we receive a block > 1, we need to request from height 1
           if (localHeight === 0 && block.header.height > 1) {
-            console.warn(`[Sync] ⚠️ Local height is 0, but received block ${block.header.height}. Need to request blocks from height 1 first.`);
             // Request missing blocks from height 1
             if (context.p2p) {
               context.p2p.broadcast("REQUEST_BLOCKS", {
@@ -170,13 +165,12 @@ export async function handleReceivedBlocks(
                 toHeight: block.header.height - 1,
               });
             }
-          } else {
-            console.warn(`[Sync] ⚠️ First block ${block.header.height} is too far ahead (local: ${localHeight}, gap: ${gap}). Skipping - need to sync missing blocks first.`);
           }
+          // Skip blocks that are too far ahead - will be requested later
           continue;
         } else if (gap < 1) {
           // This shouldn't happen (already checked above), but handle it
-          console.warn(`[Sync] ⚠️ First block ${block.header.height} is behind local height ${localHeight}. Skipping.`);
+          // Skip old blocks silently
           continue;
         }
       }
@@ -186,9 +180,7 @@ export async function handleReceivedBlocks(
       // We're processing a batch - check if this block continues the sequence
       if (block.header.height !== expectedNextHeight) {
         // Gap in the batch - this means we're missing blocks in the middle
-        // Log but continue to see if we can process later blocks
-        const gap = block.header.height - expectedNextHeight;
-        console.log(`[Sync] ⚠️ Gap in batch: expected ${expectedNextHeight}, got ${block.header.height} (gap: ${gap}). Skipping this block.`);
+        // Skip this block and continue to see if we can process later blocks
         continue;
       }
       // This block continues the sequence - expectedNextHeight will be updated after append
@@ -202,7 +194,6 @@ export async function handleReceivedBlocks(
       const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
       const reputationManager = getGlobalPeerReputationManager(context.params);
       if (reputationManager.isBanned(sender)) {
-        console.log(`[Sync] Skipping block ${block.header.height} from banned peer`);
         continue; // Skip blocks from banned peers
       }
     }
@@ -235,7 +226,6 @@ export async function handleReceivedBlocks(
       
       // Skip if we already have this block (race condition)
       if (block.header.height <= currentHeight) {
-        console.log(`[Sync] Block ${block.header.height} already appended (race condition, current height: ${currentHeight})`);
         continue;
       }
       
@@ -250,9 +240,6 @@ export async function handleReceivedBlocks(
       }
       
       appended++;
-      if (appended === 1 || appended % 10 === 0 || block.header.height % 50 === 0) {
-      console.log(`[Sync] ✅ Appended block ${block.header.height} (total appended: ${appended})`);
-      }
       
       // Update expectedNextHeight after successful append
       // This ensures we continue processing consecutive blocks correctly
@@ -305,7 +292,6 @@ export async function handleReceivedBlockHeader(
     const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
     const reputationManager = getGlobalPeerReputationManager(context.params);
     if (reputationManager.isBanned(sender)) {
-      console.log(`[Phase 21] Ignoring header from banned peer: ${sender.substring(0, 16)}...`);
       return { handled: false, shouldRestartMining: false, error: "Peer is banned" };
     }
   }
@@ -418,7 +404,6 @@ export async function handleReceivedBlockHeader(
         );
       }
     } catch (error) {
-      console.warn("[Phase 22] Failed to trigger finality:", error);
       // Don't fail header processing if finality fails
     }
   }
@@ -461,7 +446,6 @@ export async function handleReceivedBlockBody(
     const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
     const reputationManager = getGlobalPeerReputationManager(context.params);
     if (reputationManager.isBanned(sender)) {
-      console.log(`[Phase 21] Ignoring block body from banned peer: ${sender.substring(0, 16)}...`);
       return { handled: false, error: "Peer is banned" };
     }
   }

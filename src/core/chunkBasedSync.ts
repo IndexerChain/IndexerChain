@@ -193,12 +193,8 @@ export class ChunkBasedSyncManager {
     const missingBlocks = gaps.reduce((sum, gap) => sum + gap.size, 0);
     const skippedBlocks = totalBlocks - missingBlocks;
 
-    logger.info(`[ChunkBasedSync] Detected ${gaps.length} gap(s) in range ${fromHeight}-${toHeight}: ${missingBlocks} missing, ${skippedBlocks} already present`);
-
     // Split gaps into chunks
     const chunks = this.splitGapsIntoChunks(gaps);
-
-    logger.info(`[ChunkBasedSync] Split into ${chunks.length} chunk(s) for efficient syncing`);
 
     // Request chunks
     if (this.config.useParallelSync && chunks.length > 1) {

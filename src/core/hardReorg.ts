@@ -25,18 +25,32 @@ export interface HardReorgResult {
 /**
  * Check if local chain has forked from root tip
  * 
+ * Sync 3.5: Only miners can trigger hard reorg. Non-miners (light nodes) never fork
+ * because their chain is always a subset of the miner's chain.
+ * 
  * @param chainContext Chain context
  * @param rootTipHash Root tip hash from signal server
  * @param recentHeaders Recent headers from root tip (last 500 blocks)
  * @param rootHeight Root tip height
+ * @param isMiner Whether this node is actively mining (leader or cluster mining)
  * @returns Reorg result if fork detected, null otherwise
  */
 export function checkForFork(
   chainContext: ChainContext,
   rootTipHash: string,
   recentHeaders: Array<{ height: number; hash: string }> | undefined,
-  rootHeight: number
+  rootHeight: number,
+  isMiner: boolean = false
 ): HardReorgResult | null {
+  // Sync 3.5: Non-miners never fork - they only sync by appending blocks
+  // Their chain is always a subset of the miner's chain, so no reorg needed
+  // Rule: If B is not mining, B's chain is always a subset of A's chain
+  // Therefore, B never needs to reorg - it only needs to sync missing blocks
+  if (!isMiner) {
+    logger.debug(`[HardReorg] Non-miner node: skipping fork check. Only miners can trigger hard reorg. Non-miners only append blocks.`);
+    return null;
+  }
+  // Only miners can reach here - proceed with fork detection
   const localTip = chainContext.storage.getTip();
   if (!localTip) {
     // No local chain, not a fork

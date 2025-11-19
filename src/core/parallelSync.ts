@@ -114,7 +114,7 @@ export class ParallelSyncManager {
       chunks.push({ fromHeight: h, toHeight: chunkEnd });
     }
 
-    logger.info(`[ParallelSync] Distributing ${chunks.length} chunks across ${availablePeers.length} peer(s) for range ${request.fromHeight}-${request.toHeight}`);
+    logger.debug(`[ParallelSync] Distributing ${chunks.length} chunks across ${availablePeers.length} peer(s) for range ${request.fromHeight}-${request.toHeight}`);
 
     // Assign chunks to peers in round-robin fashion
     let peerIndex = 0;

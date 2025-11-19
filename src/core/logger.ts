@@ -95,30 +95,24 @@ class Logger {
   }
   
   /**
-   * Debug log (development only)
+   * Debug log (disabled - only errors are logged)
    */
-  debug(...args: any[]): void {
-    if (this.shouldLog(LogLevel.DEBUG)) {
-      console.debug("[DEBUG]", ...args);
-    }
+  debug(..._args: any[]): void {
+    // Disabled - only errors are logged
   }
   
   /**
-   * Info log (development only)
+   * Info log (disabled - only errors are logged)
    */
-  info(...args: any[]): void {
-    if (this.shouldLog(LogLevel.INFO)) {
-      console.log("[INFO]", ...args);
-    }
+  info(..._args: any[]): void {
+    // Disabled - only errors are logged
   }
   
   /**
-   * Warning log (development only)
+   * Warning log (disabled - only errors are logged)
    */
-  warn(...args: any[]): void {
-    if (this.shouldLog(LogLevel.WARN)) {
-      console.warn("[WARN]", ...args);
-    }
+  warn(..._args: any[]): void {
+    // Disabled - only errors are logged
   }
   
   /**
@@ -131,12 +125,10 @@ class Logger {
   }
   
   /**
-   * Log with custom prefix (development only)
+   * Log with custom prefix (disabled - only errors are logged)
    */
-  log(prefix: string, ...args: any[]): void {
-    if (this.shouldLog(LogLevel.INFO)) {
-      console.log(`[${prefix}]`, ...args);
-    }
+  log(_prefix: string, ..._args: any[]): void {
+    // Disabled - only errors are logged
   }
   
   /**

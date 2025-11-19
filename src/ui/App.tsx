@@ -111,7 +111,7 @@ function App() {
         return JSON.parse(saved);
       }
     } catch (e) {
-      console.warn("Failed to load persisted state:", e);
+      // Failed to load persisted state - silently ignore
     }
     return {};
   };
@@ -563,7 +563,7 @@ function App() {
         };
         localStorage.setItem("indexerchain_app_state", JSON.stringify(state));
       } catch (e) {
-        console.warn("Failed to save app state:", e);
+        // Failed to save app state - silently ignore
       }
     };
     saveState();
@@ -597,16 +597,11 @@ function App() {
               // Also try direct address format (idc_...)
               // Removed debug log: [App] Found invite address
               setPendingInviteAddress(inviteCode);
-            } else {
-              console.warn("[App] Invalid invite code format:", inviteCode);
             }
           }).catch(() => {
             // If import fails, try direct address format
             if (inviteCode.startsWith("idc_")) {
-              // Removed debug log: [App] Found invite address
               setPendingInviteAddress(inviteCode);
-            } else {
-              console.warn("[App] Invalid invite code format:", inviteCode);
             }
           });
         }
@@ -723,9 +718,8 @@ function App() {
             registration.active.postMessage({ type: 'start-keepalive' });
           }
           
-          // Removed debug log: [PWA] Service Worker ready
         } catch (error) {
-          console.warn('[PWA] Service Worker not available:', error);
+          // Service Worker not available - silently ignore
         }
       }
 
@@ -755,7 +749,7 @@ function App() {
             // The keepalive flag still helps maintain connections
           }
         } catch (error) {
-          console.warn('[PWA] Keepalive ping failed:', error);
+          // Keepalive ping failed - silently ignore
         }
       };
 
@@ -1012,7 +1006,7 @@ function App() {
         const latest = getLatestSnapshotMeta();
         setLatestSnapshot(latest);
       } catch (error) {
-        console.warn("[Phase 13] Background verification error:", error);
+        // Background verification error - silently ignore
       }
     }, intervalMs);
 
@@ -1198,7 +1192,7 @@ function App() {
       // Phase 5: Verify signature before adding
       const isValid = await verifyTxSignature(tx);
       if (!isValid) {
-        console.warn("Received invalid transaction, ignoring:", tx.txId);
+        // Invalid transaction - silently ignore
         return;
       }
       
@@ -1579,7 +1573,7 @@ function App() {
               // Removed debug log: [Auto-Connect] Saved connection state
             }
           } catch (e) {
-            console.warn("Failed to save connection state:", e);
+            // Failed to save connection state - silently ignore
           }
         }
       } else {
@@ -1779,18 +1773,11 @@ function App() {
       
       // Validate data structure
       if (!data || typeof data !== 'object') {
-        console.warn("[StateCommitGossip] Invalid message data:", data);
         return;
       }
       
       // Validate required fields
       if (typeof data.height !== 'number' || !data.stateCommitment || !data.tipHash) {
-        console.warn("[StateCommitGossip] Missing required fields:", { 
-          hasHeight: typeof data.height === 'number',
-          hasStateCommitment: !!data.stateCommitment,
-          hasTipHash: !!data.tipHash,
-          data 
-        });
         return;
       }
       
@@ -1847,7 +1834,6 @@ function App() {
             }
             
             (window as any)[snapshotRequestKey] = now;
-            console.warn(`[Sync] ⚠️ Large gap detected: local height ${localHeight}, peer can only provide from ${payload.availableFromHeight} (gap: ${gap}). Need snapshot sync.`);
             
             // Try to request snapshot from peers via P2P
             if (p2p.sendToPeer && snapshotDownloader) {
@@ -1886,44 +1872,38 @@ function App() {
                       }).catch((error) => {
                         console.error(`[Sync] ❌ Failed to download snapshot:`, error);
                       });
-                    } else {
-                      console.warn(`[Sync] No suitable snapshot found (need <= ${targetHeight}, but available: ${metas.map(m => m.height).join(', ')})`);
                     }
+                  }
+                  
+                  // Phase 38: Check if Worker has snapshot in rootTIP
+                  const workerHasSnapshot = typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta;
+                  const workerHeight = typeof window !== "undefined" ? ((window as any).lastRootTipHeight || 0) : 0;
+                  
+                  if (workerHasSnapshot && workerHeight > localHeight) {
+                    // Worker has snapshot, try to download from Worker
+                    const workerSnapshotMeta = (window as any).lastRootTipSnapshotMeta;
+                    
+                    setTimeout(async () => {
+                      try {
+                        await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
+                          // Snapshot download progress
+                        });
+                        setError(""); // Clear error on success
+                      } catch (error) {
+                        console.error(`[Sync] ❌ Failed to download snapshot from Worker:`, error);
+                        const errorMsg = locale === "zh" 
+                          ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败。\n\n解决方案：\n1. 检查网络连接\n2. 等待有快照的对等节点连接\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
+                          : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed.\n\nSolutions:\n1. Check network connection\n2. Wait for peers with snapshots to connect\n3. Or reset chain data to start fresh (in Advanced tab)`;
+                        setError(errorMsg);
+                      }
+                    }, 500);
                   } else {
-                    console.warn(`[Sync] No snapshot metadata received from peers`);
-                    
-                    // Phase 38: Check if Worker has snapshot in rootTIP
-                    const workerHasSnapshot = typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta;
-                    const workerHeight = typeof window !== "undefined" ? ((window as any).lastRootTipHeight || 0) : 0;
-                    
-                    if (workerHasSnapshot && workerHeight > localHeight) {
-                      // Worker has snapshot, try to download from Worker
-                      const workerSnapshotMeta = (window as any).lastRootTipSnapshotMeta;
-                      // Removed debug log: [Sync] Worker has snapshot
-                      
-                      setTimeout(async () => {
-                        try {
-                          await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (_progress) => {
-                            // Removed debug log: [Sync] Snapshot download from Worker
-                          });
-                          // Removed debug log: [Sync] Snapshot downloaded from Worker
-                          setError(""); // Clear error on success
-                        } catch (error) {
-                          console.error(`[Sync] ❌ Failed to download snapshot from Worker:`, error);
-                          const errorMsg = locale === "zh" 
-                            ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败。\n\n解决方案：\n1. 检查网络连接\n2. 等待有快照的对等节点连接\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
-                            : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed.\n\nSolutions:\n1. Check network connection\n2. Wait for peers with snapshots to connect\n3. Or reset chain data to start fresh (in Advanced tab)`;
-                          setError(errorMsg);
-                        }
-                      }, 500);
-                    } else {
-                      // No snapshot available from Worker or peers
-                      const errorMsg = locale === "zh" 
-                        ? `⚠️ 无法同步：本地高度 ${localHeight}，对等节点只能从高度 ${payload.availableFromHeight} 提供区块（差距 ${gap} 个）。\n\n对等节点没有快照，无法填补缺失的区块。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）\n\n提示：如果 Cloudflare Worker 有快照，系统会自动尝试下载。`
-                        : `⚠️ Cannot sync: Local height ${localHeight}, peer can only provide from height ${payload.availableFromHeight} (gap: ${gap} blocks).\n\nPeer has no snapshots to fill the gap.\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)\n\nNote: If Cloudflare Worker has a snapshot, the system will automatically attempt to download it.`;
-                      console.error(`[Sync] ${errorMsg}`);
-                      setError(errorMsg);
-                    }
+                    // No snapshot available from Worker or peers
+                    const errorMsg = locale === "zh" 
+                      ? `⚠️ 无法同步：本地高度 ${localHeight}，对等节点只能从高度 ${payload.availableFromHeight} 提供区块（差距 ${gap} 个）。\n\n对等节点没有快照，无法填补缺失的区块。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）\n\n提示：如果 Cloudflare Worker 有快照，系统会自动尝试下载。`
+                      : `⚠️ Cannot sync: Local height ${localHeight}, peer can only provide from height ${payload.availableFromHeight} (gap: ${gap} blocks).\n\nPeer has no snapshots to fill the gap.\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)\n\nNote: If Cloudflare Worker has a snapshot, the system will automatically attempt to download it.`;
+                    console.error(`[Sync] ${errorMsg}`);
+                    setError(errorMsg);
                   }
                 } catch (error) {
                   console.error(`[Sync] Error requesting snapshot:`, error);
@@ -2016,13 +1996,11 @@ function App() {
               const coverage = chunkBasedSyncManager.getBlockCoverage(localHeight + 1, targetHeight);
               
               if (coverage.missing > 0) {
-                logger.info(`[Sync] 📊 Block coverage: ${coverage.present}/${coverage.total} present (${coverage.coveragePercent.toFixed(1)}%), ${coverage.missing} missing`);
-                
                 // Use chunk-based sync to only request missing blocks
                 const syncResult = await chunkBasedSyncManager.syncMissingBlocks(localHeight + 1, targetHeight);
                 
                 if (syncResult.success) {
-                  logger.info(`[ChunkBasedSync] ✅ Requested ${syncResult.requestedChunks.length} chunk(s), skipped ${syncResult.skippedBlocks} already-present blocks`);
+                  logger.debug(`[ChunkBasedSync] ✅ Requested ${syncResult.requestedChunks.length} chunk(s), skipped ${syncResult.skippedBlocks} already-present blocks`);
                 } else {
                   // Fallback to normal sync
                   logger.warn(`[ChunkBasedSync] Failed, falling back to normal sync`);
@@ -2072,7 +2050,6 @@ function App() {
       }
       
       if (!chainContext) {
-        console.warn(`[Phase 32] No chainContext available, ignoring BOOTSTRAP_RESPONSE`);
         return;
       }
       
@@ -2081,10 +2058,15 @@ function App() {
       const networkHeight = payload.latestHeight || 0;
       
       // 🔥 Hard Reorg: Check for fork if we have recent headers
-      if (payload.latestHeaderHash && payload.recentHeaders && payload.recentHeaders.length > 0) {
+      // Sync 3.5: Only miners can trigger hard reorg. Non-miners never fork.
+      const isMiner = isMining || clusterMining;
+      if (!isMiner) {
+        logger.debug(`[HardReorg] Non-miner node: skipping fork check. Will only append blocks during sync.`);
+      }
+      if (payload.latestHeaderHash && payload.recentHeaders && payload.recentHeaders.length > 0 && isMiner) {
         try {
           const { checkForFork, performHardReorg } = await import("../core/hardReorg.js");
-          const forkResult = checkForFork(chainContext, payload.latestHeaderHash, payload.recentHeaders, networkHeight);
+          const forkResult = checkForFork(chainContext, payload.latestHeaderHash, payload.recentHeaders, networkHeight, isMiner);
           
           if (forkResult) {
             logger.warn(`[HardReorg] 🚨 Fork detected from BOOTSTRAP_RESPONSE! ${forkResult.reason}`);
@@ -2303,8 +2285,6 @@ function App() {
             });
             
             logger.debug(`[Phase 32] Updated sync status: behindBy=${behindBy}, progress=${Math.round((localHeight / networkHeight) * 100)}%`);
-          } else {
-            console.warn(`[Phase 32] Bootstrap response has invalid network height (${networkHeight}), not updating sync status`);
           }
           
           // Phase 37: If we need to sync, trigger block requests immediately
@@ -2453,10 +2433,15 @@ function App() {
       logger.debug(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
       
       // 🔥 Hard Reorg: Check for fork if we have recent headers
-      if (rootHeaderHash && recentHeaders && recentHeaders.length > 0) {
+      // Sync 3.5: Only miners can trigger hard reorg. Non-miners never fork.
+      const isMiner = isMining || clusterMining;
+      if (!isMiner) {
+        logger.debug(`[HardReorg] Non-miner node: skipping fork check. Will only append blocks during sync.`);
+      }
+      if (rootHeaderHash && recentHeaders && recentHeaders.length > 0 && isMiner) {
         try {
           const { checkForFork, performHardReorg } = await import("../core/hardReorg.js");
-          const forkResult = checkForFork(chainContext, rootHeaderHash, recentHeaders, rootHeight);
+          const forkResult = checkForFork(chainContext, rootHeaderHash, recentHeaders, rootHeight, isMiner);
           
           if (forkResult) {
             logger.warn(`[HardReorg] 🚨 Fork detected! ${forkResult.reason}`);
@@ -2575,8 +2560,6 @@ function App() {
             // Phase 37: Mark bootstrap as complete after successful sync
             setBootstrapComplete(true);
             logger.debug(`[Phase 37] Bootstrap sync from ROOT_TIP_UPDATE successful, marking bootstrapComplete=true`);
-          } else {
-            console.warn(`[Phase 32] Bootstrap sync from ROOT_TIP_UPDATE failed: ${result.error}`);
           }
         } catch (error) {
           console.error(`[Phase 32] Error processing ROOT_TIP_UPDATE:`, error);
@@ -2667,7 +2650,6 @@ function App() {
       
       // Validate peer's network parameters
       if (payload.networkId !== localNetworkInfo.networkId) {
-        console.warn(`[NetworkHandshake] Disconnecting peer ${sender}: networkId mismatch (${payload.networkId} vs ${localNetworkInfo.networkId})`);
         const peer = p2p.peers.get(sender);
         if (peer && peer.connection) {
           peer.connection.close();
@@ -2677,7 +2659,6 @@ function App() {
       }
       
       if (payload.genesisHash !== localNetworkInfo.genesisHash) {
-        console.warn(`[NetworkHandshake] Disconnecting peer ${sender}: genesisHash mismatch`);
         const peer = p2p.peers.get(sender);
         if (peer && peer.connection) {
           peer.connection.close();
@@ -2687,7 +2668,6 @@ function App() {
       }
       
       if (payload.chainParamsHash !== localNetworkInfo.chainParamsHash) {
-        console.warn(`[NetworkHandshake] Disconnecting peer ${sender}: chainParamsHash mismatch`);
         const peer = p2p.peers.get(sender);
         if (peer && peer.connection) {
           peer.connection.close();
@@ -2722,7 +2702,7 @@ function App() {
       if (payload.networkId !== localNetworkInfo.networkId ||
           payload.genesisHash !== localNetworkInfo.genesisHash ||
           payload.chainParamsHash !== localNetworkInfo.chainParamsHash) {
-        console.warn(`[NetworkHandshake] Peer ${sender} network parameters mismatch, disconnecting`);
+        // Network parameters mismatch - disconnect peer
         const peer = p2p.peers.get(sender);
         if (peer && peer.connection) {
           peer.connection.close();
@@ -2802,7 +2782,7 @@ function App() {
         // Only set error if user explicitly tries to mine and guard blocks it
         // The mining guard result is used to disable/enable mining buttons, not to show errors
       } catch (e) {
-        console.warn("[Phase 30] Failed to check mining readiness:", e);
+        // Failed to check mining readiness - silently ignore
       }
     };
 
@@ -3145,7 +3125,6 @@ function App() {
             
             // Auto-stop mining if critical drift detected
             if (assessment.healthLevel === "CRITICAL_DRIFT" && assessment.forkSuspected) {
-              console.warn("[GlobalSentinel] Critical drift with fork detected, stopping mining...");
               if (isMining) {
                 handleStopMining();
               }
@@ -3218,7 +3197,6 @@ function App() {
               }
             }
           } else if (result.action === "STOP_MINING") {
-            console.warn("[Phase 31] Height consensus: stopping mining due to fork");
             if (isMining) handleStopMining();
             if (clusterMining) handleStopClusterMining();
             if (autoMining) setAutoMining(false);
@@ -3312,7 +3290,6 @@ function App() {
             headerCount: 200,
           });
         } else {
-          console.warn(`[Phase 32] sendToSignalServer method not available, trying alternative method`);
           // Fallback: try to send via WebSocket directly
           if ((p2pNode as any).ws && (p2pNode as any).ws.readyState === WebSocket.OPEN) {
             (p2pNode as any).ws.send(JSON.stringify({
@@ -3616,7 +3593,6 @@ function App() {
     
     // Prevent multiple simultaneous starts
     if (isClusterRestartingRef.current && clusterMining) {
-      console.log("[Cluster Mining] Already restarting or mining, skipping duplicate start");
       return;
     }
     
@@ -3668,9 +3644,6 @@ function App() {
               : `✅ Referral address bound: ${pendingInviteAddress.substring(0, 16)}...`
           );
           setTimeout(() => setSuccessMessage(""), 5000);
-        } else {
-          console.warn(`[App] ⚠️ Failed to register referral (may already have referrer or same IP/device)`);
-          // Don't show error - this is normal if user already has a referrer
         }
       } catch (error) {
         console.error("[App] Failed to register referral:", error);
@@ -3698,7 +3671,6 @@ function App() {
       // These are normal states during initial sync, not errors
       const localTip = chainContext.storage.getTip();
       if (guardResult.code === "NOT_SYNCED" && (localTip?.header.height === 0 || !bootstrapComplete)) {
-        console.log(`[Mining] Not ready to mine yet: ${message} (this is normal during initial sync)`);
         // Don't set error - this is informational, not an error
         // The mining button will be disabled based on miningGuardResult
         return;
@@ -3766,7 +3738,6 @@ function App() {
         
         // Check if block is still valid (tip may have advanced)
         if (currentTip && currentTip.header.height >= block.header.height) {
-          console.log(`[Cluster Mining] Block ${block.header.height} found but tip is now at ${currentTip.header.height}, block is stale`);
           // Block is stale - don't restart immediately, let tip change detection handle it
           // This prevents infinite restart loops when multiple workers find stale blocks
         } else {
@@ -3877,8 +3848,7 @@ function App() {
       // Phase 37-B: Setup global pool integration
       if (globalPoolEnabled && isP2PConnected) {
         // Setup range received handler - restart mining with new range
-        workerNodeManager.onRangeReceived((range) => {
-          console.log(`[Cluster Mining] Received new global nonce range: ${range.start}..${range.end}`);
+        workerNodeManager.onRangeReceived((_range) => {
           // If currently mining, restart with new range
           if (clusterMining) {
             // Stop current mining and restart with new range
@@ -3895,7 +3865,6 @@ function App() {
         
         // Phase 37-B: Setup global range exhausted handler
         minerCluster.onExhaustedGlobalRange(() => {
-          console.log(`[Cluster Mining] Global nonce range exhausted, requesting new range...`);
           // Request new range from delegator
           const nodeId = getOrCreateBrowserNodeId();
           const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
@@ -3923,10 +3892,10 @@ function App() {
         const currentRange = workerNodeManager.getCurrentRange?.();
         if (currentRange) {
           globalNonceRange = currentRange;
-          console.log(`[Cluster Mining] Using global nonce range: ${currentRange.start}..${currentRange.end}`);
+          // Using global nonce range
         } else {
           // No range yet, request one
-          console.log(`[Cluster Mining] No global range available, requesting...`);
+          // No global range available, requesting
           const nodeId = getOrCreateBrowserNodeId();
           const cores = typeof navigator !== "undefined" && "hardwareConcurrency" in navigator
             ? navigator.hardwareConcurrency || 4
@@ -3956,9 +3925,6 @@ function App() {
         const recommendedWorkerCount = Math.min(clusterWorkerCount, profile.workerCount);
         const recommendedDutyCycle = profile.dutyCycle;
         
-        console.log(`[Cluster Mining] RuntimeManager profile: mode=${profile.mode}, workers=${profile.workerCount}, dutyCycle=${profile.dutyCycle.toFixed(2)}`);
-        console.log(`[Cluster Mining] Using: workers=${recommendedWorkerCount}, dutyCycle=${recommendedDutyCycle.toFixed(2)}`);
-        
         // Update state to match recommended values
         if (recommendedWorkerCount !== clusterWorkerCount) {
           setClusterWorkerCount(recommendedWorkerCount);
@@ -3987,7 +3953,6 @@ function App() {
       // Ensure worker count is at least 1
       const actualWorkerCount = Math.max(1, clusterWorkerCount);
       if (actualWorkerCount !== clusterWorkerCount) {
-        console.warn(`[Cluster Mining] Worker count was ${clusterWorkerCount}, using ${actualWorkerCount} instead`);
         setClusterWorkerCount(actualWorkerCount);
       }
       
