@@ -23,6 +23,10 @@ export interface Translations {
     size: string;
     created: string;
     none: string;
+    appTitle: string;
+    appSubtitle: string;
+    chinese: string;
+    english: string;
   };
 
   // Status
@@ -113,6 +117,35 @@ export interface Translations {
     exhausted: string;
     nonceRange: string;
     calculating: string;
+    performancePresets: string;
+    powerSave: string;
+    powerSaveDesc: string;
+    balanced: string;
+    balancedDesc: string;
+    performance: string;
+    performanceDesc: string;
+    extreme: string;
+    extremeDesc: string;
+    extremeWarning: string;
+    detectedDevice: string;
+    cpuCores: string;
+    recommendedWorkers: string;
+    workers: string;
+    dutyCycle: string;
+    hideCustomSettings: string;
+    customSettings: string;
+    workerCountLabel: string;
+    estimatedCpuUsage: string;
+    applyCustomSettings: string;
+    miningMode: string;
+    solo: string;
+    soloDesc: string;
+    localCluster: string;
+    localClusterDesc: string;
+    globalPool: string;
+    globalPoolDesc: string;
+    requiresHigherQuorum: string;
+    followerMiningDisabled: string;
   };
 
   // Network (expanded)
@@ -177,6 +210,11 @@ export interface Translations {
     noCommittee: string;
     notInitialized: string;
     notInitializedDesc: string;
+    waitingForCommittee: string;
+    finalityInitializationMode: string;
+    votes: string;
+    member: string;
+    issuedRatio: string;
   };
 
   // Wallet
@@ -288,6 +326,25 @@ export interface Translations {
     used: string;
     notUsed: string;
     disabled: string;
+    stateCommitment: string;
+    source: string;
+    remoteHeight: string;
+    remoteStateHash: string;
+    needAtLeastOneBlock: string;
+    forceSnapshot: string;
+    clearAllSnapshotsConfirm: string;
+    clearSnapshots: string;
+    allSnapshotsCleared: string;
+    recompressedSnapshots: string;
+    allSnapshotsCompressed: string;
+    recompressing: string;
+    recompressAll: string;
+    failedToCreateSnapshot: string;
+    failedToRecompressSnapshots: string;
+    snapshotNotFound: string;
+    snapshotVerifiedSuccess: string;
+    snapshotCorruptedDeleted: string;
+    failedToVerifySnapshot: string;
   };
 
   // Advanced (expanded)
@@ -296,6 +353,67 @@ export interface Translations {
     configChecker: string;
     resetChain: string;
     resetChainDesc: string;
+    showAdvancedTabs: string;
+    hideAdvancedTabs: string;
+    idcEmission: string;
+    totalMinted: string;
+    mintingProgress: string;
+    currentEra: string;
+    blockRewardNext: string;
+    blocksInEra: string;
+    remaining: string;
+    lastBlocks: string;
+    totalPeersTracked: string;
+    trusted: string;
+    normal: string;
+    lowTrust: string;
+    banned: string;
+    peerDetails: string;
+    runtimeHelp: string;
+    initializing: string;
+    safetyIssuesDetected: string;
+    eventLoopLag: string;
+    lowFps: string;
+    highCrashRate: string;
+    multiTabConflict: string;
+    anotherTabMining: string;
+    considerStopping: string;
+    backgroundMode: string;
+    tabInBackground: string;
+    deviceCapability: string;
+    type: string;
+    cpuCores: string;
+    recommendedWorkers: string;
+    maxWorkers: string;
+    cpuUsageControl: string;
+    dutyCycle: string;
+    powerSave: string;
+    balanced: string;
+    performance: string;
+    extreme: string;
+    workerCount: string;
+    workers: string;
+    workerCountExceeds: string;
+    mayCausePerformanceIssues: string;
+    performanceMetrics: string;
+    workerCrashes: string;
+    lastCrash: string;
+    never: string;
+    autoThrottleWhenBackground: string;
+    manualNoAutoThrottle: string;
+    persistentBackgroundMining: string;
+    releaseWakeLock: string;
+    requestWakeLock: string;
+    preventsBrowserPausing: string;
+    warning: string;
+    highBatteryConsumption: string;
+    helpTips: string;
+    dutyCycleDesc: string;
+    workerCountDesc: string;
+    eventLoopLagDesc: string;
+    fpsDesc: string;
+    multiTabConflictDesc: string;
+    wakeLockNotSupported: string;
   };
 
   // Tabs
@@ -538,6 +656,10 @@ export const translations: Record<Locale, Translations> = {
       size: "大小",
       created: "创建时间",
       none: "无",
+      appTitle: "IndexerChain",
+      appSubtitle: "Browser-Native Blockchain",
+      chinese: "中文",
+      english: "English",
     },
     status: {
       status: "状态",
@@ -622,6 +744,35 @@ export const translations: Record<Locale, Translations> = {
       exhausted: "已耗尽",
       nonceRange: "Nonce 范围:",
       calculating: "计算中...",
+      performancePresets: "性能预设",
+      powerSave: "省电模式",
+      powerSaveDesc: "低 CPU 占用，适合笔记本电脑或长时间运行",
+      balanced: "平衡模式",
+      balancedDesc: "平衡性能和功耗，推荐日常使用",
+      performance: "性能模式",
+      performanceDesc: "较高 CPU 占用，提升挖矿速度",
+      extreme: "极限模式",
+      extremeDesc: "最高性能，可能导致设备发热和风扇噪音",
+      extremeWarning: "⚠️ 可能导致设备过热，请确保良好散热",
+      detectedDevice: "检测到设备",
+      cpuCores: "CPU 核心数",
+      recommendedWorkers: "推荐 Worker 数",
+      workers: "Worker 数",
+      dutyCycle: "Duty Cycle",
+      hideCustomSettings: "隐藏自定义设置",
+      customSettings: "自定义设置",
+      workerCountLabel: "Worker 数量",
+      estimatedCpuUsage: "估算 CPU 占用",
+      applyCustomSettings: "应用自定义设置",
+      miningMode: "挖矿模式",
+      solo: "单机挖矿",
+      soloDesc: "使用单个 Worker 进行挖矿，适合低功耗设备",
+      localCluster: "本地集群",
+      localClusterDesc: "使用多个 Worker 并行挖矿，提高算力",
+      globalPool: "全局矿池",
+      globalPoolDesc: "加入全局矿池，与其他节点协作挖矿",
+      requiresHigherQuorum: "需要更高的 Quorum 分数",
+      followerMiningDisabled: "⚠️ 此实例为 FOLLOWER（只读模式），所有挖矿模式已禁用",
     },
     network: {
       title: "🌐 网络",
@@ -684,6 +835,11 @@ export const translations: Record<Locale, Translations> = {
       noCommittee: "尚未选举委员会",
       notInitialized: "最终性管理器未初始化",
       notInitializedDesc: "连接到 P2P 网络以启用最终性。",
+      waitingForCommittee: "等待委员会",
+      finalityInitializationMode: "Phase 39: Finality 初始化模式 - 挖矿已允许",
+      votes: "票",
+      member: "成员",
+      issuedRatio: "已发行比例",
     },
     wallet: {
       title: "💼 钱包",
@@ -789,12 +945,92 @@ export const translations: Record<Locale, Translations> = {
       used: "已使用",
       notUsed: "未使用",
       disabled: "已禁用",
+      stateCommitment: "State Commitment",
+      source: "来源",
+      remoteHeight: "远程高度",
+      remoteStateHash: "远程状态哈希",
+      needAtLeastOneBlock: "需要至少一个区块（创世区块之后）才能创建快照",
+      forceSnapshot: "强制创建快照",
+      clearAllSnapshotsConfirm: "清除所有快照？下次启动时会从创世区块重建状态。",
+      clearSnapshots: "清除快照",
+      allSnapshotsCleared: "所有快照已清除。下次启动时会从创世区块重建状态。",
+      recompressedSnapshots: "已重新压缩 {count} 个快照",
+      allSnapshotsCompressed: "所有快照已压缩",
+      recompressing: "重新压缩中...",
+      recompressAll: "重新压缩全部",
+      failedToCreateSnapshot: "创建快照失败",
+      failedToRecompressSnapshots: "重新压缩快照失败",
+      snapshotNotFound: "快照未找到或已删除",
+      snapshotVerifiedSuccess: "✅ 快照验证成功！",
+      snapshotCorruptedDeleted: "❌ 快照已损坏并已删除。下次启动将使用高度 {fallbackHeight} 的快照或从创世区块重放。",
+      failedToVerifySnapshot: "验证快照失败",
     },
     advanced: {
       title: "⚙️ 高级",
       configChecker: "配置检查器",
       resetChain: "重置链",
       resetChainDesc: "这将清除所有区块和状态，重新开始。此操作不可逆！",
+      showAdvancedTabs: "显示高级标签",
+      hideAdvancedTabs: "隐藏高级标签",
+      idcEmission: "💰 IDC 发行",
+      totalMinted: "总发行量",
+      mintingProgress: "挖矿进度",
+      currentEra: "当前时代",
+      blockRewardNext: "区块奖励（下一个）",
+      blocksInEra: "时代中的区块数",
+      remaining: "剩余",
+      lastBlocks: "最后 {count} 个",
+      totalPeersTracked: "跟踪的节点总数",
+      trusted: "信任",
+      normal: "正常",
+      lowTrust: "低信任",
+      banned: "已禁止",
+      peerDetails: "节点详情",
+      runtimeHelp: "🔧 运行时与帮助",
+      initializing: "初始化中...",
+      safetyIssuesDetected: "⚠️ 检测到安全问题",
+      eventLoopLag: "事件循环延迟",
+      lowFps: "低 FPS",
+      highCrashRate: "崩溃频率高",
+      multiTabConflict: "⚠️ 多标签页冲突",
+      anotherTabMining: "另一个标签页正在挖矿 ({count} 个标签页)",
+      considerStopping: "建议停止其他标签页的挖矿以避免资源冲突。",
+      backgroundMode: "📱 后台模式",
+      tabInBackground: "标签页在后台。挖矿已自动节流。",
+      deviceCapability: "设备能力",
+      type: "类型",
+      cpuCores: "CPU 核心数",
+      recommendedWorkers: "推荐 Worker 数",
+      maxWorkers: "最大 Worker 数",
+      cpuUsageControl: "CPU 使用控制",
+      dutyCycle: "Duty Cycle",
+      powerSave: "💾 省电模式",
+      balanced: "⚖️ 平衡模式",
+      performance: "⚡ 性能模式",
+      extreme: "🔥 极限模式",
+      workerCount: "Worker 数量",
+      workers: "Workers",
+      workerCountExceeds: "⚠️ Worker 数量超过推荐值 ({recommended})",
+      mayCausePerformanceIssues: "这可能导致性能问题。",
+      performanceMetrics: "性能指标",
+      workerCrashes: "Worker 崩溃",
+      lastCrash: "最后崩溃",
+      never: "从未",
+      autoThrottleWhenBackground: "自动（后台时节流）",
+      manualNoAutoThrottle: "手动（无自动节流）",
+      persistentBackgroundMining: "持久后台挖矿",
+      releaseWakeLock: "🔒 释放唤醒锁",
+      requestWakeLock: "🔓 请求唤醒锁",
+      preventsBrowserPausing: "防止浏览器在标签页处于后台时暂停挖矿。",
+      warning: "警告",
+      highBatteryConsumption: "高电池消耗！",
+      helpTips: "💡 帮助与提示",
+      dutyCycleDesc: "Duty Cycle：控制 CPU 使用率。较低的值会降低 CPU 使用率，但也会降低挖矿速度。",
+      workerCountDesc: "Worker 数量：更多 Worker = 更多并行挖矿，但 CPU 使用率更高。",
+      eventLoopLagDesc: "事件循环延迟：应 < 200ms。较高的值表示 UI 延迟。",
+      fpsDesc: "FPS：应 > 20。较低的值表示 UI 卡顿。",
+      multiTabConflictDesc: "多标签页冲突：一次只应有一个标签页挖矿，以避免资源冲突。",
+      wakeLockNotSupported: "唤醒锁 API 不支持或权限被拒绝",
     },
     tabs: {
       overview: "📊 概览",
@@ -1009,6 +1245,10 @@ export const translations: Record<Locale, Translations> = {
       size: "Size",
       created: "Created",
       none: "None",
+      appTitle: "IndexerChain",
+      appSubtitle: "Browser-Native Blockchain",
+      chinese: "中文",
+      english: "English",
     },
     status: {
       status: "Status",
@@ -1093,6 +1333,35 @@ export const translations: Record<Locale, Translations> = {
       exhausted: "exhausted",
       nonceRange: "Nonce Range:",
       calculating: "Calculating...",
+      performancePresets: "Performance Presets",
+      powerSave: "Power Save",
+      powerSaveDesc: "Low CPU usage, suitable for laptops or long-running",
+      balanced: "Balanced",
+      balancedDesc: "Balance performance and power, recommended for daily use",
+      performance: "Performance",
+      performanceDesc: "Higher CPU usage, faster mining",
+      extreme: "Extreme",
+      extremeDesc: "Maximum performance, may cause device heating and fan noise",
+      extremeWarning: "⚠️ May cause device overheating, ensure proper cooling",
+      detectedDevice: "Detected device",
+      cpuCores: "CPU cores",
+      recommendedWorkers: "Recommended workers",
+      workers: "Workers",
+      dutyCycle: "Duty Cycle",
+      hideCustomSettings: "Hide Custom Settings",
+      customSettings: "Custom Settings",
+      workerCountLabel: "Worker Count",
+      estimatedCpuUsage: "Estimated CPU Usage",
+      applyCustomSettings: "Apply Custom Settings",
+      miningMode: "Mining Mode",
+      solo: "Solo",
+      soloDesc: "Mine with a single worker, suitable for low-power devices",
+      localCluster: "Local Cluster",
+      localClusterDesc: "Use multiple workers for parallel mining, higher hash rate",
+      globalPool: "Global Pool",
+      globalPoolDesc: "Join global pool, collaborate with other nodes",
+      requiresHigherQuorum: "Requires higher Quorum score",
+      followerMiningDisabled: "⚠️ This instance is FOLLOWER (read-only), all mining modes are disabled",
     },
     network: {
       title: "🌐 Network",
@@ -1260,12 +1529,92 @@ export const translations: Record<Locale, Translations> = {
       used: "Used",
       notUsed: "Not Used",
       disabled: "Disabled",
+      stateCommitment: "State Commitment",
+      source: "Source",
+      remoteHeight: "Remote Height",
+      remoteStateHash: "Remote StateHash",
+      needAtLeastOneBlock: "Need at least one block (after genesis) to create snapshot",
+      forceSnapshot: "Force Snapshot",
+      clearAllSnapshotsConfirm: "Clear all snapshots? Next startup will rebuild from genesis.",
+      clearSnapshots: "Clear Snapshots",
+      allSnapshotsCleared: "All snapshots cleared. Next startup will rebuild from genesis.",
+      recompressedSnapshots: "Recompressed {count} snapshot(s)",
+      allSnapshotsCompressed: "All snapshots are already compressed",
+      recompressing: "Recompressing...",
+      recompressAll: "Recompress All",
+      failedToCreateSnapshot: "Failed to create snapshot",
+      failedToRecompressSnapshots: "Failed to recompress snapshots",
+      snapshotNotFound: "Snapshot not found or already deleted",
+      snapshotVerifiedSuccess: "✅ Snapshot verified successfully!",
+      snapshotCorruptedDeleted: "❌ Snapshot corrupted and deleted. Next startup will use snapshot at height {fallbackHeight} or replay from genesis.",
+      failedToVerifySnapshot: "Failed to verify snapshot",
     },
     advanced: {
       title: "⚙️ Advanced",
       configChecker: "Config Checker",
       resetChain: "Reset Chain",
       resetChainDesc: "This will clear all blocks and state, starting fresh. This action is irreversible!",
+      showAdvancedTabs: "Show Advanced Tabs",
+      hideAdvancedTabs: "Hide Advanced Tabs",
+      idcEmission: "💰 IDC Emission",
+      totalMinted: "Total Minted",
+      mintingProgress: "Minting Progress",
+      currentEra: "Current Era",
+      blockRewardNext: "Block Reward (next)",
+      blocksInEra: "Blocks in Era",
+      remaining: "remaining",
+      lastBlocks: "last {count}",
+      totalPeersTracked: "Total Peers Tracked",
+      trusted: "Trusted",
+      normal: "Normal",
+      lowTrust: "Low Trust",
+      banned: "Banned",
+      peerDetails: "Peer Details",
+      runtimeHelp: "🔧 Runtime & Help",
+      initializing: "Initializing...",
+      safetyIssuesDetected: "⚠️ Safety Issues Detected",
+      eventLoopLag: "Event loop lag",
+      lowFps: "Low FPS",
+      highCrashRate: "High crash rate",
+      multiTabConflict: "⚠️ Multi-tab Conflict",
+      anotherTabMining: "Another tab is mining ({count} tab{plural})",
+      considerStopping: "Consider stopping mining in other tabs to avoid resource conflicts.",
+      backgroundMode: "📱 Background Mode",
+      tabInBackground: "Tab is in background. Mining is automatically throttled.",
+      deviceCapability: "Device Capability",
+      type: "Type",
+      cpuCores: "CPU Cores",
+      recommendedWorkers: "Recommended Workers",
+      maxWorkers: "Max Workers",
+      cpuUsageControl: "CPU Usage Control",
+      dutyCycle: "Duty Cycle",
+      powerSave: "💾 Power Save",
+      balanced: "⚖️ Balanced",
+      performance: "⚡ Performance",
+      extreme: "🔥 Extreme",
+      workerCount: "Worker Count",
+      workers: "Workers",
+      workerCountExceeds: "⚠️ Worker count exceeds recommended ({recommended})",
+      mayCausePerformanceIssues: "This may cause performance issues.",
+      performanceMetrics: "Performance Metrics",
+      workerCrashes: "Worker Crashes",
+      lastCrash: "Last Crash",
+      never: "Never",
+      autoThrottleWhenBackground: "Auto (throttle when background)",
+      manualNoAutoThrottle: "Manual (no auto-throttle)",
+      persistentBackgroundMining: "Persistent Background Mining",
+      releaseWakeLock: "🔒 Release Wake Lock",
+      requestWakeLock: "🔓 Request Wake Lock",
+      preventsBrowserPausing: "Prevents browser from pausing mining when tab is in background.",
+      warning: "Warning",
+      highBatteryConsumption: "High battery consumption!",
+      helpTips: "💡 Help & Tips",
+      dutyCycleDesc: "Duty Cycle: Controls CPU usage. Lower values reduce CPU usage but also reduce mining speed.",
+      workerCountDesc: "Worker Count: More workers = more parallel mining, but higher CPU usage.",
+      eventLoopLagDesc: "Event Loop Lag: Should be < 200ms. Higher values indicate UI lag.",
+      fpsDesc: "FPS: Should be > 20. Lower values indicate UI stuttering.",
+      multiTabConflictDesc: "Multi-tab Conflict: Only one tab should mine at a time to avoid resource conflicts.",
+      wakeLockNotSupported: "Wake Lock API not supported or permission denied",
     },
     tabs: {
       overview: "📊 Overview",

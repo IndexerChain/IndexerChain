@@ -3547,9 +3547,9 @@ function App() {
             />
             <div>
               <h1 style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                IndexerChain
+                {t("common.appTitle")}
               </h1>
-              <p className="subtitle" style={{ margin: 0 }}>Browser-Native Blockchain • Phase 24 Complete</p>
+              <p className="subtitle" style={{ margin: 0 }}>{t("common.appSubtitle")}</p>
             </div>
           </div>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -3565,7 +3565,7 @@ function App() {
                 fontWeight: locale === "zh" ? "bold" : "normal",
               }}
             >
-              中文
+              {t("common.chinese")}
             </button>
             <button
               onClick={() => setLocale("en")}
@@ -3579,7 +3579,7 @@ function App() {
                 fontWeight: locale === "en" ? "bold" : "normal",
               }}
             >
-              English
+              {t("common.english")}
             </button>
           </div>
         </div>
@@ -3645,17 +3645,6 @@ function App() {
           />
         )}
 
-        {/* Always show debug info at top */}
-        <div style={{ 
-          padding: "0.75rem", 
-          background: "#e9ecef", 
-          fontSize: "0.85rem", 
-          marginBottom: "1rem",
-          borderRadius: "4px",
-          border: "1px solid #dee2e6"
-        }}>
-          <strong>Debug Info:</strong> error={error ? `"${error.substring(0, 80)}..."` : "empty"} (length: {error.length}), needsReset={needsReset ? "true" : "false"}, loading={loading ? "true" : "false"}
-        </div>
 
         {error && (
           <div 
@@ -3776,11 +3765,7 @@ function App() {
                   💡 <strong>说明：</strong>如果其他标签页/窗口已经关闭，点击此按钮可以清理旧的 LEADER 信息，让当前实例成为 LEADER。
                 </p>
               </div>
-            ) : (
-              <div style={{ marginTop: "1rem", padding: "0.75rem", background: "rgba(255,255,255,0.2)", borderRadius: "4px" }}>
-                Debug: needsReset is false (button should not show)
-              </div>
-            )}
+            ) : null}
           </div>
         )}
 
@@ -3891,10 +3876,10 @@ function App() {
                     e.currentTarget.style.color = "#999";
                   }
                 }}
-                title={showAdvancedTabs ? (locale === "zh" ? "隐藏高级标签" : "Hide Advanced Tabs") : (locale === "zh" ? "显示高级标签" : "Show Advanced Tabs")}
+                title={showAdvancedTabs ? t("advanced.hideAdvancedTabs") : t("advanced.showAdvancedTabs")}
               >
                 <span style={{ marginRight: "0.3rem" }}>{showAdvancedTabs ? "▼" : "▶"}</span>
-                {locale === "zh" ? "高级" : "Advanced"}
+                {t("tabs.advanced")}
               </button>
             </div>
             {showAdvancedTabs && (
@@ -5887,7 +5872,7 @@ function App() {
                     <div className="status-item">
                       <span className="label">{t("storage.lastSnapshotHeight")}:</span>
                       <span className="value">
-                        {latestSnapshot ? latestSnapshot.height : (locale === "zh" ? "无" : "None")}
+                        {latestSnapshot ? latestSnapshot.height : t("common.none")}
                       </span>
                     </div>
                     {latestSnapshot && (
@@ -5993,7 +5978,7 @@ function App() {
                     {/* Phase 15: State Commitment info */}
                     {tip && tip.header.stateCommitment && (
                       <div className="status-item" style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #ddd" }}>
-                        <span className="label">State Commitment:</span>
+                        <span className="label">{t("storage.stateCommitment")}:</span>
                         <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all", fontFamily: "monospace" }}>
                           {tip.header.stateCommitment.substring(0, 16)}...
                         </span>
@@ -6034,19 +6019,19 @@ function App() {
                           <>
                             {chainContext.params.remoteSnapshotEndpoints && chainContext.params.remoteSnapshotEndpoints.length > 0 && (
                               <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                                <span className="label">Source:</span>
+                                <span className="label">{t("storage.source")}:</span>
                                 <span className="value" style={{ fontSize: "0.85rem", wordBreak: "break-all" }}>
                                   {chainContext.params.remoteSnapshotEndpoints[0]}
                                 </span>
                               </div>
                             )}
                             <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                              <span className="label">Remote Height:</span>
+                              <span className="label">{t("storage.remoteHeight")}:</span>
                               <span className="value">{chainContext.remoteSnapshotUsed.height}</span>
                             </div>
                             {chainContext.remoteSnapshotUsed.stateHash && (
                               <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                                <span className="label">Remote StateHash:</span>
+                                <span className="label">{t("storage.remoteStateHash")}:</span>
                                 <span className="value" style={{ fontSize: "0.8rem", fontFamily: "monospace" }}>
                                   {chainContext.remoteSnapshotUsed.stateHash.substring(0, 16)}...
                                 </span>
@@ -6063,7 +6048,7 @@ function App() {
                   if (!chainContext) return;
                   const tip = chainContext.storage.getTip();
                   if (!tip || tip.header.height === 0) {
-                    setError("Need at least one block (after genesis) to create snapshot");
+                    setError(t("storage.needAtLeastOneBlock"));
                     return;
                   }
                   try {
@@ -6089,28 +6074,28 @@ function App() {
                     
                     setError("");
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to create snapshot");
+                    setError(err instanceof Error ? err.message : t("storage.failedToCreateSnapshot"));
                   }
                 }}
                 disabled={!chainContext || height === 0}
               >
-                Force Snapshot
+                {t("storage.forceSnapshot")}
               </button>
               <button
                 className="btn btn-secondary"
                 onClick={async () => {
-                  if (window.confirm("Clear all snapshots? Next startup will rebuild from genesis.")) {
+                  if (window.confirm(t("storage.clearAllSnapshotsConfirm"))) {
                     clearAllSnapshots();
                     setSnapshotMetas([]);
                     setLatestSnapshot(null);
                     setSnapshotSizeInfo(null);
-                    setError("All snapshots cleared. Next startup will rebuild from genesis.");
+                    setError(t("storage.allSnapshotsCleared"));
                     setTimeout(() => setError(""), 3000);
                   }
                 }}
                 style={{ background: "#dc3545", color: "white" }}
               >
-                Clear Snapshots
+                {t("storage.clearSnapshots")}
               </button>
               {/* Phase 11: Recompress all snapshots */}
               <button
@@ -6135,14 +6120,14 @@ function App() {
                         setSnapshotSizeInfo(info);
                       }
                       
-                      setError(`Recompressed ${count} snapshot(s)`);
+                      setError(t("storage.recompressedSnapshots", { count }));
                       setTimeout(() => setError(""), 3000);
                     } else {
-                      setError("All snapshots are already compressed");
+                      setError(t("storage.allSnapshotsCompressed"));
                       setTimeout(() => setError(""), 2000);
                     }
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to recompress snapshots");
+                    setError(err instanceof Error ? err.message : t("storage.failedToRecompressSnapshots"));
                   } finally {
                     setIsRecompressing(false);
                   }
@@ -6150,7 +6135,7 @@ function App() {
                 disabled={!chainContext || isRecompressing || snapshotMetas.length === 0}
                 style={{ background: "#17a2b8", color: "white" }}
               >
-                {isRecompressing ? "Recompressing..." : "Recompress All"}
+                {isRecompressing ? t("storage.recompressing") : t("storage.recompressAll")}
               </button>
               {/* Phase 13: Verify latest snapshot */}
               <button
@@ -6164,7 +6149,7 @@ function App() {
                     const snapshot = await loadSnapshotByHeight(latestSnapshot.height);
                     
                     if (!snapshot) {
-                      setError("Snapshot not found or already deleted");
+                      setError(t("storage.snapshotNotFound"));
                       return;
                     }
                     
@@ -6177,7 +6162,7 @@ function App() {
                       const latest = getLatestSnapshotMeta();
                       setLatestSnapshot(latest);
                       
-                      setError("✅ Snapshot verified successfully!");
+                      setError(t("storage.snapshotVerifiedSuccess"));
                       setTimeout(() => setError(""), 3000);
                     } else {
                       const fallbackHeight = await handleCorruptedSnapshot(latestSnapshot.height);
@@ -6186,11 +6171,11 @@ function App() {
                       const latest = getLatestSnapshotMeta();
                       setLatestSnapshot(latest);
                       
-                      setError(`❌ Snapshot corrupted and deleted. Next startup will use snapshot at height ${fallbackHeight} or replay from genesis.`);
+                      setError(t("storage.snapshotCorruptedDeleted", { fallbackHeight }));
                       setTimeout(() => setError(""), 5000);
                     }
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to verify snapshot");
+                    setError(err instanceof Error ? err.message : t("storage.failedToVerifySnapshot"));
                   }
                 }}
                 disabled={!chainContext || !latestSnapshot}
@@ -6385,7 +6370,7 @@ function App() {
                     if (avgTime !== null) {
                       return (
                         <div className="status-item">
-                          <span className="label">{t("advancedExpanded.averageBlockTime")} (last {recentBlocks.length}):</span>
+                          <span className="label">{t("advancedExpanded.averageBlockTime")} ({t("advanced.lastBlocks", { count: recentBlocks.length })}):</span>
                           <span className="value">{avgTime.toFixed(2)}{t("commonExpanded.seconds")}</span>
                         </div>
                       );
@@ -6417,35 +6402,35 @@ function App() {
                 
                 return (
                   <div className="status-card">
-                    <h2>💰 IDC Emission</h2>
+                    <h2>{t("advanced.idcEmission")}</h2>
                     <div className="status-item">
-                      <span className="label">Total Minted:</span>
+                      <span className="label">{t("advanced.totalMinted")}:</span>
                       <span className="value" style={{ fontWeight: "bold", color: "#667eea" }}>
                         {totalMintedIDC.toFixed(6)} / {maxSupplyIDC.toFixed(6)} IDC
                       </span>
                     </div>
                     <div className="status-item">
-                      <span className="label">Minting Progress:</span>
+                      <span className="label">{t("advanced.mintingProgress")}:</span>
                       <span className="value">
                         {((totalMintedIDC / maxSupplyIDC) * 100).toFixed(4)}%
                       </span>
                     </div>
                     <div className="status-item">
-                      <span className="label">Current Era:</span>
+                      <span className="label">{t("advanced.currentEra")}:</span>
                       <span className="value">
-                        Era {emissionStats.era} / {IDC_ERA_COUNT - 1}
+                        {t("token.eraNumber")} {emissionStats.era} / {IDC_ERA_COUNT - 1}
                       </span>
                     </div>
                     <div className="status-item">
-                      <span className="label">Block Reward (next):</span>
+                      <span className="label">{t("advanced.blockRewardNext")}:</span>
                       <span className="value" style={{ fontWeight: "bold" }}>
                         {nextBlockReward.toFixed(6)} IDC
                       </span>
                     </div>
                     <div className="status-item" style={{ fontSize: "0.9rem", color: "#666" }}>
-                      <span className="label">Blocks in Era:</span>
+                      <span className="label">{t("advanced.blocksInEra")}:</span>
                       <span className="value">
-                        {Number(emissionStats.blocksRemainingInEra).toLocaleString()} remaining
+                        {Number(emissionStats.blocksRemainingInEra).toLocaleString()} {t("advanced.remaining")}
                       </span>
                     </div>
                   </div>
@@ -6457,36 +6442,36 @@ function App() {
                 <div className="status-card">
                   <h2>🔒 {t("network.peerReputation")}</h2>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "跟踪的节点总数" : "Total Peers Tracked"}:</span>
+                    <span className="label">{t("advanced.totalPeersTracked")}:</span>
                     <span className="value">{peerScores.length}</span>
                   </div>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "信任" : "Trusted"}:</span>
+                    <span className="label">{t("advanced.trusted")}:</span>
                     <span className="value" style={{ color: "#28a745" }}>
                       {peerScores.filter(p => p.trustLevel === "trusted").length}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "正常" : "Normal"}:</span>
+                    <span className="label">{t("advanced.normal")}:</span>
                     <span className="value" style={{ color: "#666" }}>
                       {peerScores.filter(p => p.trustLevel === "normal").length}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "低信任" : "Low Trust"}:</span>
+                    <span className="label">{t("advanced.lowTrust")}:</span>
                     <span className="value" style={{ color: "#ffc107" }}>
                       {peerScores.filter(p => p.trustLevel === "low").length}
                     </span>
                   </div>
                   <div className="status-item">
-                    <span className="label">{locale === "zh" ? "已禁止" : "Banned"}:</span>
+                    <span className="label">{t("advanced.banned")}:</span>
                     <span className="value" style={{ color: "#dc3545" }}>
                       {peerScores.filter(p => p.trustLevel === "banned").length}
                     </span>
                   </div>
                   {peerScores.length > 0 && (
                     <div style={{ marginTop: "1rem" }}>
-                      <strong>{locale === "zh" ? "节点详情" : "Peer Details"}:</strong>
+                      <strong>{t("advanced.peerDetails")}:</strong>
                       <div style={{ maxHeight: "300px", overflowY: "auto", marginTop: "0.5rem" }}>
                         <table style={{ width: "100%", fontSize: "0.85rem", borderCollapse: "collapse" }}>
                           <thead>
@@ -6557,7 +6542,7 @@ function App() {
                           {finalityStats.committeeSize > 0 ? (
                             <span style={{ color: "#28a745", fontWeight: "bold" }}>{t("status.active")}</span>
                           ) : (
-                            <span style={{ color: "#666" }}>{locale === "zh" ? "等待委员会" : "Waiting for Committee"}</span>
+                            <span style={{ color: "#666" }}>{t("network.waitingForCommittee")}</span>
                           )}
                         </span>
                       </div>
@@ -6567,6 +6552,24 @@ function App() {
                           {finalityStats.finalizedCount}
                         </span>
                       </div>
+                      {tip && (() => {
+                        const localHeight = tip.header.height;
+                        const finalizedHeight = finalityStats.finalizedCount || 0;
+                        const isFinalityInitializationPhase = finalizedHeight === 0 || localHeight < 50;
+                        return isFinalityInitializationPhase ? (
+                          <div className="status-item" style={{ 
+                            marginTop: "0.5rem", 
+                            padding: "0.5rem", 
+                            background: "#fff3cd", 
+                            borderRadius: "4px",
+                            border: "1px solid #ffc107"
+                          }}>
+                            <span style={{ color: "#856404", fontSize: "0.9rem" }}>
+                              🟡 {t("network.finalityInitializationMode")}
+                            </span>
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="status-item">
                         <span className="label">{t("network.pendingVotes")}:</span>
                         <span className="value">
@@ -6592,7 +6595,7 @@ function App() {
                             {finalizedBlocks.has(tip.hash) ? (
                               <span style={{ color: "#28a745", fontWeight: "bold" }}>✅ {t("network.finalized")}</span>
                             ) : finalityStats.pendingVotes > 0 ? (
-                              <span style={{ color: "#ffc107" }}>⏳ {t("network.pending")} ({finalityStats.pendingVotes} {locale === "zh" ? "票" : "votes"})</span>
+                              <span style={{ color: "#ffc107" }}>⏳ {t("network.pending")} ({finalityStats.pendingVotes} {t("network.votes")})</span>
                             ) : (
                               <span style={{ color: "#dc3545" }}>❌ {t("network.unconfirmed")}</span>
                             )}
@@ -6616,7 +6619,7 @@ function App() {
                                   }}
                                 >
                                   <div>
-                                    <strong>{locale === "zh" ? "成员" : "Member"} #{idx + 1}:</strong> {member.address.substring(0, 20)}...
+                                    <strong>{t("network.member")} #{idx + 1}:</strong> {member.address.substring(0, 20)}...
                                   </div>
                                   <div>
                                     {t("network.score")}: {member.score.toFixed(1)} / 100
@@ -6674,7 +6677,7 @@ function App() {
                           </span>
                         </div>
                         <div className="status-item">
-                          <span className="label">{locale === "zh" ? "已发行比例" : "Issued Ratio"}:</span>
+                          <span className="label">{t("network.issuedRatio")}:</span>
                           <span className="value">
                             {((Number(chainContext.indexState.getTotalMinted()) / Number(IDC_MAX_SUPPLY)) * 100).toFixed(4)}%
                           </span>

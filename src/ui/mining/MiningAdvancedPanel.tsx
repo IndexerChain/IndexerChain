@@ -4,8 +4,9 @@
  * Advanced settings for mining: performance presets, worker count, duty cycle
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { RuntimeMiningProfile } from "../../core/runtimeManager.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 interface MiningAdvancedPanelProps {
   currentProfile: RuntimeMiningProfile | null;
@@ -25,17 +26,19 @@ export function MiningAdvancedPanel({
   onProfileChange,
   onCustomConfig,
   deviceCapability,
-  locale,
+  locale: _locale, // Unused - using useI18n() hook instead
 }: MiningAdvancedPanelProps) {
+  const { t } = useI18n();
   const [showCustom, setShowCustom] = useState<boolean>(false);
+  const [selectedPresetMode, setSelectedPresetMode] = useState<RuntimeMiningProfile["mode"] | "custom" | null>(
+    currentProfile?.mode || null
+  );
   const [customWorkerCount, setCustomWorkerCount] = useState<number>(
     currentProfile?.workerCount || deviceCapability.recommendedWorkers
   );
   const [customDutyCycle, setCustomDutyCycle] = useState<number>(
     currentProfile?.dutyCycle || 0.5
   );
-
-  const isZh = locale === "zh";
 
   const presets: Array<{
     mode: RuntimeMiningProfile["mode"];
@@ -48,50 +51,53 @@ export function MiningAdvancedPanel({
   }> = [
     {
       mode: "power_save",
-      label: isZh ? "省电模式" : "Power Save",
-      description: isZh
-        ? "低 CPU 占用，适合笔记本电脑或长时间运行"
-        : "Low CPU usage, suitable for laptops or long-running",
+      label: t("mining.powerSave"),
+      description: t("mining.powerSaveDesc"),
       workerCount: Math.max(1, Math.floor(deviceCapability.recommendedWorkers * 0.5)),
       dutyCycle: 0.25,
       color: "#17a2b8",
     },
     {
       mode: "balanced",
-      label: isZh ? "平衡模式" : "Balanced",
-      description: isZh
-        ? "平衡性能和功耗，推荐日常使用"
-        : "Balance performance and power, recommended for daily use",
+      label: t("mining.balanced"),
+      description: t("mining.balancedDesc"),
       workerCount: deviceCapability.recommendedWorkers,
       dutyCycle: 0.5,
       color: "#28a745",
     },
     {
       mode: "performance",
-      label: isZh ? "性能模式" : "Performance",
-      description: isZh
-        ? "较高 CPU 占用，提升挖矿速度"
-        : "Higher CPU usage, faster mining",
+      label: t("mining.performance"),
+      description: t("mining.performanceDesc"),
       workerCount: Math.min(deviceCapability.maxWorkers, deviceCapability.recommendedWorkers * 1.5),
       dutyCycle: 0.75,
       color: "#ffc107",
     },
     {
       mode: "extreme",
-      label: isZh ? "极限模式" : "Extreme",
-      description: isZh
-        ? "最高性能，可能导致设备发热和风扇噪音"
-        : "Maximum performance, may cause device heating and fan noise",
+      label: t("mining.extreme"),
+      description: t("mining.extremeDesc"),
       workerCount: deviceCapability.maxWorkers,
       dutyCycle: 1.0,
       color: "#dc3545",
-      warning: isZh
-        ? "⚠️ 可能导致设备过热，请确保良好散热"
-        : "⚠️ May cause device overheating, ensure proper cooling",
+      warning: t("mining.extremeWarning"),
     },
   ];
 
+  // Sync selectedPresetMode only on initial mount or when currentProfile mode changes to a preset
+  // Don't override user's manual selection
+  useEffect(() => {
+    if (currentProfile?.mode && !selectedPresetMode) {
+      const validModes: RuntimeMiningProfile["mode"][] = ["power_save", "balanced", "performance", "extreme"];
+      if (validModes.includes(currentProfile.mode)) {
+        // Only update if no preset is currently selected (initial state)
+        setSelectedPresetMode(currentProfile.mode);
+      }
+    }
+  }, [currentProfile?.mode, selectedPresetMode]);
+
   const handlePresetClick = (preset: typeof presets[0]) => {
+    setSelectedPresetMode(preset.mode);
     onProfileChange({
       workerCount: preset.workerCount,
       dutyCycle: preset.dutyCycle,
@@ -101,6 +107,7 @@ export function MiningAdvancedPanel({
   };
 
   const handleCustomApply = () => {
+    setSelectedPresetMode("custom");
     onCustomConfig(customWorkerCount, customDutyCycle);
     setShowCustom(false);
   };
@@ -110,7 +117,7 @@ export function MiningAdvancedPanel({
   return (
     <div style={{ marginBottom: "1.5rem" }}>
       <h3 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.1rem" }}>
-        {isZh ? "性能预设" : "Performance Presets"}
+        {t("mining.performancePresets")}
       </h3>
 
       {/* Device Info */}
@@ -124,19 +131,9 @@ export function MiningAdvancedPanel({
           color: "#004085",
         }}
       >
-        {isZh ? (
-          <>
-            检测到设备: <strong>{deviceCapability.deviceType}</strong>，CPU 核心数:{" "}
-            <strong>{deviceCapability.hardwareConcurrency}</strong>，推荐 Worker 数:{" "}
-            <strong>{deviceCapability.recommendedWorkers}</strong>
-          </>
-        ) : (
-          <>
-            Detected device: <strong>{deviceCapability.deviceType}</strong>, CPU cores:{" "}
-            <strong>{deviceCapability.hardwareConcurrency}</strong>, Recommended workers:{" "}
-            <strong>{deviceCapability.recommendedWorkers}</strong>
-          </>
-        )}
+        {t("mining.detectedDevice")}: <strong>{deviceCapability.deviceType}</strong>, {t("mining.cpuCores")}:{" "}
+        <strong>{deviceCapability.hardwareConcurrency}</strong>, {t("mining.recommendedWorkers")}:{" "}
+        <strong>{deviceCapability.recommendedWorkers}</strong>
       </div>
 
       {/* Preset Buttons */}
@@ -149,10 +146,7 @@ export function MiningAdvancedPanel({
         }}
       >
         {presets.map((preset) => {
-          const isSelected =
-            currentProfile?.mode === preset.mode ||
-            (currentProfile?.workerCount === preset.workerCount &&
-              currentProfile?.dutyCycle === preset.dutyCycle);
+          const isSelected = selectedPresetMode === preset.mode;
 
           return (
             <div
@@ -194,8 +188,7 @@ export function MiningAdvancedPanel({
                 {preset.description}
               </div>
               <div style={{ fontSize: "0.8rem", color: "#999" }}>
-                {isZh ? "Worker 数" : "Workers"}: {preset.workerCount} |{" "}
-                {isZh ? "Duty Cycle" : "Duty Cycle"}: {preset.dutyCycle}
+                {t("mining.workers")}: {preset.workerCount} | {t("mining.dutyCycle")}: {preset.dutyCycle}
               </div>
               {preset.warning && (
                 <div
@@ -230,13 +223,7 @@ export function MiningAdvancedPanel({
             fontSize: "0.9rem",
           }}
         >
-          {showCustom
-            ? isZh
-              ? "隐藏自定义设置"
-              : "Hide Custom Settings"
-            : isZh
-            ? "自定义设置"
-            : "Custom Settings"}
+          {showCustom ? t("mining.hideCustomSettings") : t("mining.customSettings")}
         </button>
 
         {showCustom && (
@@ -251,8 +238,7 @@ export function MiningAdvancedPanel({
           >
             <div style={{ marginBottom: "1rem" }}>
               <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-                {isZh ? "Worker 数量" : "Worker Count"}: {customWorkerCount} (
-                {isZh ? "推荐" : "Recommended"}: {deviceCapability.recommendedWorkers})
+                {t("mining.workerCountLabel")}: {customWorkerCount} ({t("mining.recommendedWorkers")}: {deviceCapability.recommendedWorkers})
               </label>
               <input
                 type="range"
@@ -266,8 +252,7 @@ export function MiningAdvancedPanel({
 
             <div style={{ marginBottom: "1rem" }}>
               <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-                {isZh ? "Duty Cycle" : "Duty Cycle"}: {customDutyCycle.toFixed(2)} (
-                {isZh ? "估算 CPU 占用" : "Estimated CPU Usage"}: ≈ {estimatedCPUUsage}%)
+                {t("mining.dutyCycle")}: {customDutyCycle.toFixed(2)} ({t("mining.estimatedCpuUsage")}: ≈ {estimatedCPUUsage}%)
               </label>
               <input
                 type="range"
@@ -292,7 +277,7 @@ export function MiningAdvancedPanel({
                 fontSize: "0.9rem",
               }}
             >
-              {isZh ? "应用自定义设置" : "Apply Custom Settings"}
+              {t("mining.applyCustomSettings")}
             </button>
           </div>
         )}

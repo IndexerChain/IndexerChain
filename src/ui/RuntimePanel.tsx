@@ -11,6 +11,7 @@ import {
   type PerformanceMetrics,
   type DeviceCapability,
 } from "../core/runtimeManager";
+import { useI18n } from "../i18n/useI18n";
 
 interface RuntimePanelProps {
   runtimeManager: RuntimeManager | null;
@@ -29,6 +30,7 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
   onSetDutyCycle,
   onSetWorkerCount,
 }) => {
+  const { t } = useI18n();
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [deviceCap, setDeviceCap] = useState<DeviceCapability | null>(null);
@@ -61,19 +63,19 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
       const metrics = runtimeManager.getPerformanceMetrics();
       const issues: string[] = [];
       if (metrics.eventLoopLag > 200) {
-        issues.push(`Event loop lag: ${metrics.eventLoopLag.toFixed(1)}ms`);
+        issues.push(`${t("advanced.eventLoopLag")}: ${metrics.eventLoopLag.toFixed(1)}ms`);
       }
       if (metrics.fps < 20) {
-        issues.push(`Low FPS: ${metrics.fps}`);
+        issues.push(`${t("advanced.lowFps")}: ${metrics.fps}`);
       }
       if (metrics.workerCrashes > 3) {
-        issues.push(`High crash rate: ${metrics.workerCrashes} crashes/min`);
+        issues.push(`${t("advanced.highCrashRate")}: ${metrics.workerCrashes} ${t("advanced.workerCrashes")}/min`);
       }
       setSafetyIssues(issues);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [runtimeManager, currentWorkers]);
+  }, [runtimeManager, currentWorkers, t]);
 
   const handleDutyCycleChange = (value: number) => {
     setDutyCycle(value);
@@ -132,7 +134,7 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
       const success = await runtimeManager.requestWakeLock();
       setWakeLockActive(success);
       if (!success) {
-        alert("Wake Lock API not supported or permission denied");
+        alert(t("advanced.wakeLockNotSupported"));
       }
     }
   };
@@ -140,8 +142,8 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
   if (!runtimeManager || !config || !metrics || !deviceCap) {
     return (
       <div className="status-card">
-        <h3>Runtime & Help</h3>
-        <p>Initializing...</p>
+        <h3>{t("advanced.runtimeHelp")}</h3>
+        <p>{t("advanced.initializing")}</p>
       </div>
     );
   }
@@ -151,12 +153,12 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
 
   return (
     <div className="status-card">
-      <h3>🔧 Runtime & Help</h3>
+      <h3>{t("advanced.runtimeHelp")}</h3>
 
       {/* Safety Warnings */}
       {safetyIssues.length > 0 && (
         <div className="error" style={{ marginBottom: "1rem", padding: "0.75rem" }}>
-          <strong>⚠️ Safety Issues Detected:</strong>
+          <strong>{t("advanced.safetyIssuesDetected")}:</strong>
           <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem" }}>
             {safetyIssues.map((issue, idx) => (
               <li key={idx}>{issue}</li>
@@ -168,10 +170,10 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
       {/* Multi-tab Conflict Warning */}
       {multiTabConflict && (
         <div className="warning" style={{ marginBottom: "1rem", padding: "0.75rem" }}>
-          <strong>⚠️ Multi-tab Conflict:</strong>
+          <strong>{t("advanced.multiTabConflict")}:</strong>
           <p style={{ margin: "0.5rem 0 0 0" }}>
-            Another tab is mining ({otherTabs.length} tab{otherTabs.length > 1 ? "s" : ""}).
-            Consider stopping mining in other tabs to avoid resource conflicts.
+            {t("advanced.anotherTabMining", { count: otherTabs.length, plural: otherTabs.length > 1 ? "s" : "" })}.
+            {t("advanced.considerStopping")}
           </p>
         </div>
       )}
@@ -179,38 +181,38 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
       {/* Background Mode Indicator */}
       {isBackground && (
         <div className="info" style={{ marginBottom: "1rem", padding: "0.75rem" }}>
-          <strong>📱 Background Mode:</strong>
+          <strong>{t("advanced.backgroundMode")}:</strong>
           <p style={{ margin: "0.5rem 0 0 0" }}>
-            Tab is in background. Mining is automatically throttled.
+            {t("advanced.tabInBackground")}
           </p>
         </div>
       )}
 
       {/* Device Info */}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h4>Device Capability</h4>
+        <h4>{t("advanced.deviceCapability")}</h4>
         <div className="grid-2" style={{ marginTop: "0.5rem" }}>
           <div>
-            <strong>Type:</strong> {deviceCap.deviceType}
+            <strong>{t("advanced.type")}:</strong> {deviceCap.deviceType}
           </div>
           <div>
-            <strong>CPU Cores:</strong> {deviceCap.hardwareConcurrency}
+            <strong>{t("advanced.cpuCores")}:</strong> {deviceCap.hardwareConcurrency}
           </div>
           <div>
-            <strong>Recommended Workers:</strong> {deviceCap.recommendedWorkers}
+            <strong>{t("advanced.recommendedWorkers")}:</strong> {deviceCap.recommendedWorkers}
           </div>
           <div>
-            <strong>Max Workers:</strong> {deviceCap.maxWorkers}
+            <strong>{t("advanced.maxWorkers")}:</strong> {deviceCap.maxWorkers}
           </div>
         </div>
       </div>
 
       {/* CPU Control */}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h4>CPU Usage Control</h4>
+        <h4>{t("advanced.cpuUsageControl")}</h4>
         <div style={{ marginTop: "0.5rem" }}>
           <label>
-            Duty Cycle: {cpuUsagePercent}%
+            {t("advanced.dutyCycle")}: {cpuUsagePercent}%
             <input
               type="range"
               min="0.1"
@@ -224,26 +226,26 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
         </div>
         <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button onClick={() => handlePreset("power-save")} className="button-secondary">
-            💾 Power Save
+            {t("advanced.powerSave")}
           </button>
           <button onClick={() => handlePreset("balanced")} className="button-secondary">
-            ⚖️ Balanced
+            {t("advanced.balanced")}
           </button>
           <button onClick={() => handlePreset("performance")} className="button-secondary">
-            ⚡ Performance
+            {t("advanced.performance")}
           </button>
           <button onClick={() => handlePreset("extreme")} className="button-secondary">
-            🔥 Extreme
+            {t("advanced.extreme")}
           </button>
         </div>
       </div>
 
       {/* Worker Count Control */}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h4>Worker Count</h4>
+        <h4>{t("advanced.workerCount")}</h4>
         <div style={{ marginTop: "0.5rem" }}>
           <label>
-            Workers: {workerCount} / {maxWorkers}
+            {t("advanced.workers")}: {workerCount} / {maxWorkers}
             <input
               type="range"
               min="1"
@@ -256,8 +258,8 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
           </label>
           {workerCount > deviceCap.recommendedWorkers && (
             <div className="warning" style={{ marginTop: "0.5rem", padding: "0.5rem" }}>
-              ⚠️ Worker count exceeds recommended ({deviceCap.recommendedWorkers}).
-              This may cause performance issues.
+              {t("advanced.workerCountExceeds", { recommended: deviceCap.recommendedWorkers })}
+              {t("advanced.mayCausePerformanceIssues")}
             </div>
           )}
         </div>
@@ -265,10 +267,10 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
 
       {/* Performance Metrics */}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h4>Performance Metrics</h4>
+        <h4>{t("advanced.performanceMetrics")}</h4>
         <div className="grid-2" style={{ marginTop: "0.5rem" }}>
           <div>
-            <strong>Event Loop Lag:</strong>{" "}
+            <strong>{t("advanced.eventLoopLag")}:</strong>{" "}
             <span className={metrics.eventLoopLag > 200 ? "error" : ""}>
               {metrics.eventLoopLag.toFixed(1)} ms
             </span>
@@ -280,20 +282,20 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
             </span>
           </div>
           <div>
-            <strong>Worker Crashes:</strong> {metrics.workerCrashes} / min
+            <strong>{t("advanced.workerCrashes")}:</strong> {metrics.workerCrashes} / min
           </div>
           <div>
-            <strong>Last Crash:</strong>{" "}
+            <strong>{t("advanced.lastCrash")}:</strong>{" "}
             {metrics.lastCrashTime
               ? new Date(metrics.lastCrashTime).toLocaleTimeString()
-              : "Never"}
+              : t("advanced.never")}
           </div>
         </div>
       </div>
 
       {/* Background Mode Settings */}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h4>Background Mode</h4>
+        <h4>{t("advanced.backgroundMode")}</h4>
         <div style={{ marginTop: "0.5rem" }}>
           <label>
             <input
@@ -309,7 +311,7 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
                 setConfig(runtimeManager.getConfig());
               }}
             />{" "}
-            Auto (throttle when background)
+            {t("advanced.autoThrottleWhenBackground")}
           </label>
           <br />
           <label>
@@ -326,53 +328,48 @@ export const RuntimePanel: React.FC<RuntimePanelProps> = ({
                 setConfig(runtimeManager.getConfig());
               }}
             />{" "}
-            Manual (no auto-throttle)
+            {t("advanced.manualNoAutoThrottle")}
           </label>
         </div>
       </div>
 
       {/* Wake Lock */}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h4>Persistent Background Mining</h4>
+        <h4>{t("advanced.persistentBackgroundMining")}</h4>
         <div style={{ marginTop: "0.5rem" }}>
           <button
             onClick={handleWakeLockToggle}
             className={wakeLockActive ? "button-secondary" : "button"}
             disabled={!config.enableWakeLock}
           >
-            {wakeLockActive ? "🔒 Release Wake Lock" : "🔓 Request Wake Lock"}
+            {wakeLockActive ? t("advanced.releaseWakeLock") : t("advanced.requestWakeLock")}
           </button>
           <p style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "#666" }}>
-            Prevents browser from pausing mining when tab is in background.
+            {t("advanced.preventsBrowserPausing")}
             <br />
-            <strong>Warning:</strong> High battery consumption!
+            <strong>{t("advanced.warning")}:</strong> {t("advanced.highBatteryConsumption")}
           </p>
         </div>
       </div>
 
       {/* Help Section */}
       <div style={{ marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid #ddd" }}>
-        <h4>💡 Help & Tips</h4>
+        <h4>{t("advanced.helpTips")}</h4>
         <ul style={{ marginTop: "0.5rem", paddingLeft: "1.5rem" }}>
           <li>
-            <strong>Duty Cycle:</strong> Controls CPU usage. Lower values reduce CPU
-            usage but also reduce mining speed.
+            {t("advanced.dutyCycleDesc")}
           </li>
           <li>
-            <strong>Worker Count:</strong> More workers = more parallel mining, but
-            higher CPU usage.
+            {t("advanced.workerCountDesc")}
           </li>
           <li>
-            <strong>Event Loop Lag:</strong> Should be &lt; 200ms. Higher values
-            indicate UI lag.
+            {t("advanced.eventLoopLagDesc")}
           </li>
           <li>
-            <strong>FPS:</strong> Should be &gt; 20. Lower values indicate UI
-            stuttering.
+            {t("advanced.fpsDesc")}
           </li>
           <li>
-            <strong>Multi-tab Conflict:</strong> Only one tab should mine at a time to
-            avoid resource conflicts.
+            {t("advanced.multiTabConflictDesc")}
           </li>
         </ul>
       </div>

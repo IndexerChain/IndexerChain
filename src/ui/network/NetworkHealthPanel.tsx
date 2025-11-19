@@ -204,17 +204,26 @@ export function NetworkHealthPanel({
 
           <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
             <div style={{ fontSize: "0.85rem", color: "#666" }}>
-              {isZh ? "Finality 就绪" : "Finality Ready"}
+              {isZh ? "Finality 状态" : "Finality Status"}
             </div>
             <div
               style={{
                 fontSize: "1.2rem",
                 fontWeight: "bold",
-                color: readinessInfo.finalityReady ? "#28a745" : "#ffc107",
+                color: readinessInfo.isFinalityInitializationPhase 
+                  ? "#ffc107" 
+                  : (readinessInfo.finalityReady ? "#28a745" : "#dc3545"),
               }}
             >
-              {readinessInfo.finalityReady ? "✅" : "⚠️"}
+              {readinessInfo.isFinalityInitializationPhase 
+                ? "🟡" 
+                : (readinessInfo.finalityReady ? "✅" : "❌")}
             </div>
+            {readinessInfo.isFinalityInitializationPhase && (
+              <div style={{ fontSize: "0.75rem", color: "#856404", marginTop: "0.25rem" }}>
+                {isZh ? "初始化模式" : "Init Mode"}
+              </div>
+            )}
           </div>
 
           <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>

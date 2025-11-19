@@ -6,9 +6,9 @@
  * UI component for managing multiple wallets
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { getMultiWalletStore, type Wallet } from "../core/multiWallet.js";
-import { downloadBackupFile, readBackupFile } from "../core/walletBackup.js";
+import { downloadBackupFile } from "../core/walletBackup.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 interface WalletManagerPanelProps {
@@ -31,9 +31,6 @@ export function WalletManagerPanel({
   const [editingName, setEditingName] = useState("");
   const [exportingWalletId, setExportingWalletId] = useState<string | null>(null);
   const [exportPassword, setExportPassword] = useState("");
-  const [importing, setImporting] = useState(false);
-  const [importPassword, setImportPassword] = useState("");
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshWallets = () => {
     const allWallets = walletStore.listWallets();
@@ -132,29 +129,6 @@ export function WalletManagerPanel({
     }
   };
 
-  const handleImportWallet = async (file: File) => {
-    if (!importPassword) {
-      onError?.(t("wallet.pleaseEnterBackupPassword"));
-      return;
-    }
-    try {
-      setImporting(true);
-      const backupData = await readBackupFile(file);
-      await walletStore.importEncryptedWallet(backupData, importPassword);
-      setImportPassword("");
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      refreshWallets();
-      onWalletChanged?.();
-      onError?.(t("wallet.walletImported"));
-      setTimeout(() => onError?.(""), 3000);
-    } catch (err) {
-      onError?.(err instanceof Error ? err.message : t("wallet.failedToImport"));
-    } finally {
-      setImporting(false);
-    }
-  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -365,42 +339,6 @@ export function WalletManagerPanel({
             {isCreating ? t("common.loading") : t("wallet.create")}
           </button>
         </div>
-      </div>
-
-      {/* Import Wallet */}
-      <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
-        <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-          📥 {t("wallet.importWallet")}
-        </h4>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            // Import is handled by file selection
-          }}
-          style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
-        >
-          <input
-            type="file"
-            accept=".idcbackup,application/json"
-            ref={fileInputRef}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                handleImportWallet(file);
-              }
-            }}
-            style={{ padding: "0.5rem" }}
-            disabled={importing}
-          />
-          <input
-            type="password"
-            placeholder={t("wallet.enterBackupPassword")}
-            value={importPassword}
-            onChange={(e) => setImportPassword(e.target.value)}
-            style={{ padding: "0.5rem" }}
-            disabled={importing}
-          />
-        </form>
       </div>
     </div>
   );

@@ -1,17 +1,39 @@
 /**
  * Phase 30: Mining Guard - Pre-mining Health Checks
  * Phase 33: Mining Permission Levels - Three-tier mining system
+ * Phase 39: Network Stage System - Three-stage architecture
  * 
  * Ensures mining only happens when node is:
  * - Synchronized with network
  * - Connected to sufficient peers
  * - On the correct network (mainnet)
- * - Has finalized blocks up to date
+ * - Has finalized blocks up to date (after initialization phase)
  * 
  * Phase 33: Three-tier mining permission levels:
  * - SAFE: Mainnet default, requires >= 3 peers
  * - GUARDED: Dev/testnet mode, allows < 3 peers with warnings
  * - LOCAL_ONLY: Training mode, completely local mining
+ * 
+ * Phase 39: Network Stage System
+ * 
+ * Three distinct stages with different security rules:
+ * 
+ * 1. Genesis Quorum Mode (height = 0)
+ *    - Trigger: localHeight === 0 && rootTipHeight === 0
+ *    - Requirements: ≥2 independent IPs, bootstrapComplete, stable peers
+ *    - Rules: Skip all finality/stateLock/stateCommit/stateDrift checks
+ *    - Exit: localHeight >= 1
+ * 
+ * 2. Finality Initialization Mode (warmup phase)
+ *    - Trigger: finalizedHeight === 0 AND (localHeight < 50 OR localHeight <= 500)
+ *    - Rules: Relax StateLock/stateCommit/drift checks (allow mining)
+ *    - Safety: If height > 500 and finalizedHeight still 0, treat as system error
+ *    - Exit: finalizedHeight > 0 AND localHeight >= 50
+ * 
+ * 3. Normal Finality Mode (mature phase)
+ *    - Trigger: finalizedHeight > 0 AND localHeight >= 50
+ *    - Rules: Full strict checks (StateLock, stateCommit, drift, etc.)
+ *    - All security mechanisms active
  */
 
 import type { ChainContext } from "./chain.js";
@@ -24,6 +46,21 @@ import { logger } from "./logger.js";
  * Phase 33: Mining permission level
  */
 export type MiningMode = "SAFE" | "GUARDED" | "LOCAL_ONLY" | "BLOCKED";
+
+/**
+ * Phase 39: Mining network stage for mining readiness
+ * Different from quorumManager's NetworkStage (which is for network maturity)
+ */
+export type MiningNetworkStage = "GENESIS_QUORUM" | "FINALITY_INIT" | "NORMAL_FINALITY";
+
+/**
+ * Phase 39: Mining network stage information
+ */
+export interface MiningNetworkStageInfo {
+  stage: MiningNetworkStage;
+  relaxedChecks: string[]; // List of checks that are relaxed in this stage
+  description: string;
+}
 
 /**
  * Mining guard result
@@ -56,8 +93,20 @@ export interface MiningGuardResult {
     independentPeerCount?: number;
     // Phase 35: Mainnet admission requirements
     requiredIndependentPeers?: number;
+    // Phase 39: Finality Initialization Mode
+    finalityLag?: number;
+    isFinalityInitializationPhase?: boolean;
+    // Phase 39: Mining network stage information
+    networkStage?: MiningNetworkStage;
+    networkStageInfo?: MiningNetworkStageInfo;
   };
 }
+
+/**
+ * Phase 39: Network stage constants
+ */
+const FINALITY_WARMUP_HEIGHT = 50; // Height threshold for warmup phase
+const FINALITY_WARMUP_MAX_HEIGHT = 500; // Maximum height to tolerate finalizedHeight === 0
 
 /**
  * Mining Guard
@@ -65,6 +114,104 @@ export interface MiningGuardResult {
  * Performs health checks before allowing mining
  */
 export class MiningGuard {
+  /**
+   * Phase 39: Determine current network stage
+   */
+  static getNetworkStage(
+    chainContext: ChainContext,
+    quorumManager: any,
+    finalityManager?: any
+  ): { stage: MiningNetworkStage; info: MiningNetworkStageInfo } {
+    const localTip = chainContext.storage.getTip();
+    const localHeight = localTip?.header.height ?? 0;
+    
+    // Check Genesis phase
+    if (quorumManager.isGenesisPhase()) {
+      return {
+        stage: "GENESIS_QUORUM",
+        info: {
+          stage: "GENESIS_QUORUM",
+          relaxedChecks: [
+            "Finality checks",
+            "StateLock checks",
+            "StateCommit checks",
+            "StateDrift checks"
+          ],
+          description: "Genesis phase: Mining allowed with minimal requirements (≥2 independent IPs, bootstrapComplete). All finality/state checks skipped."
+        }
+      };
+    }
+    
+    // Check Finality Initialization Mode
+    let finalizedHeight = 0;
+    if (finalityManager) {
+      const finalityStats = finalityManager.getStats();
+      if (finalityStats) {
+        finalizedHeight = finalityStats.finalizedHeight || 0;
+      }
+    }
+    
+    // Phase 39: Safe Finality Initialization Mode check
+    // - Height < 50: Always in warmup
+    // - Height 50-500 AND finalizedHeight === 0: Tolerate warmup (finality may be starting)
+    // - Height > 500 AND finalizedHeight === 0: System error, treat as normal mode (strict checks)
+    const isFinalityInitPhase = 
+      localHeight < FINALITY_WARMUP_HEIGHT || 
+      (finalizedHeight === 0 && localHeight <= FINALITY_WARMUP_MAX_HEIGHT);
+    
+    if (isFinalityInitPhase) {
+      return {
+        stage: "FINALITY_INIT",
+        info: {
+          stage: "FINALITY_INIT",
+          relaxedChecks: [
+            "StateLock formation (quorum < 66.67%)",
+            "Recent state commits",
+            "Critical state drift"
+          ],
+          description: `Finality Initialization Mode: Finality system warming up (height: ${localHeight}, finalized: ${finalizedHeight}). StateLock/stateCommit/drift checks relaxed.`
+        }
+      };
+    }
+    
+    // Normal Finality Mode
+    return {
+      stage: "NORMAL_FINALITY",
+      info: {
+        stage: "NORMAL_FINALITY",
+        relaxedChecks: [],
+        description: "Normal Finality Mode: All security mechanisms active (StateLock, stateCommit, drift checks enforced)."
+      }
+    };
+  }
+
+  /**
+   * Phase 39: Check if in Finality Initialization Phase (with safety limits)
+   */
+  /**
+   * Phase 39: Check if in Finality Initialization Phase (with safety limits)
+   * @deprecated Use getNetworkStage() instead for more comprehensive stage information
+   */
+  static isFinalityInitializationPhase(
+    localHeight: number,
+    finalizedHeight: number
+  ): boolean {
+    // Case 1: Height is low (< 50), definitely in warmup
+    if (localHeight < FINALITY_WARMUP_HEIGHT) {
+      return true;
+    }
+    
+    // Case 2: finalizedHeight hasn't started, but we're still in tolerance range (50-500)
+    // Allow warmup mode to give finality system time to start
+    if (finalizedHeight === 0 && localHeight <= FINALITY_WARMUP_MAX_HEIGHT) {
+      return true;
+    }
+    
+    // Case 3: Height > 500 and still no finalized blocks
+    // This is likely a system error, don't treat as warmup (enforce strict checks)
+    return false;
+  }
+
   /**
    * Check if mining is safe to start
    */
@@ -118,6 +265,13 @@ export class MiningGuard {
       independentPeerCount: 0,
     };
     
+    // Phase 39: Determine current network stage
+    const { stage: networkStage, info: stageInfo } = this.getNetworkStage(
+      chainContext,
+      quorumManager,
+      finalityManager
+    );
+    
     // Phase 33: Three-tier mining permission levels (with quorum support)
     const minPeersRequired = chainContext.params.minPeersRequired ?? 3;
     const allowGuardedMining = chainContext.params.allowGuardedMining ?? (!isMainnetNetwork); // Auto-enable for dev/testnet
@@ -140,16 +294,14 @@ export class MiningGuard {
       miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
     }
     
-    // Phase 38: Check Genesis phase first (height = 0, allows mining with minimal requirements)
-    const isGenesisPhase = quorumManager.isGenesisPhase();
-    if (isGenesisPhase && isMainnetNetwork && p2pNode) {
-      const quorumStatus = quorumManager.getQuorumStatus();
-      
+    // Phase 39: Stage 1 - Genesis Quorum Mode (height = 0)
+    if (networkStage === "GENESIS_QUORUM" && isMainnetNetwork && p2pNode) {
       // Genesis mode: Check minimal requirements
       // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
       if (quorumStatus.ready && quorumStatus.independentPeerCount >= 2) {
-        logger.info(`[Phase 38] 🌟 Genesis Quorum Mode: Allowing mining at height 0 (independent peers: ${quorumStatus.independentPeerCount}, score: ${quorumStatus.totalScore})`);
-        // Continue to other checks, but mining is allowed in Genesis mode
+        logger.info(`[Phase 39] 🌟 Genesis Quorum Mode: Allowing mining at height 0 (independent peers: ${quorumStatus.independentPeerCount}, score: ${quorumStatus.totalScore})`);
+        // Skip all finality/state checks in Genesis mode
+        // Continue to wallet/network checks, then return success
       } else {
         return {
           ok: false,
@@ -163,17 +315,20 @@ export class MiningGuard {
             requiredQuorumScore: quorumStatus.requiredScore,
             independentPeerCount: quorumStatus.independentPeerCount,
             requiredIndependentPeers: 2,
+            networkStage,
+            networkStageInfo: stageInfo,
           },
         };
       }
     }
     
     // Phase 35: Check mainnet admission rules first (unless in Cold Start mode or Genesis mode)
-    if (isMainnetNetwork && !isColdStartMode && !isGenesisPhase && p2pNode) {
+    if (isMainnetNetwork && !isColdStartMode && networkStage !== "GENESIS_QUORUM" && p2pNode) {
       const admissionStatus = quorumManager.getMainnetAdmissionStatus();
       
       if (admissionStatus.admissionReady) {
         // Phase 36: Check state lock
+        // Phase 39: Use network stage to determine if we should relax checks
         const { getStateLockManager } = await import("./stateLockManager.js");
         const { getStateCommitGossip } = await import("./stateCommitGossip.js");
         const { getStateDriftDetector } = await import("./stateDriftDetector.js");
@@ -189,47 +344,82 @@ export class MiningGuard {
         driftDetector.initialize(chainContext, p2pNode);
         const driftCheck = driftDetector.checkDrift();
         
-        // Phase 36: Block mining if state lock issues or drift detected
-        if (!lockCheck.allowed) {
-          return {
-            ok: false,
-            mode: "BLOCKED",
-            code: "STATE_LOCK_MISMATCH",
-            reason: `State lock check failed: ${lockCheck.reason}`,
-            details: {
-              peerCount,
-              requiredPeers: minPeersRequired,
-              quorumScore: admissionStatus.quorumScore,
-              requiredQuorumScore: admissionStatus.requiredQuorumScore,
-              independentPeerCount: admissionStatus.independentPeers,
-            },
-          };
-        }
-        
-        if (!hasRecentCommits) {
-          return {
-            ok: false,
-            mode: "BLOCKED",
-            code: "NO_RECENT_STATE_COMMITS",
-            reason: "No recent state commits received from peers (>30s)",
-            details: {
-              peerCount,
-              requiredPeers: minPeersRequired,
-            },
-          };
-        }
-        
-        if (driftCheck.hasDrift && driftCheck.severity === "critical") {
-          return {
-            ok: false,
-            mode: "BLOCKED",
-            code: "STATE_DRIFT_DETECTED",
-            reason: `Critical state drift detected: ${driftCheck.reason}`,
-            details: {
-              peerCount,
-              requiredPeers: minPeersRequired,
-            },
-          };
+        // Phase 39: Stage 2 - Finality Initialization Mode: Relax checks
+        // Stage 3 - Normal Finality Mode: Enforce strict checks
+        if (networkStage === "FINALITY_INIT") {
+          // Phase 39: Relax state lock check during initialization phase
+          // During initialization, StateLock may not form yet (needs 66.67% quorum with only 2 nodes)
+          // This is safe because:
+          // 1. Genesis Quorum mode provides security (≥2 independent IPs)
+          // 2. Quorum score evaluation ensures network quality
+          // 3. StateCommitment gossip provides early consistency
+          // 4. StateLock will form naturally as network grows
+          if (!lockCheck.allowed) {
+            logger.debug(`[Phase 39] StateLock not formed (quorum: ${lockCheck.reason?.match(/quorum: ([\d.]+)%/)?.[1] || 'N/A'}%), but allowing mining (Finality Initialization Mode)`);
+          }
+          
+          // Relax state commit check during initialization phase
+          if (!hasRecentCommits) {
+            logger.debug(`[Phase 39] No recent state commits, but allowing mining (Finality Initialization Mode)`);
+          }
+          
+          // Relax drift check during initialization phase
+          if (driftCheck.hasDrift && driftCheck.severity === "critical") {
+            logger.debug(`[Phase 39] State drift detected, but allowing mining (Finality Initialization Mode): ${driftCheck.reason}`);
+          }
+        } else if (networkStage === "NORMAL_FINALITY") {
+          // Phase 39: Stage 3 - Normal Finality Mode: Enforce all checks
+          
+          // Enforce state lock check
+          if (!lockCheck.allowed) {
+            return {
+              ok: false,
+              mode: "BLOCKED",
+              code: "STATE_LOCK_MISMATCH",
+              reason: `State lock check failed: ${lockCheck.reason}`,
+              details: {
+                peerCount,
+                requiredPeers: minPeersRequired,
+                quorumScore: admissionStatus.quorumScore,
+                requiredQuorumScore: admissionStatus.requiredQuorumScore,
+                independentPeerCount: admissionStatus.independentPeers,
+                networkStage,
+                networkStageInfo: stageInfo,
+              },
+            };
+          }
+          
+          // Enforce state commit check
+          if (!hasRecentCommits) {
+            return {
+              ok: false,
+              mode: "BLOCKED",
+              code: "NO_RECENT_STATE_COMMITS",
+              reason: "No recent state commits received from peers (>30s)",
+              details: {
+                peerCount,
+                requiredPeers: minPeersRequired,
+                networkStage,
+                networkStageInfo: stageInfo,
+              },
+            };
+          }
+          
+          // Enforce drift check
+          if (driftCheck.hasDrift && driftCheck.severity === "critical") {
+            return {
+              ok: false,
+              mode: "BLOCKED",
+              code: "STATE_DRIFT_DETECTED",
+              reason: `Critical state drift detected: ${driftCheck.reason}`,
+              details: {
+                peerCount,
+                requiredPeers: minPeersRequired,
+                networkStage,
+                networkStageInfo: stageInfo,
+              },
+            };
+          }
         }
         
         // Level 1: SAFE Mining - Mainnet admission rules satisfied + state lock OK
@@ -358,6 +548,7 @@ export class MiningGuard {
     // Note: Sync drift check is handled by GlobalStateSentinel, so we don't need to check it here
     
     // Check 6: Finality status (if finality is enabled)
+    // Phase 39: Finality Initialization Mode
     if (chainContext.params.finalityEnabled && finalityManager) {
       const finalityStats = finalityManager.getStats();
       if (finalityStats) {
@@ -365,13 +556,14 @@ export class MiningGuard {
         const finalityLag = localHeight - finalizedHeight;
         const maxFinalityLag = 5; // Allow up to 5 blocks unfinalized
         
-        // Phase 36: Relax finality check during initialization or in dev/testnet mode
-        // - If finalizedHeight is 0 and localHeight is small (< 20), allow mining (initialization phase)
-        // - If we're in dev/testnet mode, allow more lag
+        // Phase 39: Use network stage to determine if we should relax finality check
+        // Genesis mode: Skip finality check entirely
+        // Finality Init mode: Allow large finalityLag
+        // Normal mode: Enforce finalityLag <= 5
         const isMainnetNetwork = isMainnet(chainContext.params);
-        const isInitializationPhase = finalizedHeight === 0 && localHeight < 20;
-        const shouldRelaxCheck = !isMainnetNetwork || isInitializationPhase;
+        const shouldRelaxCheck = !isMainnetNetwork || networkStage === "GENESIS_QUORUM" || networkStage === "FINALITY_INIT";
         
+        // Phase 39: Only enforce finalityLag check in Normal Finality Mode
         if (finalityLag > maxFinalityLag && !shouldRelaxCheck) {
           return {
             ok: false,
@@ -381,13 +573,23 @@ export class MiningGuard {
               localHeight,
               finalizedHeight,
               tipHeight: localHeight,
+              finalityLag,
+              isFinalityInitializationPhase: false,
+              networkStage,
+              networkStageInfo: stageInfo,
             },
           };
         }
         
-        // Log warning in dev/testnet or initialization phase, but don't block
+        // Phase 39: Log info during initialization phase (don't block mining)
         if (finalityLag > maxFinalityLag && shouldRelaxCheck) {
-          logger.debug(`[Phase 36] Finality lag ${finalityLag} > ${maxFinalityLag}, but allowing mining (${isInitializationPhase ? 'initialization phase' : 'dev/testnet mode'})`);
+          if (networkStage === "FINALITY_INIT") {
+            logger.debug(`[Phase 39] Finality Initialization Mode: finalityLag=${finalityLag} > ${maxFinalityLag}, but allowing mining (finalizedHeight=${finalizedHeight}, localHeight=${localHeight})`);
+          } else if (networkStage === "GENESIS_QUORUM") {
+            logger.debug(`[Phase 39] Genesis Quorum Mode: finalityLag=${finalityLag}, but skipping finality check (height=0)`);
+          } else {
+            logger.debug(`[Phase 36] Finality lag ${finalityLag} > ${maxFinalityLag}, but allowing mining (dev/testnet mode)`);
+          }
         }
       }
     }
@@ -397,6 +599,7 @@ export class MiningGuard {
     // For now, we'll just check if we have enough peers
     
     // Phase 33: All checks passed, return with mining mode and quorum info
+    // Phase 39: Include network stage information
     return {
       ok: true,
       mode: miningMode,
@@ -407,6 +610,8 @@ export class MiningGuard {
         quorumScore: quorumStatus.totalScore,
         requiredQuorumScore: quorumStatus.requiredScore,
         independentPeerCount: quorumStatus.independentPeerCount,
+        networkStage,
+        networkStageInfo: stageInfo,
       },
     };
   }
@@ -449,9 +654,30 @@ export class MiningGuard {
         const peerLabel = result.details?.requiredIndependentPeers !== undefined
           ? (isZh ? "独立节点" : "independent peers")
           : (isZh ? "对等节点" : "peers");
-        return isZh
-          ? `🚫 挖矿就绪：已阻止 - ${peerLabel}不足（${currentPeers} < ${requiredPeers}）`
-          : `🚫 Mining Ready: BLOCKED - Insufficient ${peerLabel} (${currentPeers} < ${requiredPeers})`;
+        
+        // Check if peers are actually insufficient (avoid showing "1 < 1" when peers are sufficient)
+        const peersInsufficient = currentPeers < requiredPeers;
+        
+        // If peers are sufficient but quorum score is insufficient, show quorum score issue instead
+        if (!peersInsufficient && result.details?.quorumScore !== undefined && result.details?.requiredQuorumScore !== undefined) {
+          const quorumScore = result.details.quorumScore;
+          const requiredQuorumScore = result.details.requiredQuorumScore;
+          return isZh
+            ? `🚫 挖矿就绪：已阻止 - Quorum分数不足（${quorumScore} < ${requiredQuorumScore}）`
+            : `🚫 Mining Ready: BLOCKED - Insufficient Quorum Score (${quorumScore} < ${requiredQuorumScore})`;
+        }
+        
+        // Only show peer insufficiency if peers are actually insufficient
+        if (peersInsufficient) {
+          return isZh
+            ? `🚫 挖矿就绪：已阻止 - ${peerLabel}不足（${currentPeers} < ${requiredPeers}）`
+            : `🚫 Mining Ready: BLOCKED - Insufficient ${peerLabel} (${currentPeers} < ${requiredPeers})`;
+        }
+        
+        // Fallback: show the reason from result if available
+        return result.reason || (isZh 
+          ? `🚫 挖矿就绪：已阻止 - 网络条件不满足`
+          : `🚫 Mining Ready: BLOCKED - Network conditions not met`);
       
       case "NOT_FINALIZED":
         return isZh
@@ -538,9 +764,12 @@ export class MiningGuard {
     uniquePeers: number;
     threshold: number;
     p2pConnected: boolean;
-    bootstrapCompleted: boolean;
-    finalityReady: boolean;
-    localRole: "LEADER" | "FOLLOWER";
+      bootstrapCompleted: boolean;
+      finalityReady: boolean;
+      isFinalityInitializationPhase?: boolean; // Phase 39: Finality Initialization Mode (deprecated, use networkStage)
+      networkStage?: MiningNetworkStage; // Phase 39: Mining network stage
+      networkStageInfo?: MiningNetworkStageInfo; // Phase 39: Mining network stage information
+      localRole: "LEADER" | "FOLLOWER";
     details: {
       peerCount: number;
       quorumReady: boolean;
@@ -580,8 +809,16 @@ export class MiningGuard {
     quorumManager.initialize(p2pNode, chainContext);
     const quorumStatus = quorumManager.getQuorumStatus();
     
-    // Check finality readiness
+    // Phase 39: Check finality readiness (considering Network Stage System)
     let finalityReady = true;
+    let networkStage: MiningNetworkStage = "NORMAL_FINALITY";
+    let networkStageInfo: MiningNetworkStageInfo | undefined;
+    
+    // Get network stage
+    const stageResult = this.getNetworkStage(chainContext, quorumManager, finalityManager);
+    networkStage = stageResult.stage;
+    networkStageInfo = stageResult.info;
+    
     if (chainContext.params.finalityEnabled && finalityManager) {
       const finalityStats = finalityManager.getStats();
       if (finalityStats) {
@@ -589,7 +826,15 @@ export class MiningGuard {
         const localHeight = localTip?.header.height ?? 0;
         const finalizedHeight = finalityStats.finalizedHeight || 0;
         const finalityLag = localHeight - finalizedHeight;
-        finalityReady = finalityLag <= 5; // Allow up to 5 blocks unfinalized
+        
+        // Phase 39: Network Stage System
+        // Genesis/Init mode: finality is considered "ready" (mining allowed)
+        // Normal mode: require finalityLag <= 5
+        if (networkStage === "GENESIS_QUORUM" || networkStage === "FINALITY_INIT") {
+          finalityReady = true; // Allow mining during initialization
+        } else {
+          finalityReady = finalityLag <= 5; // Require finality after initialization
+        }
       }
     }
 
@@ -649,7 +894,8 @@ export class MiningGuard {
         reasons.push("No valid mining wallet selected");
       }
       
-      if (!finalityReady) {
+      // Phase 39: Only report finality issue if in Normal Finality Mode
+      if (!finalityReady && networkStage === "NORMAL_FINALITY") {
         reasons.push("Finality not ready (too many unfinalized blocks)");
       }
       
@@ -671,6 +917,9 @@ export class MiningGuard {
       p2pConnected,
       bootstrapCompleted: bootstrapComplete,
       finalityReady,
+      isFinalityInitializationPhase: networkStage === "FINALITY_INIT", // Phase 39: Deprecated, kept for compatibility
+      networkStage, // Phase 39: Network stage
+      networkStageInfo, // Phase 39: Network stage information
       localRole: localInstanceRole,
       details: {
         peerCount,
@@ -885,5 +1134,6 @@ export class MiningGuard {
 /**
  * Phase 35: Mainnet admission status (re-export from quorumManager)
  */
-export type { MainnetAdmissionStatus, NetworkStage } from "./quorumManager.js";
+export type { MainnetAdmissionStatus } from "./quorumManager.js";
+export type { NetworkStage } from "./quorumManager.js"; // Re-export quorumManager's NetworkStage for network maturity
 
