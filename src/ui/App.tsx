@@ -50,12 +50,12 @@ import {
 } from "../core/snapshot.js";
 import {
   getEmissionStats,
+  getBlockRewardRaw,
   uIDCToIDC,
   IDC_MAX_SUPPLY,
-  IDC_ERA_COUNT,
+  IDC_EMISSION_YEARS,
+  IDC_BLOCKS_PER_YEAR,
   IDC_DECIMALS,
-  IDC_BASE_REWARD,
-  IDC_BLOCKS_PER_ERA,
   IDC_BASE_FEE,
   IDC_FEE_PER_100_BYTES,
 } from "../core/idcEmission.js";
@@ -82,6 +82,12 @@ import { MiningStatusBanner } from "./mining/MiningStatusBanner.js";
 import { GenesisQuorumBanner } from "./mining/GenesisQuorumBanner.js";
 import { MultiTerminalSyncNotice } from "./mining/MultiTerminalSyncNotice.js";
 import { QuorumScoreExplanation } from "./mining/QuorumScoreExplanation.js";
+// Phase 45: New Mining UX components
+import { MiningStatusBar } from "./mining/MiningStatusBar.js";
+import { RewardBreakdownCard } from "./mining/RewardBreakdownCard.js";
+import { ReferralAndBoosterCard } from "./mining/ReferralAndBoosterCard.js";
+import { NetworkMiniHealthCard } from "./mining/NetworkMiniHealthCard.js";
+import { getOrCreateDeviceId } from "../core/ipSharingWeight.js";
 import { QuickStatusDashboard } from "./components/QuickStatusDashboard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
 import "./index.css";
@@ -984,7 +990,9 @@ function App() {
 
   // Handle chain reset (for Phase 5 migration or corruption recovery)
   const handleResetChain = () => {
-    const confirmMsg = "This will clear all chain data and snapshots, then start fresh. Continue?";
+    const confirmMsg = locale === "zh" 
+      ? "这将清除所有链数据和快照，然后重新开始。继续吗？"
+      : "This will clear all chain data and snapshots, then start fresh. Continue?";
     if (!confirm(confirmMsg)) {
       return;
     }
@@ -995,12 +1003,32 @@ function App() {
     } else {
       // If chainContext is null, clear directly from localStorage
       if (typeof localStorage !== "undefined") {
+        // Clear all possible storage keys
+        localStorage.removeItem("indexerchain_blocks_v1");
         localStorage.removeItem("indexerchain_blocks");
+        // Clear any other chain-related data
+        Object.keys(localStorage)
+          .filter(k => k.startsWith("indexerchain_") && (k.includes("block") || k.includes("chain")))
+          .forEach(k => localStorage.removeItem(k));
       }
     }
     
     // Clear all snapshots (they might be corrupted)
     clearAllSnapshots();
+    
+    // Clear other related data
+    if (typeof localStorage !== "undefined") {
+      // Clear snapshot metadata
+      localStorage.removeItem("indexerchain_snapshots_meta");
+      // Clear any snapshot data
+      Object.keys(localStorage)
+        .filter(k => k.startsWith("indexerchain_snapshot_"))
+        .forEach(k => localStorage.removeItem(k));
+      // Clear bootstrap state
+      localStorage.removeItem("indexerchain_bootstrap_state");
+      // Clear state repair data
+      localStorage.removeItem("indexerchain_state_repair");
+    }
     
     setNeedsReset(false);
     setError("");
@@ -2011,6 +2039,22 @@ function App() {
         if (heightDiff >= snapshotInterval) {
           logger.debug(`[Phase 32] ✅ Worker has snapshot meta at height ${payload.latestSnapshotMeta.height}, triggering snapshot download (height diff: ${heightDiff})`);
           
+          // Check if we have peers before attempting snapshot download
+          const connectedPeers = p2p.peers ? Array.from(p2p.peers.values()).filter((peer: any) => peer.connected && peer.dataChannel && peer.dataChannel.readyState === 'open') : [];
+          
+          if (connectedPeers.length === 0) {
+            logger.debug(`[Phase 32] No peers connected yet, will attempt snapshot download once peers connect. Falling back to block sync for now.`);
+            // Store snapshot meta for later when peers connect
+            if (typeof window !== "undefined") {
+              (window as any).pendingSnapshotDownload = {
+                snapshotMeta: payload.latestSnapshotMeta,
+                requestedAt: Date.now(),
+              };
+            }
+            // Continue with block sync instead
+            return;
+          }
+          
           // Trigger snapshot download from Worker's snapshot meta
           if (snapshotDownloader) {
             setTimeout(async () => {
@@ -2022,10 +2066,24 @@ function App() {
                   logger.debug(`[Phase 32] ✅ Snapshot downloaded successfully from Worker at height ${payload.latestSnapshotMeta.height}`);
                   // Snapshot will be applied automatically by the downloader
                 }).catch((error) => {
-                  console.error(`[Phase 32] ❌ Failed to download snapshot from Worker:`, error);
+                  // Only log as warning if it's "No available sources" (no peers), otherwise error
+                  const errorMsg = error instanceof Error ? error.message : String(error);
+                  if (errorMsg.includes("No available sources")) {
+                    logger.debug(`[Phase 32] ⚠️ Snapshot download skipped: no peers available. Will retry when peers connect.`);
+                    // Store for retry when peers connect
+                    if (typeof window !== "undefined") {
+                      (window as any).pendingSnapshotDownload = {
+                        snapshotMeta: payload.latestSnapshotMeta,
+                        requestedAt: Date.now(),
+                      };
+                    }
+                  } else {
+                    logger.warn(`[Phase 32] ⚠️ Failed to download snapshot from Worker: ${errorMsg}. Will fall back to block sync.`);
+                  }
                 });
               } catch (error) {
-                console.error(`[Phase 32] Error downloading snapshot from Worker:`, error);
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                logger.warn(`[Phase 32] ⚠️ Error downloading snapshot from Worker: ${errorMsg}. Will fall back to block sync.`);
               }
             }, 500);
           }
@@ -2430,6 +2488,42 @@ function App() {
       window.addEventListener("peer-connected", (event: any) => {
         const { peerCount } = event.detail || {};
         logger.debug(`[Phase 37] Peer connected event: peerCount=${peerCount}`);
+        
+        // Execute pending snapshot download if we have one
+        const pendingSnapshot = (window as any).pendingSnapshotDownload;
+        if (pendingSnapshot && peerCount > 0 && snapshotDownloader) {
+          const { snapshotMeta, requestedAt } = pendingSnapshot;
+          const age = Date.now() - requestedAt;
+          // Only retry if request is not too old (less than 5 minutes)
+          if (age < 5 * 60 * 1000) {
+            logger.debug(`[Phase 37] Retrying snapshot download now that peers are connected (height: ${snapshotMeta.height}, age: ${Math.round(age / 1000)}s)`);
+            setTimeout(async () => {
+              try {
+                snapshotDownloader.downloadSnapshot(snapshotMeta, {}, (progress) => {
+                  logger.debug(`[Phase 37] Snapshot download progress: ${progress.percent.toFixed(1)}% (${progress.receivedChunks}/${progress.totalChunks} chunks)`);
+                }).then(() => {
+                  logger.debug(`[Phase 37] ✅ Snapshot downloaded successfully at height ${snapshotMeta.height}`);
+                  // Clear pending snapshot
+                  delete (window as any).pendingSnapshotDownload;
+                }).catch((error) => {
+                  const errorMsg = error instanceof Error ? error.message : String(error);
+                  if (errorMsg.includes("No available sources")) {
+                    logger.debug(`[Phase 37] ⚠️ Snapshot download still failed: no sources available. Will retry later.`);
+                  } else {
+                    logger.warn(`[Phase 37] ⚠️ Snapshot download failed: ${errorMsg}`);
+                    // Clear pending snapshot if it's a different error (not just no sources)
+                    delete (window as any).pendingSnapshotDownload;
+                  }
+                });
+              } catch (error) {
+                logger.warn(`[Phase 37] ⚠️ Error retrying snapshot download:`, error);
+              }
+            }, 1000);
+          } else {
+            logger.debug(`[Phase 37] Pending snapshot download is too old (${Math.round(age / 1000)}s), clearing it`);
+            delete (window as any).pendingSnapshotDownload;
+          }
+        }
         
         // Execute pending bootstrap block request if we have one
         const pendingRequest = (window as any).pendingBootstrapBlockRequest;
@@ -5859,9 +5953,43 @@ function App() {
                   </div>
                 )}
 
-              {/* Mining Main Card - Top-level control */}
+              {/* Phase 45: Mining Status Bar */}
               {chainContext && (
                 <>
+                  <MiningStatusBar
+                    chainContext={chainContext}
+                    p2pNode={p2pNodeRef.current}
+                    finalityManager={finalityManager}
+                    localRole={localRole}
+                    bootstrapComplete={bootstrapComplete}
+                    nodeAddress={nodeAddress}
+                    miningWalletAddress={(() => {
+                      try {
+                        const walletStore = getMultiWalletStore();
+                        const miningWallet = walletStore.getMiningWallet();
+                        return miningWallet ? miningWallet.address : null;
+                      } catch (e) {
+                        return null;
+                      }
+                    })()}
+                    isMining={isMining}
+                    clusterMining={clusterMining}
+                    shadowNodeClient={shadowNodeRef.current}
+                    deviceId={(() => {
+                      try {
+                        return getOrCreateDeviceId();
+                      } catch (e) {
+                        return null;
+                      }
+                    })()}
+                    onShowDetails={() => {
+                      setActiveTab("network");
+                      // Could also open NetworkHealthPanel directly
+                    }}
+                    locale={locale}
+                  />
+
+                  {/* Mining Main Card - Top-level control (操作控件放在上面) */}
                   <MiningMainCard
                     chainContext={chainContext}
                     p2pNode={p2pNodeRef.current}
@@ -5902,7 +6030,7 @@ function App() {
                     locale={locale}
                   />
 
-                  {/* Phase 38: Live Stats Card */}
+                  {/* Phase 38: Live Stats Card (挖矿时的实时统计，也是操作相关) */}
                   {(isMining || clusterMining) && tip && tip.header && (
                     <MiningLiveStatsCard
                       miningMode={miningMode}
@@ -5915,6 +6043,64 @@ function App() {
                       locale={locale}
                     />
                   )}
+
+                  {/* 分隔线：操作控件和介绍性内容 */}
+                  <div style={{
+                    margin: "2rem 0",
+                    borderTop: "2px solid #e9ecef",
+                    paddingTop: "2rem"
+                  }}>
+                    <h3 style={{
+                      margin: "0 0 1.5rem 0",
+                      fontSize: "1.1rem",
+                      color: "#6c757d",
+                      fontWeight: "normal"
+                    }}>
+                      {locale === "zh" ? "📊 奖励与网络信息" : "📊 Rewards & Network Info"}
+                    </h3>
+                  </div>
+
+                  {/* Phase 45: Reward Breakdown Card (介绍性内容，移到下面) */}
+                  <RewardBreakdownCard
+                    chainContext={chainContext}
+                    p2pNode={p2pNodeRef.current}
+                    minerAddress={(() => {
+                      try {
+                        const walletStore = getMultiWalletStore();
+                        const miningWallet = walletStore.getMiningWallet();
+                        return miningWallet ? miningWallet.address : nodeAddress;
+                      } catch (e) {
+                        return nodeAddress;
+                      }
+                    })()}
+                    locale={locale}
+                  />
+
+                  {/* Phase 45: Referral & Booster Card (介绍性内容，移到下面) */}
+                  <ReferralAndBoosterCard
+                    minerAddress={(() => {
+                      try {
+                        const walletStore = getMultiWalletStore();
+                        const miningWallet = walletStore.getMiningWallet();
+                        return miningWallet ? miningWallet.address : nodeAddress;
+                      } catch (e) {
+                        return nodeAddress;
+                      }
+                    })()}
+                    currentHeight={tip?.header?.height || 0}
+                    locale={locale}
+                  />
+
+                  {/* Phase 45: Network Mini Health Card (介绍性内容，移到下面) */}
+                  <NetworkMiniHealthCard
+                    chainContext={chainContext}
+                    p2pNode={p2pNodeRef.current}
+                    finalityManager={finalityManager}
+                    localRole={localRole}
+                    bootstrapComplete={bootstrapComplete}
+                    nodeAddress={nodeAddress}
+                    locale={locale}
+                  />
 
                   {/* Phase 38: Advanced Settings Toggle */}
                   <div style={{ marginBottom: "1rem" }}>
@@ -7298,7 +7484,7 @@ function App() {
                     <div className="status-item">
                       <span className="label">{t("advanced.currentEra")}:</span>
                       <span className="value">
-                        {t("token.eraNumber")} {emissionStats.era} / {IDC_ERA_COUNT - 1}
+                        {t("token.eraNumber")} {emissionStats.year} / {IDC_EMISSION_YEARS - 1}
                       </span>
                     </div>
                     <div className="status-item">
@@ -7578,7 +7764,7 @@ function App() {
                           <div className="status-item">
                             <span className="label">{t("token.eraNumber")}:</span>
                             <span className="value" style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#667eea" }}>
-                              {stats.era} / {IDC_ERA_COUNT - 1}
+                              {stats.year} / {IDC_EMISSION_YEARS - 1}
                             </span>
                           </div>
                           <div className="status-item">
@@ -7617,15 +7803,16 @@ function App() {
                   <div className="status-card" style={{ background: "#f8f9fa" }}>
                     <p style={{ marginBottom: "1rem", lineHeight: "1.8" }}>
                       {locale === "zh" 
-                        ? "IDC 采用类似比特币的减半发行模型，总供应量固定为 10 亿 IDC，通过 10 个时代（每个时代 10 年）逐步发行。每个时代结束后，区块奖励减半。"
-                        : "IDC uses a Bitcoin-like halving emission model with a fixed total supply of 1 billion IDC, distributed over 10 eras (10 years each). Block rewards halve at the end of each era."}
+                        ? "IDC 采用最大化激励模型，专为浏览器挖矿优化。总供应量固定为 10 亿 IDC，通过 10 年逐步发行。第一年产出 50%（500M IDC），前 3 年产出 90%（875M IDC），最大化早期参与者的吸引力。"
+                        : "IDC uses a maximized incentive model optimized for browser mining. Fixed total supply of 1 billion IDC, distributed over 10 years. First year produces 50% (500M IDC), first 3 years produce 90% (875M IDC), maximizing attraction for early adopters."}
                     </p>
                     <ul style={{ marginLeft: "1.5rem", lineHeight: "1.8" }}>
                       <li>{locale === "zh" ? "总供应量：10 亿 IDC（固定上限）" : `Total Supply: 1 billion IDC (fixed cap)`}</li>
-                      <li>{locale === "zh" ? "发行周期：100 年（10 个时代）" : `Emission Period: 100 years (10 eras)`}</li>
+                      <li>{locale === "zh" ? "发行周期：10 年（不是 100 年）" : `Emission Period: 10 years (not 100 years)`}</li>
                       <li>{locale === "zh" ? "区块时间：约 10 秒" : `Block Time: ~10 seconds`}</li>
-                      <li>{locale === "zh" ? "减半机制：每 10 年减半一次" : `Halving: Every 10 years`}</li>
-                      <li>{locale === "zh" ? "时代区块数：31,536,000 个区块" : `Blocks per Era: 31,536,000 blocks`}</li>
+                      <li>{locale === "zh" ? "第一年产出：50%（500M IDC）" : `Year 1 Output: 50% (500M IDC)`}</li>
+                      <li>{locale === "zh" ? "前 3 年产出：90%（875M IDC）" : `First 3 Years: 90% (875M IDC)`}</li>
+                      <li>{locale === "zh" ? "每年区块数：3,153,600 个区块" : `Blocks per Year: 3,153,600 blocks`}</li>
                     </ul>
                   </div>
                 </div>
@@ -7637,49 +7824,61 @@ function App() {
                     <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", overflow: "hidden" }}>
                       <thead>
                         <tr style={{ background: "#667eea", color: "white" }}>
-                          <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{t("token.eraNumber")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{locale === "zh" ? "年份" : "Year"}</th>
                           <th style={{ padding: "0.75rem", textAlign: "left", border: "1px solid #ddd" }}>{t("token.years")}</th>
                           <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.rewardPerBlock")}</th>
-                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.totalEraReward")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{locale === "zh" ? "年度产出" : "Yearly Output"}</th>
                           <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{t("token.cumulativeReward")}</th>
+                          <th style={{ padding: "0.75rem", textAlign: "right", border: "1px solid #ddd" }}>{locale === "zh" ? "累计占比" : "Cumulative %"}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {Array.from({ length: IDC_ERA_COUNT }, (_, era) => {
-                          const eraReward = IDC_BASE_REWARD >> BigInt(era);
-                          const eraRewardIDC = uIDCToIDC(eraReward);
-                          const totalEraReward = eraReward * IDC_BLOCKS_PER_ERA;
-                          const totalEraRewardIDC = uIDCToIDC(totalEraReward);
+                        {Array.from({ length: IDC_EMISSION_YEARS }, (_, year) => {
+                          const yearReward = getBlockRewardRaw(year * Number(IDC_BLOCKS_PER_YEAR));
+                          const yearRewardIDC = uIDCToIDC(yearReward);
+                          const totalYearReward = yearReward * IDC_BLOCKS_PER_YEAR;
+                          const totalYearRewardIDC = uIDCToIDC(totalYearReward);
                           
                           // Calculate cumulative reward
                           let cumulative = 0n;
-                          for (let i = 0; i <= era; i++) {
-                            const eReward = IDC_BASE_REWARD >> BigInt(i);
-                            cumulative += eReward * IDC_BLOCKS_PER_ERA;
+                          for (let i = 0; i <= year; i++) {
+                            const yReward = getBlockRewardRaw(i * Number(IDC_BLOCKS_PER_YEAR));
+                            cumulative += yReward * IDC_BLOCKS_PER_YEAR;
                           }
                           const cumulativeIDC = uIDCToIDC(cumulative);
+                          const cumulativePercent = (Number(cumulative) / Number(IDC_MAX_SUPPLY)) * 100;
+                          
+                          const currentYear = chainContext ? getEmissionStats(height).year : 0;
+                          const isCurrentYear = year === currentYear;
+                          const isYear1 = year === 0;
+                          const isYear1To3 = year < 3;
                           
                           return (
                             <tr 
-                              key={era}
+                              key={year}
                               style={{ 
-                                background: era === (chainContext ? getEmissionStats(height).era : 0) ? "#fff3cd" : era % 2 === 0 ? "#f8f9fa" : "white"
+                                background: isCurrentYear ? "#fff3cd" : isYear1 ? "#d4edda" : isYear1To3 ? "#d1ecf1" : year % 2 === 0 ? "#f8f9fa" : "white",
+                                border: isYear1 ? "2px solid #28a745" : isCurrentYear ? "2px solid #ffc107" : undefined
                               }}
                             >
-                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", fontWeight: era === (chainContext ? getEmissionStats(height).era : 0) ? "bold" : "normal" }}>
-                                {era}
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", fontWeight: isCurrentYear ? "bold" : "normal" }}>
+                                {year + 1}
+                                {isYear1 && <span style={{ color: "#28a745", marginLeft: "0.5rem" }}>⭐</span>}
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd" }}>
-                                {era * 10} - {(era + 1) * 10}
+                                {year} - {year + 1}
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace" }}>
-                                {eraRewardIDC.toFixed(6)} IDC
+                                {yearRewardIDC.toFixed(6)} IDC
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace" }}>
-                                {totalEraRewardIDC.toLocaleString()} IDC
+                                {totalYearRewardIDC.toLocaleString()} IDC
                               </td>
                               <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace", fontWeight: "bold" }}>
                                 {cumulativeIDC.toLocaleString()} IDC
+                              </td>
+                              <td style={{ padding: "0.75rem", border: "1px solid #ddd", textAlign: "right", fontFamily: "monospace", fontWeight: "bold", color: isYear1 ? "#28a745" : isYear1To3 ? "#0c5460" : undefined }}>
+                                {cumulativePercent.toFixed(2)}%
                               </td>
                             </tr>
                           );
@@ -7724,19 +7923,27 @@ function App() {
                         </p>
                       </div>
                       <div>
-                        <strong style={{ color: "#155724" }}>✓ {t("token.deflationary")}</strong>
+                        <strong style={{ color: "#155724" }}>✓ {locale === "zh" ? "最大化早期激励" : "Maximized Early Incentives"}</strong>
                         <p style={{ margin: "0.5rem 0 0 0", color: "#155724", fontSize: "0.9rem" }}>
                           {locale === "zh" 
-                            ? "通过减半机制，区块奖励每 10 年减半，使代币发行速度逐渐降低，具有通缩特性。"
-                            : "Through halving mechanism, block rewards halve every 10 years, gradually reducing emission rate with deflationary characteristics."}
+                            ? "第一年产出 50%（500M IDC），前 3 年产出 90%（875M IDC），最大化早期参与者的吸引力，快速建立网络规模。"
+                            : "First year produces 50% (500M IDC), first 3 years produce 90% (875M IDC), maximizing attraction for early adopters and rapidly building network scale."}
+                        </p>
+                      </div>
+                      <div>
+                        <strong style={{ color: "#155724" }}>✓ {locale === "zh" ? "奖励系数系统" : "Reward Multiplier System"}</strong>
+                        <p style={{ margin: "0.5rem 0 0 0", color: "#155724", fontSize: "0.9rem" }}>
+                          {locale === "zh" 
+                            ? "IP 信誉分（0.3x-1.3x）和在线时长系数（0.5x-1.2x）双重激励，鼓励真实独立节点和长期稳定在线。"
+                            : "Dual incentive system: IP reputation (0.3x-1.3x) and session duration (0.5x-1.2x) multipliers, encouraging genuine independent nodes and long-term stability."}
                         </p>
                       </div>
                       <div>
                         <strong style={{ color: "#155724" }}>✓ {t("token.noInflation")}</strong>
                         <p style={{ margin: "0.5rem 0 0 0", color: "#155724", fontSize: "0.9rem" }}>
                           {locale === "zh" 
-                            ? "100 年发行期结束后，将不再产生新的代币，实现零通胀。"
-                            : "After the 100-year emission period ends, no new tokens will be created, achieving zero inflation."}
+                            ? "10 年发行期结束后，将不再产生新的代币，实现零通胀。"
+                            : "After the 10-year emission period ends, no new tokens will be created, achieving zero inflation."}
                         </p>
                       </div>
                     </div>

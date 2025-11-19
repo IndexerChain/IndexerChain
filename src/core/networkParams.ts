@@ -21,7 +21,7 @@ export const MAINNET_NETWORK_ID = "IXC_MAINNET_V1";
 export const MAINNET_PARAMS: ChainParams = {
   version: 1,
   networkId: MAINNET_NETWORK_ID,
-  genesisTimestamp: 1735689600, // Fixed timestamp: 2025-01-01 00:00:00 UTC
+  genesisTimestamp: 1710000000, // Phase 45: New genesis timestamp for chain reset (2024-03-10 00:00:00 UTC)
   initialDifficulty: 1,
   targetBlockTime: 10, // Target 10 seconds per block
   difficultyAdjustmentInterval: 10, // Adjust difficulty every 10 blocks

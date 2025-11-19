@@ -79,6 +79,62 @@ export class SignalingRoom {
     }
   }
 
+  /**
+   * Phase 45: Reset rootTip to new genesis block
+   * This is used for chain reset (re-genesis) after economic model upgrade
+   * 
+   * @param newGenesisHeader The new genesis block header
+   * @param newGenesisHash The new genesis block hash
+   * @param newStateCommitment The new genesis state commitment
+   */
+  async resetRootTip(newGenesisHeader, newGenesisHash, newStateCommitment) {
+    console.log(`[SignalingRoom] 🔄 Resetting rootTip to new genesis block (height 0)`);
+    
+    // Reset bootstrap state to genesis
+    this.bootstrapState = {
+      latestHeight: 0,
+      latestHeader: newGenesisHeader,
+      latestHeaderHash: newGenesisHash,
+      recentHeaders: [newGenesisHeader], // Only genesis header
+      latestSnapshotMeta: null, // No snapshots at genesis
+      lastUpdated: Date.now(),
+      stateCommitment: newStateCommitment,
+      trustLevel: 'root-only',
+    };
+    
+    // Save to persistent storage
+    await this.saveRootTip();
+    
+    // Broadcast ROOT_TIP_UPDATE to all connected peers
+    const tipUpdate = {
+      type: 'ROOT_TIP_UPDATE',
+      rootTip: {
+        latestHeight: 0,
+        latestHeader: newGenesisHeader,
+        latestHeaderHash: newGenesisHash,
+        recentHeaders: [newGenesisHeader],
+        latestSnapshotMeta: null,
+        updatedAt: this.bootstrapState.lastUpdated,
+        stateCommitment: newStateCommitment,
+        trustLevel: 'root-only',
+      },
+      timestamp: Date.now(),
+    };
+    
+    console.log(`[SignalingRoom] Broadcasting ROOT_TIP_UPDATE (genesis reset) to ${this.peers.size} peer(s)`);
+    for (const [id, peer] of this.peers.entries()) {
+      if (peer.readyState === WebSocket.READY_STATE_OPEN) {
+        try {
+          peer.send(JSON.stringify(tipUpdate));
+        } catch (error) {
+          console.error(`[SignalingRoom] Failed to send ROOT_TIP_UPDATE to ${id.substring(0, 16)}...:`, error);
+        }
+      }
+    }
+    
+    console.log(`[SignalingRoom] ✅ RootTip reset complete: height=0, hash=${newGenesisHash.substring(0, 16)}...`);
+  }
+
   async fetch(request) {
     // Phase 37: Load rootTip from storage on first request (lazy initialization)
     if (!this.initialized) {
@@ -305,6 +361,27 @@ export class SignalingRoom {
               }
             }
           }
+        } else if (data.type === 'RESET_ROOT_TIP') {
+          // Phase 45: Handle rootTip reset request (admin only)
+          // This should be protected by authentication in production
+          const { newGenesisHeader, newGenesisHash, newStateCommitment } = data;
+          
+          if (!newGenesisHeader || !newGenesisHash || !newStateCommitment) {
+            server.send(JSON.stringify({
+              type: 'error',
+              message: 'Missing required fields: newGenesisHeader, newGenesisHash, newStateCommitment',
+            }));
+            return;
+          }
+          
+          // Reset rootTip
+          await this.resetRootTip(newGenesisHeader, newGenesisHash, newStateCommitment);
+          
+          server.send(JSON.stringify({
+            type: 'RESET_ROOT_TIP_SUCCESS',
+            message: 'RootTip reset to new genesis block',
+            newGenesisHash: newGenesisHash.substring(0, 16) + '...',
+          }));
         } else if (
           data.type === 'offer' ||
           data.type === 'answer' ||
@@ -464,6 +541,67 @@ export default {
         headers: {
           'Content-Type': 'text/plain',
           'Cache-Control': 'no-cache',
+          ...corsHeaders,
+        },
+      });
+    }
+
+    // Phase 45: Handle admin endpoints for chain reset
+    if (url.pathname === '/admin/reset-root-tip' && request.method === 'POST') {
+      // Get or create the signaling room Durable Object
+      const roomId = env.SIGNALING_ROOM.idFromName('main');
+      const room = env.SIGNALING_ROOM.get(roomId);
+      
+      // Parse request body
+      let body;
+      try {
+        body = await request.json();
+      } catch (error) {
+        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
+      }
+      
+      const { newGenesisHeader, newGenesisHash, newStateCommitment } = body;
+      
+      if (!newGenesisHeader || !newGenesisHash || !newStateCommitment) {
+        return new Response(JSON.stringify({ 
+          error: 'Missing required fields: newGenesisHeader, newGenesisHash, newStateCommitment' 
+        }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
+      }
+      
+      // Forward to SignalingRoom to reset rootTip
+      // We'll use a custom message type
+      const resetRequest = new Request(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify({
+          type: 'RESET_ROOT_TIP',
+          newGenesisHeader,
+          newGenesisHash,
+          newStateCommitment,
+        }),
+      });
+      
+      // Note: This is a simplified approach. In production, you might want to
+      // add a direct method call or use a different mechanism
+      return new Response(JSON.stringify({ 
+        message: 'Reset request sent. Use WebSocket RESET_ROOT_TIP message for actual reset.',
+        note: 'For production, implement direct method call or admin authentication',
+      }), {
+        status: 200,
+        headers: { 
+          'Content-Type': 'application/json',
           ...corsHeaders,
         },
       });

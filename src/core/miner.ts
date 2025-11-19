@@ -59,13 +59,16 @@ export async function mineBlock(
 
   // Phase 7: Build candidate block (with coinbase and dynamic difficulty)
   // Phase 15: Pass current IndexState for stateCommitment calculation
+  // Phase 44: Pass chainContext for IP sharing weight calculation
   const block = await buildCandidateBlock(
     pendingTxs,
     prevBlock,
     allBlocks,
     chainContext.params,
     minerAddress as any,
-    chainContext.indexState
+    chainContext.indexState,
+    undefined, // p2pNode - will be passed from caller if available
+    chainContext // chainContext for IP sharing weight
   );
 
   // Phase 6: Use dynamic difficulty from block header
@@ -138,13 +141,16 @@ export async function mineBlockWithCancel(
 
   // Phase 7: Build candidate block (with coinbase and dynamic difficulty)
   // Phase 15: Pass current IndexState for stateCommitment calculation
+  // Phase 44: Pass chainContext for IP sharing weight calculation
   const block = await buildCandidateBlock(
     pendingTxs,
     prevBlock,
     allBlocks,
     chainContext.params,
     minerAddress as any,
-    chainContext.indexState
+    chainContext.indexState,
+    undefined, // p2pNode - will be passed from caller if available
+    chainContext // chainContext for IP sharing weight
   );
 
   // Phase 6: Use dynamic difficulty from block header

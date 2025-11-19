@@ -89,6 +89,48 @@ export class ShadowSession {
   }
 
   /**
+   * Phase 45: Reset shadow state to new genesis
+   * This clears all cached state and resets to height 0
+   */
+  async resetShadowState() {
+    console.log(`[ShadowSession] 🔄 Resetting shadow state to new genesis`);
+    
+    // Reset cached state to genesis
+    this.cachedState = {
+      latestHeight: 0,
+      latestHeader: null,
+      latestHeaderHash: "",
+      recentHeaders: [],
+      latestSnapshotMeta: null,
+      stateCommitment: null,
+      finalizedHeight: 0,
+      lastUpdated: Date.now(),
+    };
+    
+    // Clear active miner (new chain, no active miner)
+    this.activeMinerId = null;
+    this.activeMinerLastSeen = 0;
+    
+    // Clear persistent storage
+    try {
+      await this.state.storage.delete('height');
+      await this.state.storage.delete('tipHash');
+      await this.state.storage.delete('stateCommitment');
+      await this.state.storage.delete('snapshotMeta');
+      await this.state.storage.delete('recentHeaders');
+      await this.state.storage.delete('activeMinerId');
+      
+      // Save reset state
+      await this.saveSession();
+      
+      console.log(`[ShadowSession] ✅ Shadow state reset complete`);
+    } catch (error) {
+      console.error(`[ShadowSession] Failed to reset shadow state:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Connect to signaling server as shadow node
    */
   async connectToSignaling() {
@@ -228,6 +270,33 @@ export class ShadowSession {
           'Access-Control-Allow-Origin': '*',
         },
       });
+    }
+    
+    // Phase 45: Handle shadow state reset
+    if (path === '/reset' && request.method === 'POST') {
+      try {
+        await this.resetShadowState();
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Shadow state reset to genesis',
+        }), {
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message,
+        }), {
+          status: 500,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
     }
     
     // If path is just /shadow/{sessionId} or /, it's a WebSocket connection attempt

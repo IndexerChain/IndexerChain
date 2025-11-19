@@ -46,6 +46,13 @@ export function checkForFork(
   const localHeight = localTip.header.height;
   const localTipHash = localTip.hash;
 
+  // Special case: If local height is 0 (only genesis), don't trigger reorg
+  // This prevents the "Rewind height 0 must be less than local height 0" error
+  if (localHeight === 0) {
+    logger.debug(`[HardReorg] Local chain is at genesis (height 0), skipping fork check`);
+    return null;
+  }
+
   // If local tip hash matches root tip hash, we're on the correct chain
   if (localTipHash === rootTipHash) {
     return null;
@@ -140,6 +147,13 @@ export async function performHardReorg(
     }
 
     const localHeight = localTip.header.height;
+    
+    // Special case: If rewindHeight === 0 and localHeight === 0, there's nothing to rewind
+    // This can happen when chain is empty (only genesis) and fork detection tries to rewind to 0
+    if (rewindHeight === 0 && localHeight === 0) {
+      logger.info(`[HardReorg] Chain is already at height 0 (genesis only), no rewind needed`);
+      return { success: true, removedBlocks: 0 };
+    }
     
     if (rewindHeight >= localHeight) {
       return { success: false, error: `Rewind height ${rewindHeight} must be less than local height ${localHeight}`, removedBlocks: 0 };

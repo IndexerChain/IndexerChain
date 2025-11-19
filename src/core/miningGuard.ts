@@ -79,7 +79,8 @@ export interface MiningGuardResult {
     | "FOLLOWER_MODE"
     | "STATE_LOCK_MISMATCH" // Phase 36
     | "NO_RECENT_STATE_COMMITS" // Phase 36
-    | "STATE_DRIFT_DETECTED"; // Phase 36
+    | "STATE_DRIFT_DETECTED" // Phase 36
+    | "NOT_ACTIVE_MINER"; // Phase 44: Not the active miner for this device
   details?: {
     localHeight?: number;
     networkHeight?: number;
@@ -99,6 +100,12 @@ export interface MiningGuardResult {
     // Phase 39: Mining network stage information
     networkStage?: MiningNetworkStage;
     networkStageInfo?: MiningNetworkStageInfo;
+    // Phase 44: Active miner and device information
+    activeMinerId?: string;
+    currentMinerId?: string;
+    deviceId?: string;
+    ipSharingWeight?: number;
+    ipSharingPosition?: number;
   };
 }
 
@@ -214,6 +221,8 @@ export class MiningGuard {
 
   /**
    * Check if mining is safe to start
+   * 
+   * Phase 44: Added active miner check and device/IP restrictions
    */
   static async canMineNow(
     chainContext: ChainContext,
@@ -221,7 +230,9 @@ export class MiningGuard {
     finalityManager?: any,
     localInstanceRole?: "LEADER" | "FOLLOWER",
     miningWalletAddress?: string,
-    bootstrapComplete?: boolean // Phase 32: Bootstrap sync status (currently not used, but kept for future use)
+    bootstrapComplete?: boolean, // Phase 32: Bootstrap sync status
+    shadowNodeClient?: any, // Phase 44: Shadow Node client for active miner check
+    deviceId?: string // Phase 44: Device ID for device restriction
   ): Promise<MiningGuardResult> {
     // Phase 32: Check bootstrap sync status
     // bootstrapComplete === true means we've synced from signal server's rootTip
@@ -499,6 +510,29 @@ export class MiningGuard {
       }
     }
 
+    // Phase 44: Check 2.5: Active miner check (same device restriction)
+    // Rule: Same device can only have 1 active miner
+    if (shadowNodeClient && deviceId) {
+      const currentActiveMinerId = shadowNodeClient.getActiveMinerId();
+      const sessionId = shadowNodeClient.getSessionId();
+      const nodeId = p2pNode?.nodeId || "unknown";
+      const currentMinerId = sessionId ? `${sessionId}-${nodeId}` : `${deviceId}-${nodeId}`;
+      
+      // If there's an active miner and it's not us, block mining
+      if (currentActiveMinerId && currentActiveMinerId !== currentMinerId) {
+        return {
+          ok: false,
+          code: "NOT_ACTIVE_MINER",
+          reason: "Another device/tab is already mining. Only one active miner per device is allowed.",
+          details: {
+            activeMinerId: currentActiveMinerId,
+            currentMinerId,
+            deviceId,
+          },
+        };
+      }
+    }
+
     // Check 3: Valid mining wallet
     if (!miningWalletAddress || !miningWalletAddress.startsWith("idc_")) {
       return {
@@ -596,8 +630,37 @@ export class MiningGuard {
     // This would require integration with GlobalStateSentinel
     // For now, we'll just check if we have enough peers
     
+    // Phase 44: Calculate IP sharing weight
+    let ipSharingWeight = 1.0;
+    let ipSharingPosition = 1;
+    if (p2pNode && deviceId) {
+      try {
+        const { getIPSharingTracker } = await import("./ipSharingWeight.js");
+        const { getQuorumManager } = await import("./quorumManager.js");
+        
+        const ipSharingTracker = getIPSharingTracker();
+        const quorumManager = getQuorumManager();
+        quorumManager.initialize(p2pNode, chainContext);
+        const quorumStatus = quorumManager.getQuorumStatus();
+        
+        // Get IP hash from quorum status (if available)
+        // Try to find local peer's IP hash, or use deviceId
+        const localPeer = quorumStatus.peerMetrics.find(p => p.peerId === p2pNode?.nodeId);
+        const ipHash = localPeer?.ipHash || deviceId;
+        const minerId = deviceId;
+        
+        // Register this miner and get position
+        ipSharingPosition = ipSharingTracker.registerMiner(ipHash, minerId);
+        ipSharingWeight = ipSharingTracker.getSharingWeight(ipHash, minerId);
+      } catch (e) {
+        logger.debug("[Phase 44] Failed to calculate IP sharing weight:", e);
+        // Continue with default weight (1.0)
+      }
+    }
+
     // Phase 33: All checks passed, return with mining mode and quorum info
     // Phase 39: Include network stage information
+    // Phase 44: Include IP sharing weight information
     return {
       ok: true,
       mode: miningMode,
@@ -610,6 +673,10 @@ export class MiningGuard {
         independentPeerCount: quorumStatus.independentPeerCount,
         networkStage,
         networkStageInfo: stageInfo,
+        // Phase 44: IP sharing information
+        deviceId,
+        ipSharingWeight,
+        ipSharingPosition,
       },
     };
   }
@@ -696,6 +763,11 @@ export class MiningGuard {
         return isZh
           ? `🚫 挖矿就绪：已阻止 - 本窗口为只读模式（Follower）`
           : `🚫 Mining Ready: BLOCKED - This window is read-only (Follower)`;
+      
+      case "NOT_ACTIVE_MINER":
+        return isZh
+          ? `🚫 挖矿就绪：已阻止 - 另一台设备/标签页正在挖矿（同一设备只能有1个活跃矿工）`
+          : `🚫 Mining Ready: BLOCKED - Another device/tab is already mining (only 1 active miner per device allowed)`;
       
       default:
         return result.reason || (isZh ? "🚫 挖矿就绪：已阻止" : "🚫 Mining Ready: BLOCKED");
