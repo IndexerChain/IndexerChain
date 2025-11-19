@@ -72,9 +72,31 @@ export function checkForFork(
     if (recentHeaders && recentHeaders.length > 0) {
       const recentHashes = new Set(recentHeaders.map(h => h.hash));
       
+      // Special case: If local height is very low (e.g., 0 or 1), and we're far behind,
+      // this is likely just a sync issue, not a fork. We should check if any of our blocks
+      // are in the recent headers to determine if we're on the same chain.
+      if (localHeight <= 1 && heightDiff > 10) {
+        // If we're at genesis or height 1, and network is much higher, check if we have any common blocks
+        const allBlocks = chainContext.storage.getAllBlocks();
+        let hasCommonBlock = false;
+        for (const block of allBlocks) {
+          if (recentHashes.has(block.hash)) {
+            hasCommonBlock = true;
+            break;
+          }
+        }
+        
+        // If we have common blocks, we're on the same chain, just need to sync
+        // If we don't have common blocks, we might be on a fork, but at such low height,
+        // it's safer to just sync rather than reorg
+        if (hasCommonBlock) {
+          logger.debug(`[HardReorg] Local at low height (${localHeight}) with common blocks, not a fork - just need to sync`);
+          return null;
+        }
+      }
+      
       if (!recentHashes.has(localTipHash)) {
-        // Local tip hash is not in recent headers - we're on a fork!
-        logger.warn(`[HardReorg] Fork detected: local tip hash ${localTipHash.substring(0, 16)}... not in recent headers (${recentHeaders.length} headers checked)`);
+        // Local tip hash is not in recent headers - check if we're on a fork or just need to sync
         
         // Find common ancestor by checking if any of our recent blocks are in recent headers
         // We need to find the highest block in our chain that is also in the main chain
@@ -94,29 +116,58 @@ export function checkForFork(
           }
         }
         
-        // If no common ancestor found in recent blocks, check if we're too far behind
-        // In this case, we should rewind to a safe height (e.g., localHeight - 50, or 0)
-        let targetRewindHeight: number;
-        if (commonAncestorHeight >= 0) {
-          // Found common ancestor - rewind to that height (keep the common ancestor)
-          targetRewindHeight = commonAncestorHeight;
-        } else {
-          // No common ancestor found - we're on a completely different chain
-          // Rewind to a safe point: either localHeight - 50, or 0 if localHeight < 50
-          // This ensures we don't lose too much history, but also don't keep invalid blocks
-          targetRewindHeight = Math.max(0, localHeight - 50);
-          logger.warn(`[HardReorg] No common ancestor found in recent blocks. Rewinding to safe height ${targetRewindHeight}`);
+        // If no common ancestor found, check if we're just too far behind (not a fork)
+        // If local height is very low compared to root height, we're likely just out of sync
+        if (commonAncestorHeight < 0) {
+          // If we're at height 0 or very low, and network is much higher, this is likely just sync, not fork
+          if (localHeight <= 1 && heightDiff > 10) {
+            logger.debug(`[HardReorg] Local at very low height (${localHeight}), network at ${rootHeight} - likely just sync, not fork`);
+            return null;
+          }
+          
+          // If local height is significant but no common ancestor, we might be on a fork
+          // But only trigger reorg if local height is high enough (>= 10) to suggest we were synced before
+          if (localHeight < 10) {
+            logger.debug(`[HardReorg] Local height ${localHeight} is too low to be a fork - likely just need to sync`);
+            return null;
+          }
         }
         
-        return {
-          reorged: false, // Not yet reorged, just detected
-          rewindHeight: targetRewindHeight,
-          reason: `Local tip hash not in recent headers. Local: ${localHeight} (${localTipHash.substring(0, 16)}...), Root: ${rootHeight} (${rootTipHash.substring(0, 16)}...)`,
-          localHeight,
-          rootHeight,
-          localTipHash,
-          rootTipHash,
-        };
+        // If we found a common ancestor, we're on a fork and need to rewind
+        if (commonAncestorHeight >= 0) {
+          // Found common ancestor - rewind to that height (keep the common ancestor)
+          const targetRewindHeight = commonAncestorHeight;
+          
+          logger.warn(`[HardReorg] Fork detected: local tip hash ${localTipHash.substring(0, 16)}... not in recent headers (${recentHeaders.length} headers checked)`);
+          
+          return {
+            reorged: false, // Not yet reorged, just detected
+            rewindHeight: targetRewindHeight,
+            reason: `Local tip hash not in recent headers. Local: ${localHeight} (${localTipHash.substring(0, 16)}...), Root: ${rootHeight} (${rootTipHash.substring(0, 16)}...)`,
+            localHeight,
+            rootHeight,
+            localTipHash,
+            rootTipHash,
+          };
+        }
+        
+        // If we reach here, we didn't find a common ancestor but local height is high enough
+        // This could be a fork, but we'll be conservative and only rewind if local height is significant
+        if (localHeight >= 10) {
+          // Rewind to a safe point: either localHeight - 50, or 0 if localHeight < 50
+          const targetRewindHeight = Math.max(0, localHeight - 50);
+          logger.warn(`[HardReorg] No common ancestor found in recent blocks. Rewinding to safe height ${targetRewindHeight}`);
+          
+          return {
+            reorged: false, // Not yet reorged, just detected
+            rewindHeight: targetRewindHeight,
+            reason: `Local tip hash not in recent headers. Local: ${localHeight} (${localTipHash.substring(0, 16)}...), Root: ${rootHeight} (${rootTipHash.substring(0, 16)}...)`,
+            localHeight,
+            rootHeight,
+            localTipHash,
+            rootTipHash,
+          };
+        }
       }
     } else {
       // No recent headers provided, but height difference is significant
