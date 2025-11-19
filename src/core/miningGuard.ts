@@ -139,8 +139,36 @@ export class MiningGuard {
       miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
     }
     
-    // Phase 35: Check mainnet admission rules first (unless in Cold Start mode)
-    if (isMainnetNetwork && !isColdStartMode && p2pNode) {
+    // Phase 38: Check Genesis phase first (height = 0, allows mining with minimal requirements)
+    const isGenesisPhase = quorumManager.isGenesisPhase();
+    if (isGenesisPhase && isMainnetNetwork && p2pNode) {
+      const quorumStatus = quorumManager.getQuorumStatus();
+      
+      // Genesis mode: Check minimal requirements
+      // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
+      if (quorumStatus.ready && quorumStatus.independentPeerCount >= 2) {
+        console.log(`[Phase 38] 🌟 Genesis Quorum Mode: Allowing mining at height 0 (independent peers: ${quorumStatus.independentPeerCount}, score: ${quorumStatus.totalScore})`);
+        // Continue to other checks, but mining is allowed in Genesis mode
+      } else {
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "INSUFFICIENT_PEERS",
+          reason: `Genesis phase: Need ≥2 independent peers (current: ${quorumStatus.independentPeerCount}), stable peers, and bootstrap complete`,
+          details: {
+            peerCount,
+            requiredPeers: 2,
+            quorumScore: quorumStatus.totalScore,
+            requiredQuorumScore: quorumStatus.requiredScore,
+            independentPeerCount: quorumStatus.independentPeerCount,
+            requiredIndependentPeers: 2,
+          },
+        };
+      }
+    }
+    
+    // Phase 35: Check mainnet admission rules first (unless in Cold Start mode or Genesis mode)
+    if (isMainnetNetwork && !isColdStartMode && !isGenesisPhase && p2pNode) {
       const admissionStatus = quorumManager.getMainnetAdmissionStatus();
       
       if (admissionStatus.admissionReady) {

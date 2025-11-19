@@ -24,6 +24,7 @@
 import type { P2PNode } from "./p2p.js";
 import type { ChainContext } from "./chain.js";
 import { isMainnet } from "./networkParams.js";
+import { logger } from "./logger.js";
 
 /**
  * Phase 33: Peer quality metrics for quorum scoring
@@ -160,6 +161,19 @@ export class QuorumManager {
   private readonly MIN_ONLINE_DURATION_MS = 120000; // 2 minutes minimum online time
   private readonly MAX_LATENCY_MS = 200; // 200ms max latency for full score
   private readonly IP_HASH_KEY = "indexerchain_peer_ip_hashes"; // localStorage key for IP hash tracking
+  
+  // Track last logged values to avoid spam
+  private lastLoggedStatus: {
+    peerCount: number;
+    independentPeerCount: number;
+    totalScore: number;
+  } | null = null;
+  private lastLoggedAdmission: {
+    stage: string;
+    peerCount: number;
+    independentPeerCount: number;
+    totalScore: number;
+  } | null = null;
 
   /**
    * Initialize quorum manager
@@ -379,6 +393,33 @@ export class QuorumManager {
   }
 
   /**
+   * Check if we're in Genesis phase (height = 0, no blocks yet)
+   * Phase 38: Genesis Quorum Mode - allows mining at height 0 with minimal requirements
+   */
+  isGenesisPhase(): boolean {
+    if (!this.chainContext) {
+      return false;
+    }
+    
+    const localTip = this.chainContext.storage.getTip();
+    const localHeight = localTip?.header.height ?? 0;
+    
+    // Genesis phase: local height must be 0
+    if (localHeight !== 0) {
+      return false;
+    }
+    
+    // Check rootTip height from signal server (if available)
+    let rootTipHeight = 0;
+    if (typeof window !== "undefined" && (window as any).lastRootTipHeight !== undefined) {
+      rootTipHeight = (window as any).lastRootTipHeight || 0;
+    }
+    
+    // Genesis phase: both local and rootTip must be at height 0
+    return rootTipHeight === 0;
+  }
+
+  /**
    * Get quorum status
    */
   getQuorumStatus(): QuorumStatus {
@@ -398,8 +439,6 @@ export class QuorumManager {
     const peerMetrics = Array.from(this.peerMetrics.values())
       .filter(m => peers.some(p => p.id === m.peerId))
       .sort((a, b) => b.quorumScore - a.quorumScore);
-    
-    const totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
     
     // Calculate independent peer count: include all peers with IP hashes + local node
     const peerIPHashes = new Set<string>();
@@ -427,33 +466,106 @@ export class QuorumManager {
     
     const independentPeerCount = peerIPHashes.size;
     
-    // Debug logging - always log when checking quorum status
-    console.log("[QuorumManager] Quorum status check:", {
+    // Phase 38: Genesis Quorum Mode - special handling for height 0
+    const isGenesis = this.isGenesisPhase();
+    let totalScore: number;
+    let genesisReason: string | undefined;
+    
+    if (isGenesis) {
+      // Genesis mode: Check if we meet the minimal requirements
+      // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
+      const hasEnoughIndependentPeers = independentPeerCount >= 2;
+      
+      // Check if peers have been online > 2 minutes
+      const hasStablePeers = peerMetrics.length > 0 && 
+        peerMetrics.some(m => m.onlineDuration >= this.MIN_ONLINE_DURATION_MS);
+      
+      // Check bootstrapComplete (stored in window or bootstrapSync)
+      let bootstrapComplete = false;
+      if (typeof window !== "undefined") {
+        // Check if bootstrap is complete (from bootstrapSync or App.tsx)
+        bootstrapComplete = (window as any).bootstrapComplete === true || 
+                           (window as any).lastBootstrapHeight !== undefined;
+      }
+      
+      if (hasEnoughIndependentPeers && hasStablePeers && bootstrapComplete) {
+        // Genesis mode: Grant full score (100) to allow mining
+        totalScore = 100;
+        genesisReason = "Genesis phase: Network starting, minimal requirements met";
+        logger.info("[QuorumManager] 🌟 Genesis Quorum Mode activated:", {
+          independentPeerCount,
+          peerCount: peers.length,
+          bootstrapComplete,
+          reason: genesisReason,
+        });
+      } else {
+        // Genesis mode but requirements not met
+        totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
+        genesisReason = `Genesis phase: Requirements not met (independent peers: ${independentPeerCount} < 2, stable peers: ${hasStablePeers}, bootstrap: ${bootstrapComplete})`;
+      }
+    } else {
+      // Normal mode: Calculate score normally
+      totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
+    }
+    
+    // Debug logging - only log when values change or in debug mode
+    const currentStatus = {
       peerCount: peers.length,
       independentPeerCount,
-      peerIPHashes: Array.from(peerIPHashes),
-      peerMetrics: peerMetrics.map(m => ({
-        peerId: m.peerId.substring(0, 16),
-        ipHash: m.ipHash || "none",
-        score: m.quorumScore,
-      })),
-      peerInfo: peers.map(p => ({
-        peerId: p.id.substring(0, 16),
-        ipHash: (p as any).ipHash || "none",
-        connected: p.connected,
-      })),
-      localIPHash: localIPHash || "none",
-      localStorageIPHashes: Object.keys(this.loadIPHashes()),
-    });
+      totalScore,
+    };
     
-    // Warning if independent peer count is 0 but peers exist
+    const hasChanged = !this.lastLoggedStatus ||
+      this.lastLoggedStatus.peerCount !== currentStatus.peerCount ||
+      this.lastLoggedStatus.independentPeerCount !== currentStatus.independentPeerCount ||
+      Math.abs(this.lastLoggedStatus.totalScore - currentStatus.totalScore) >= 5; // Log if score changes by 5 or more
+    
+    if (hasChanged) {
+      this.lastLoggedStatus = currentStatus;
+      logger.debug("[QuorumManager] Quorum status check:", {
+        peerCount: peers.length,
+        independentPeerCount,
+        totalScore,
+        peerIPHashes: Array.from(peerIPHashes),
+        peerMetrics: peerMetrics.map(m => ({
+          peerId: m.peerId.substring(0, 16),
+          ipHash: m.ipHash || "none",
+          score: m.quorumScore,
+          breakdown: {
+            ipIndependence: m.scoreBreakdown.ipIndependence,
+            availability: m.scoreBreakdown.availability,
+            heightReliability: m.scoreBreakdown.heightReliability,
+            latency: m.scoreBreakdown.latency,
+            finalityParticipation: m.scoreBreakdown.finalityParticipation,
+            gsnContribution: m.scoreBreakdown.gsnContribution,
+          },
+          details: {
+            onlineDuration: Math.floor(m.onlineDuration / 1000) + "s",
+            reportedHeight: m.reportedHeight,
+            avgLatencyMs: m.avgLatencyMs,
+            finalityVotesSent: m.finalityVotesSent,
+            snapshotChunksServed: m.snapshotChunksServed,
+          },
+        })),
+      });
+    }
+    
+    // Warning if independent peer count is 0 but peers exist (always log warnings)
     if (independentPeerCount === 0 && peers.length > 0) {
-      console.warn("[QuorumManager] ⚠️ Independent peer count is 0 but peers exist - IP hashes may not be set correctly");
+      logger.warn("[QuorumManager] ⚠️ Independent peer count is 0 but peers exist - IP hashes may not be set correctly");
     }
     
     // Determine required score based on network stage
     const isMainnetNetwork = isMainnet(this.chainContext.params);
-    const requiredScore = this.getRequiredScore(isMainnetNetwork);
+    let requiredScore: number;
+    
+    if (isGenesis) {
+      // Genesis mode: Require 100 score (only granted if requirements met)
+      requiredScore = 100;
+    } else {
+      // Normal mode: Use standard thresholds
+      requiredScore = this.getRequiredScore(isMainnetNetwork);
+    }
     
     const ready = totalScore >= requiredScore;
     
@@ -464,7 +576,11 @@ export class QuorumManager {
       peerCount: peers.length,
       independentPeerCount,
       peerMetrics,
-      reason: ready ? undefined : `Total score ${totalScore} < required ${requiredScore}`,
+      reason: ready 
+        ? (isGenesis ? genesisReason : undefined)
+        : (isGenesis 
+          ? genesisReason || `Genesis phase: Requirements not met (score: ${totalScore} < required: ${requiredScore})`
+          : `Total score ${totalScore} < required ${requiredScore}`),
     };
   }
 
@@ -520,19 +636,30 @@ export class QuorumManager {
     const quorumStatus = this.getQuorumStatus();
     const stage = this.getNetworkStage();
     
-    // Debug logging for independent peer count
+    // Debug logging - only log when values change
     if (quorumStatus.peerCount > 0) {
-      console.log(`[QuorumManager] Admission status check:`, {
+      const currentAdmission = {
         stage,
         peerCount: quorumStatus.peerCount,
         independentPeerCount: quorumStatus.independentPeerCount,
         totalScore: quorumStatus.totalScore,
-        peerMetrics: quorumStatus.peerMetrics.map(m => ({
-          peerId: m.peerId.substring(0, 16),
-          ipHash: m.ipHash || "none",
-          score: m.quorumScore,
-        })),
-      });
+      };
+      
+      const hasChanged = !this.lastLoggedAdmission ||
+        this.lastLoggedAdmission.stage !== currentAdmission.stage ||
+        this.lastLoggedAdmission.peerCount !== currentAdmission.peerCount ||
+        this.lastLoggedAdmission.independentPeerCount !== currentAdmission.independentPeerCount ||
+        Math.abs(this.lastLoggedAdmission.totalScore - currentAdmission.totalScore) >= 5; // Log if score changes by 5 or more
+      
+      if (hasChanged) {
+        this.lastLoggedAdmission = currentAdmission;
+        logger.debug(`[QuorumManager] Admission status check:`, {
+          stage,
+          peerCount: quorumStatus.peerCount,
+          independentPeerCount: quorumStatus.independentPeerCount,
+          totalScore: quorumStatus.totalScore,
+        });
+      }
     }
     
     // Get thresholds from chain params or use defaults

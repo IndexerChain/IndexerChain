@@ -4828,33 +4828,60 @@ function App() {
                     }}
                   >
                     <h3 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.1rem", color: "#721c24" }}>
-                      {locale === "zh" ? "🚫 主网准入规则" : "🚫 Mainnet Admission Rules"}
+                      {locale === "zh" ? "📋 主网准入规则" : "📋 Mainnet Admission Rules"}
                     </h3>
-                    <div style={{ fontSize: "0.9rem", color: "#721c24" }}>
-                      {locale === "zh" ? "以下规则未通过：" : "The following rules are not met:"}
-                    </div>
-                    <ul style={{ marginTop: "0.5rem", paddingLeft: "1.5rem", fontSize: "0.85rem", color: "#721c24" }}>
+                    <ul style={{ marginTop: "0.5rem", paddingLeft: "0", fontSize: "0.85rem", listStyle: "none" }}>
                       {miningGuardResult.details?.independentPeerCount !== undefined &&
-                        miningGuardResult.details?.requiredIndependentPeers !== undefined && (
-                          <li>
-                            {locale === "zh"
-                              ? `规则 1: 需要至少 ${miningGuardResult.details.requiredIndependentPeers} 个独立节点 (当前: ${miningGuardResult.details.independentPeerCount})`
-                              : `Rule 1: At least ${miningGuardResult.details.requiredIndependentPeers} independent peers required (current: ${miningGuardResult.details.independentPeerCount})`}
-                            <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic", marginLeft: "1rem" }}>
-                              {locale === "zh"
-                                ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
-                                : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`}
-                            </div>
-                          </li>
-                        )}
+                        miningGuardResult.details?.requiredIndependentPeers !== undefined && (() => {
+                          const passed = miningGuardResult.details.independentPeerCount >= miningGuardResult.details.requiredIndependentPeers;
+                          return (
+                            <li style={{ 
+                              marginBottom: "0.75rem",
+                              padding: "0.75rem",
+                              background: passed ? "rgba(40, 167, 69, 0.1)" : "rgba(220, 53, 69, 0.1)",
+                              borderRadius: "6px",
+                              border: `1px solid ${passed ? "#28a745" : "#dc3545"}`,
+                              color: passed ? "#155724" : "#721c24"
+                            }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                                <span style={{ fontSize: "1.2rem" }}>{passed ? "✅" : "❌"}</span>
+                                <span style={{ fontWeight: "bold" }}>
+                                  {locale === "zh"
+                                    ? `规则 1: 需要至少 ${miningGuardResult.details.requiredIndependentPeers} 个独立节点 (当前: ${miningGuardResult.details.independentPeerCount})`
+                                    : `Rule 1: At least ${miningGuardResult.details.requiredIndependentPeers} independent peers required (current: ${miningGuardResult.details.independentPeerCount})`}
+                                </span>
+                              </div>
+                              <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic", marginLeft: "1.75rem" }}>
+                                {locale === "zh"
+                                  ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
+                                  : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`}
+                              </div>
+                            </li>
+                          );
+                        })()}
                       {miningGuardResult.details?.quorumScore !== undefined &&
-                        miningGuardResult.details?.requiredQuorumScore !== undefined && (
-                          <li>
-                            {locale === "zh"
-                              ? `规则 2: Quorum 分数需要 ≥ ${miningGuardResult.details.requiredQuorumScore} (当前: ${miningGuardResult.details.quorumScore})`
-                              : `Rule 2: Quorum score must be ≥ ${miningGuardResult.details.requiredQuorumScore} (current: ${miningGuardResult.details.quorumScore})`}
-                          </li>
-                        )}
+                        miningGuardResult.details?.requiredQuorumScore !== undefined && (() => {
+                          const passed = miningGuardResult.details.quorumScore >= miningGuardResult.details.requiredQuorumScore;
+                          return (
+                            <li style={{ 
+                              marginBottom: "0.75rem",
+                              padding: "0.75rem",
+                              background: passed ? "rgba(40, 167, 69, 0.1)" : "rgba(220, 53, 69, 0.1)",
+                              borderRadius: "6px",
+                              border: `1px solid ${passed ? "#28a745" : "#dc3545"}`,
+                              color: passed ? "#155724" : "#721c24"
+                            }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                                <span style={{ fontSize: "1.2rem" }}>{passed ? "✅" : "❌"}</span>
+                                <span style={{ fontWeight: "bold" }}>
+                                  {locale === "zh"
+                                    ? `规则 2: Quorum 分数需要 ≥ ${miningGuardResult.details.requiredQuorumScore} (当前: ${miningGuardResult.details.quorumScore})`
+                                    : `Rule 2: Quorum score must be ≥ ${miningGuardResult.details.requiredQuorumScore} (current: ${miningGuardResult.details.quorumScore})`}
+                                </span>
+                              </div>
+                            </li>
+                          );
+                        })()}
                       {localRole === "FOLLOWER" && (
                         <li>
                           {locale === "zh"
