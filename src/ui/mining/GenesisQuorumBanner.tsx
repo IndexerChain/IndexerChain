@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { getQuorumManager } from "../../core/quorumManager.js";
+import { MiningGuard } from "../../core/miningGuard.js";
 
 interface GenesisQuorumBannerProps {
   chainContext: ChainContext | null;
@@ -64,9 +65,13 @@ export function GenesisQuorumBanner({
             (window as any).lastBootstrapResponseTime !== undefined
           ));
 
+        // First year mode: Require ≥2 independent peers, Quorum ≥50
+        const isFirstYear = chainContext ? MiningGuard.isFirstYear(chainContext) : false;
+        const requiredPeers = isFirstYear ? 2 : 2; // First year: min 2 peers (same as normal Genesis)
+        
         setRequirements({
           independentPeers: quorumStatus.independentPeerCount,
-          requiredPeers: 2,
+          requiredPeers: requiredPeers,
           bootstrapComplete: isBootstrapComplete,
           stablePeers: hasStablePeers,
         });
@@ -122,9 +127,18 @@ export function GenesisQuorumBanner({
               lineHeight: "1.5",
             }}
           >
-            {isZh
-              ? "当前网络处于创世阶段，当有 ≥ 2 个独立节点在线并且已完成引导同步后，即可开始挖出第一个区块。"
-              : "The network is currently in Genesis phase. Once there are ≥ 2 independent peers online and bootstrap sync is complete, you can start mining the first block."}
+            {(() => {
+              const isFirstYear = chainContext ? MiningGuard.isFirstYear(chainContext) : false;
+              if (isFirstYear) {
+                return isZh
+                  ? "当前网络处于创世阶段（第一年模式），当有 ≥ 2 个独立节点在线、Quorum 分数 ≥ 50 并且已完成引导同步后，即可开始挖出第一个区块。第一年规则更宽松，更容易启动网络。"
+                  : "The network is currently in Genesis phase (First Year Mode). Once there are ≥ 2 independent peers online, Quorum score ≥ 50, and bootstrap sync is complete, you can start mining the first block. First year rules are more relaxed for easier network startup.";
+              } else {
+                return isZh
+                  ? "当前网络处于创世阶段，当有 ≥ 2 个独立节点在线并且已完成引导同步后，即可开始挖出第一个区块。"
+                  : "The network is currently in Genesis phase. Once there are ≥ 2 independent peers online and bootstrap sync is complete, you can start mining the first block.";
+              }
+            })()}
           </div>
 
           {!allRequirementsMet && (

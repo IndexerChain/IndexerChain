@@ -316,7 +316,7 @@ export class QuorumManager {
 
   /**
    * Calculate quorum score for a peer
-   * First year: Each peer max 40 points (IP 15, Availability 10, Height 10, Latency 5)
+   * First year: Each peer max 75 points (IP 30, Availability 20, Height 15, Latency 10)
    * Normal: Each peer max 100 points (IP 30, Availability 20, Height 20, Latency 10, Finality 10, GSN 10)
    */
   private calculatePeerScore(
@@ -328,9 +328,9 @@ export class QuorumManager {
     const isFirstYearMode = this.isFirstYear();
     
     if (isFirstYearMode) {
-      // 🟦 First Year (Year 0-1) - Simplified scoring (max 40 points per peer)
+      // 🟦 First Year (Year 0-1) - Relaxed scoring (max 75 points per peer)
       
-      // 1. IP Independence (0-15 points)
+      // 1. IP Independence (0-30 points) - Same as normal mode
       if (!metrics.ipHash) {
         breakdown.ipIndependence = 0;
       } else {
@@ -338,50 +338,51 @@ export class QuorumManager {
         if (sameIPCount > 1) {
           breakdown.ipIndependence = 0; // Same IP as other peers
         } else {
-          breakdown.ipIndependence = 15; // Unique IP
+          breakdown.ipIndependence = 30; // Unique IP
         }
       }
       
-      // 2. Availability (0-10 points)
+      // 2. Availability (0-20 points) - Same as normal mode
       if (metrics.onlineDuration >= this.MIN_ONLINE_DURATION_MS) {
-        breakdown.availability = 10;
+        breakdown.availability = 20;
       } else {
-        breakdown.availability = Math.floor((metrics.onlineDuration / this.MIN_ONLINE_DURATION_MS) * 10);
+        breakdown.availability = Math.floor((metrics.onlineDuration / this.MIN_ONLINE_DURATION_MS) * 20);
       }
       
-      // 3. Height Reliability (0-10 points)
+      // 3. Height Reliability (0-15 points) - Default 15 points even if height unknown
       if (metrics.reportedHeight !== undefined) {
         const heightDiff = Math.abs(metrics.reportedHeight - majorityHeight);
         if (heightDiff === 0) {
-          breakdown.heightReliability = 10;
+          breakdown.heightReliability = 15;
         } else if (heightDiff <= 3) {
-          breakdown.heightReliability = 8; // Close enough
+          breakdown.heightReliability = 12; // Close enough
         } else if (heightDiff <= 10) {
-          breakdown.heightReliability = 5; // Somewhat behind
+          breakdown.heightReliability = 10; // Somewhat behind
         } else {
-          breakdown.heightReliability = 0; // Too far behind
+          breakdown.heightReliability = 5; // Too far behind, but still give some points
         }
       } else {
-        breakdown.heightReliability = 5; // Unknown height = partial score
+        breakdown.heightReliability = 15; // Unknown height = default 15 points (loose mode)
       }
       
-      // 4. Latency (0-5 points)
-      // < 500ms = 5 points (first year is more lenient)
+      // 4. Latency (0-10 points) - Default ≥5, <200ms = 10
       if (metrics.avgLatencyMs !== undefined) {
-        if (metrics.avgLatencyMs <= 500) {
-          breakdown.latency = 5;
+        if (metrics.avgLatencyMs <= 200) {
+          breakdown.latency = 10; // <200ms = 10 points
+        } else if (metrics.avgLatencyMs <= 500) {
+          breakdown.latency = 8; // <500ms = 8 points
         } else {
-          breakdown.latency = Math.max(0, Math.floor(5 * (500 / metrics.avgLatencyMs)));
+          breakdown.latency = Math.max(5, Math.floor(10 * (200 / metrics.avgLatencyMs))); // Default ≥5
         }
       } else {
-        breakdown.latency = 2; // Unknown latency = partial score
+        breakdown.latency = 5; // Unknown latency = default 5 points
       }
       
-      // First year: Don't count Finality and GSN
+      // First year: Don't count Finality and GSN (fixed 0)
       breakdown.finalityParticipation = 0;
       breakdown.gsnContribution = 0;
       
-      // Calculate total score (max 40)
+      // Calculate total score (max 75: 30 + 20 + 15 + 10)
       metrics.quorumScore = 
         breakdown.ipIndependence +
         breakdown.availability +
@@ -705,8 +706,15 @@ export class QuorumManager {
     const thresholds = this.chainContext.params.mainnetQuorumThresholds || DEFAULT_MAINNET_THRESHOLDS.quorumScore;
     const peerThresholds = this.chainContext.params.mainnetMinIndependentPeers || DEFAULT_MAINNET_THRESHOLDS.independentPeers;
     
-    const requiredQuorumScore = thresholds[stage];
-    const requiredIndependentPeers = peerThresholds[stage];
+    // First year mode: Override thresholds (min 2 peers, Quorum ≥ 50)
+    const isFirstYearMode = this.isFirstYear();
+    let requiredQuorumScore = thresholds[stage];
+    let requiredIndependentPeers = peerThresholds[stage];
+    
+    if (isFirstYearMode) {
+      requiredQuorumScore = 50; // First year: Quorum ≥ 50
+      requiredIndependentPeers = 2; // First year: min 2 independent peers
+    }
     
     const admissionReady = 
       quorumStatus.totalScore >= requiredQuorumScore &&

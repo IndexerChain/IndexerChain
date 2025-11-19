@@ -104,6 +104,9 @@ export function MiningStatusBanner({
           label = isZh ? "已准备好，可以开始挖矿" : "Ready to Mine";
           color = "#28a745";
           
+          // First year mode: Show friendly message (requiredQuorumScore === 50)
+          const isFirstYearMode = result.details?.requiredQuorumScore === 50;
+          
           // Build summary
           const stageLabels: Record<string, string> = {
             coldStart: isZh ? "冷启动" : "Cold Start",
@@ -113,7 +116,14 @@ export function MiningStatusBanner({
           };
           const stageLabel = stageLabels[networkStage] || networkStage;
           
-          if (isGenesis) {
+          if (isFirstYearMode) {
+            const independentPeers = result.details?.independentPeerCount || 0;
+            const quorumScore = result.details?.quorumScore || 0;
+            const modeLabel = result.mode === "SAFE" ? (isZh ? "安全模式" : "SAFE") : (isZh ? "保护模式" : "GUARDED");
+            summary = isZh
+              ? `第一年模式 · ${modeLabel} · ${independentPeers} 个独立节点 · Quorum ${quorumScore}/50`
+              : `First Year Mode · ${modeLabel} · ${independentPeers} independent peers · Quorum ${quorumScore}/50`;
+          } else if (isGenesis) {
             summary = isZh
               ? `创世阶段 · ${quorumStatus.independentPeerCount} 个独立节点 · Quorum ${quorumStatus.totalScore}/100`
               : `Genesis · ${quorumStatus.independentPeerCount} independent peers · Quorum ${quorumStatus.totalScore}/100`;
@@ -127,7 +137,15 @@ export function MiningStatusBanner({
           icon = "⛔";
           label = isZh ? "当前无法挖矿" : "Mining Blocked";
           color = "#dc3545";
-          summary = result.reason || (isZh ? "挖矿被阻止" : "Mining is blocked");
+          
+          // First year mode: Use friendly reason message (requiredQuorumScore === 50)
+          const isFirstYearModeBlocked = result.details?.requiredQuorumScore === 50;
+          if (isFirstYearModeBlocked && result.reason) {
+            // Remove "First year: " prefix for cleaner display
+            summary = result.reason.replace(/^First year: /i, "");
+          } else {
+            summary = result.reason || (isZh ? "挖矿被阻止" : "Mining is blocked");
+          }
           reason = result.reason;
         }
 

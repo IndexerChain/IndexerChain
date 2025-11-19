@@ -5831,9 +5831,21 @@ function App() {
                                     : "✅ Mining Ready: SAFE (Network Healthy)";
                                   break;
                                 case "GUARDED":
-                                  statusMessage = locale === "zh"
-                                    ? `🟡 挖矿就绪：保护模式（对等节点不足：${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3}）`
-                                    : `🟡 Mining Ready: GUARDED (Insufficient peers: ${miningGuardResult.details?.peerCount || 0} < ${miningGuardResult.details?.requiredPeers || 3})`;
+                                  // First year mode: Show friendly message (requiredQuorumScore === 50)
+                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+                                  if (isFirstYearMode) {
+                                    const independentPeers = miningGuardResult.details?.independentPeerCount || 0;
+                                    const quorumScore = miningGuardResult.details?.quorumScore || 0;
+                                    statusMessage = locale === "zh"
+                                      ? `🟡 挖矿就绪：保护模式（第一年模式，${independentPeers} 个独立节点，Quorum ${quorumScore}/50）`
+                                      : `🟡 Mining Ready: GUARDED (First Year Mode, ${independentPeers} independent peers, Quorum ${quorumScore}/50)`;
+                                  } else {
+                                    const peerCount = miningGuardResult.details?.peerCount || 0;
+                                    const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? 3;
+                                    statusMessage = locale === "zh"
+                                      ? `🟡 挖矿就绪：保护模式（独立节点：${peerCount} < ${requiredPeers}）`
+                                      : `🟡 Mining Ready: GUARDED (Independent peers: ${peerCount} < ${requiredPeers})`;
+                                  }
                                   break;
                                 case "LOCAL_ONLY":
                                   statusMessage = locale === "zh" 
@@ -6055,21 +6067,42 @@ function App() {
               )}
 
               {/* Phase 38-E: Mainnet Mature Stage Requirements */}
+              {/* Show admission rules for mainnet, even if mining is allowed (first year mode) */}
               {chainContext &&
                 chainContext.params?.networkId === "IXC_MAINNET_V1" &&
                 miningGuardResult &&
-                !miningGuardResult.ok &&
-                miningGuardResult.code !== "NOT_FINALIZED" && (
+                miningGuardResult.details &&
+                (miningGuardResult.details.independentPeerCount !== undefined || 
+                 miningGuardResult.details.quorumScore !== undefined) && (
                   <div
                     className="status-card"
                     style={{
                       marginBottom: "1.5rem",
-                      background: "rgba(220, 53, 69, 0.1)",
-                      border: "2px solid #dc3545",
+                      // First year mode: show green/yellow if mining allowed, red if blocked
+                      background: miningGuardResult.ok 
+                        ? (miningGuardResult.mode === "SAFE" ? "rgba(40, 167, 69, 0.1)" : "rgba(255, 193, 7, 0.1)")
+                        : "rgba(220, 53, 69, 0.1)",
+                      border: `2px solid ${
+                        miningGuardResult.ok 
+                          ? (miningGuardResult.mode === "SAFE" ? "#28a745" : "#ffc107")
+                          : "#dc3545"
+                      }`,
                     }}
                   >
-                    <h3 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.1rem", color: "#721c24" }}>
+                    <h3 style={{ 
+                      margin: 0, 
+                      marginBottom: "1rem", 
+                      fontSize: "1.1rem", 
+                      color: miningGuardResult.ok 
+                        ? (miningGuardResult.mode === "SAFE" ? "#155724" : "#856404")
+                        : "#721c24"
+                    }}>
                       {locale === "zh" ? "📋 主网准入规则" : "📋 Mainnet Admission Rules"}
+                      {miningGuardResult.ok && miningGuardResult.details?.requiredQuorumScore === 50 && (
+                        <span style={{ fontSize: "0.85rem", marginLeft: "0.5rem", fontWeight: "normal" }}>
+                          ({locale === "zh" ? "第一年模式" : "First Year Mode"})
+                        </span>
+                      )}
                     </h3>
                     <ul style={{ marginTop: "0.5rem", paddingLeft: "0", fontSize: "0.85rem", listStyle: "none" }}>
                       {miningGuardResult.details?.independentPeerCount !== undefined &&
@@ -6093,9 +6126,18 @@ function App() {
                                 </span>
                               </div>
                               <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic", marginLeft: "1.75rem" }}>
-                                {locale === "zh"
-                                  ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
-                                  : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`}
+                                {(() => {
+                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+                                  if (isFirstYearMode) {
+                                    return locale === "zh"
+                                      ? `💡 第一年模式：需要至少 2 个独立节点（来自不同 IP 地址）。同一台电脑的多个标签页不算独立节点。第一年规则更宽松，便于网络启动。`
+                                      : `💡 First Year Mode: At least 2 independent peers (from different IP addresses) required. Multiple tabs on the same computer don't count. First year rules are more relaxed for easier network startup.`;
+                                  } else {
+                                    return locale === "zh"
+                                      ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
+                                      : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`;
+                                  }
+                                })()}
                               </div>
                             </li>
                           );
@@ -6103,12 +6145,14 @@ function App() {
                       {miningGuardResult.details?.quorumScore !== undefined &&
                         miningGuardResult.details?.requiredQuorumScore !== undefined && (() => {
                           const passed = miningGuardResult.details.quorumScore >= miningGuardResult.details.requiredQuorumScore;
+                          const isFirstYearMode = miningGuardResult.details.requiredQuorumScore === 50;
                           return (
                             <QuorumScoreExplanation
                               passed={passed}
                               currentScore={miningGuardResult.details.quorumScore}
                               requiredScore={miningGuardResult.details.requiredQuorumScore}
                               locale={locale}
+                              isFirstYearMode={isFirstYearMode}
                             />
                           );
                         })()}

@@ -82,30 +82,30 @@ export function MiningMainCard({
         const quorumScore = result.details.quorumScore ?? 0;
         const requiredQuorumScore = result.details.requiredQuorumScore ?? 80;
         const isGenesisMode = result.details.networkStage === "GENESIS_QUORUM";
-        // First year: requiredQuorumScore === 0 indicates first year mode
-        const isFirstYearMode = requiredQuorumScore === 0;
+        // First year: requiredQuorumScore === 50 indicates first year mode
+        const isFirstYearMode = requiredQuorumScore === 50;
         const independentPeerCount = result.details.independentPeerCount ?? 0;
         
-        // First year: Show score as info only, don't block
+        // First year: Show score info (required ≥50)
         if (isFirstYearMode) {
-          // First year: Score is informational only
+          // First year: Score must be ≥50 to mine
           if (quorumScore < 50) {
             reasons.push(
               isZh
-                ? `Quorum分数: ${quorumScore}（弱连接，但仍可挖矿）`
-                : `Quorum Score: ${quorumScore} (weak connection, but mining allowed)`
+                ? `Quorum分数不足: ${quorumScore} / 50（需要 ≥50 分才能挖矿）`
+                : `Insufficient Quorum Score: ${quorumScore} / 50 (need ≥50 to mine)`
             );
-          } else if (quorumScore < 80) {
+          } else if (quorumScore < 65) {
             reasons.push(
               isZh
-                ? `Quorum分数: ${quorumScore}（连接正常）`
-                : `Quorum Score: ${quorumScore} (connection normal)`
+                ? `Quorum分数: ${quorumScore}/50（连接正常）`
+                : `Quorum Score: ${quorumScore}/50 (connection normal)`
             );
           } else {
             reasons.push(
               isZh
-                ? `Quorum分数: ${quorumScore}（网络健康，多人在线）`
-                : `Quorum Score: ${quorumScore} (network healthy, multiple peers online)`
+                ? `Quorum分数: ${quorumScore}/50（网络健康，多人在线）`
+                : `Quorum Score: ${quorumScore}/50 (network healthy, multiple peers online)`
             );
           }
         } else if (quorumScore < requiredQuorumScore && !(isGenesisMode && independentPeerCount >= 2)) {
@@ -449,28 +449,50 @@ export function MiningMainCard({
             color: "#856404",
           }}
         >
-          {miningGuardResult.reason || (isZh ? "无法开始挖矿" : "Cannot start mining")}
-          {miningGuardResult.details && (
-            <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-              {miningGuardResult.details.quorumScore !== undefined && (
-                <div>
-                  {isZh ? "Quorum分数" : "Quorum Score"}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || 80}
+          {(() => {
+            const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+            const reason = miningGuardResult.reason?.replace(/^First year: /i, "") || (isZh ? "无法开始挖矿" : "Cannot start mining");
+            
+            return (
+              <>
+                <div style={{ fontWeight: "bold", marginBottom: "0.5rem" }}>
+                  {isFirstYearMode ? (isZh ? "第一年模式挖矿要求" : "First Year Mode Requirements") : (isZh ? "挖矿要求" : "Mining Requirements")}
                 </div>
-              )}
-              {miningGuardResult.details.independentPeerCount !== undefined && (
-                <div>
-                  {isZh ? "独立节点" : "Independent Peers"}: {miningGuardResult.details.independentPeerCount} / {miningGuardResult.details.requiredIndependentPeers || 1}
-                  {miningGuardResult.details.independentPeerCount < (miningGuardResult.details.requiredIndependentPeers || 1) && (
-                    <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
-                      {isZh 
-                        ? "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）"
-                        : "💡 Need peers from different IPs (multiple tabs on same computer don't count)"}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                <div>{reason}</div>
+                {miningGuardResult.details && (
+                  <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+                    {miningGuardResult.details.quorumScore !== undefined && (
+                      <div>
+                        {isZh ? "Quorum分数" : "Quorum Score"}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || (isFirstYearMode ? 50 : 80)}
+                        {isFirstYearMode && (
+                          <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
+                            {isZh ? "(第一年要求 ≥50)" : "(First Year: ≥50)"}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {miningGuardResult.details.independentPeerCount !== undefined && (
+                      <div>
+                        {isZh ? "独立节点" : "Independent Peers"}: {miningGuardResult.details.independentPeerCount} / {miningGuardResult.details.requiredIndependentPeers || (isFirstYearMode ? 2 : 3)}
+                        {isFirstYearMode && (
+                          <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
+                            {isZh ? "(第一年要求 ≥2)" : "(First Year: ≥2)"}
+                          </span>
+                        )}
+                        {miningGuardResult.details.independentPeerCount < (miningGuardResult.details.requiredIndependentPeers || (isFirstYearMode ? 2 : 3)) && (
+                          <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
+                            {isZh 
+                              ? "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）"
+                              : "💡 Need peers from different IPs (multiple tabs on same computer don't count)"}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 

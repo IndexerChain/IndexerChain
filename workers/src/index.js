@@ -464,14 +464,32 @@ export default {
     }
 
     // Phase 40: Handle Shadow Node routes
-    // Support both /shadow/... and /init?sessionId=... patterns
-    if (url.pathname.startsWith('/shadow/') || url.pathname === '/shadow' || url.pathname === '/init') {
+    // Support /shadow/..., /init, /setActiveMiner, /getActiveMiner patterns
+    const shadowNodePaths = [
+      '/shadow', '/init', '/setActiveMiner', '/getActiveMiner',
+      '/sync', '/ping', '/reset'
+    ];
+    const isShadowNodeRoute = url.pathname.startsWith('/shadow/') || 
+                              shadowNodePaths.includes(url.pathname);
+    
+    if (isShadowNodeRoute) {
       // Extract sessionId from path or query
       let sessionId = url.searchParams.get('sessionId');
       
       if (!sessionId && url.pathname.startsWith('/shadow/')) {
         const parts = url.pathname.split('/');
         sessionId = parts[2];
+      }
+      
+      // For /setActiveMiner and /getActiveMiner, sessionId is required
+      if (!sessionId && (url.pathname === '/setActiveMiner' || url.pathname === '/getActiveMiner')) {
+        return new Response(JSON.stringify({ error: 'Missing sessionId' }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
       }
       
       if (!sessionId && url.pathname !== '/shadow' && url.pathname !== '/init') {

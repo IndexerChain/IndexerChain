@@ -334,17 +334,27 @@ export class MiningGuard {
         logger.debug("[First Year] State drift check failed, assuming no critical drift:", e);
       }
       
-      // First year: Check independent peers and bootstrap status
-      if (quorumStatus.independentPeerCount >= 2 && bootstrapComplete && !stateDriftCritical) {
-        logger.info(`[First Year] ✅ Allowing mining: ${quorumStatus.independentPeerCount} independent peers, bootstrap complete, no critical drift (score: ${quorumStatus.totalScore}, not required)`);
+      // First year: Check independent peers, Quorum score, and bootstrap status
+      // First year requires: ≥2 independent peers, Quorum ≥ 50, bootstrapComplete, no critical drift
+      const firstYearRequiredQuorum = 50;
+      const firstYearRequiredPeers = 2;
+      
+      if (quorumStatus.independentPeerCount >= firstYearRequiredPeers && 
+          quorumStatus.totalScore >= firstYearRequiredQuorum &&
+          bootstrapComplete && 
+          !stateDriftCritical) {
+        logger.info(`[First Year] ✅ Allowing mining (SAFE): ${quorumStatus.independentPeerCount} independent peers, Quorum ${quorumStatus.totalScore} ≥ ${firstYearRequiredQuorum}, bootstrap complete, no critical drift`);
         miningMode = "SAFE";
-        // Skip all QuorumScore/StateLock/Finality checks for first year
+        // Skip all StateLock/Finality checks for first year (but Quorum score is checked above)
         // Continue to wallet/network checks, then return success
       } else {
         // First year: Still need minimal requirements
         const reasons: string[] = [];
-        if (quorumStatus.independentPeerCount < 2) {
-          reasons.push(`Need ≥2 independent peers (current: ${quorumStatus.independentPeerCount})`);
+        if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
+          reasons.push(`Need ≥${firstYearRequiredPeers} independent peers (current: ${quorumStatus.independentPeerCount})`);
+        }
+        if (quorumStatus.totalScore < firstYearRequiredQuorum) {
+          reasons.push(`Quorum score ${quorumStatus.totalScore} < required ${firstYearRequiredQuorum}`);
         }
         if (!bootstrapComplete) {
           reasons.push("Bootstrap not complete");
@@ -360,16 +370,16 @@ export class MiningGuard {
           reason: `First year: ${reasons.join(", ")}`,
           details: {
             peerCount,
-            requiredPeers: 2,
+            requiredPeers: firstYearRequiredPeers,
             quorumScore: quorumStatus.totalScore,
-            requiredQuorumScore: 0, // First year: not required (used as identifier for first year mode)
+            requiredQuorumScore: firstYearRequiredQuorum, // First year: Quorum ≥ 50
             independentPeerCount: quorumStatus.independentPeerCount,
-            requiredIndependentPeers: 2,
+            requiredIndependentPeers: firstYearRequiredPeers, // First year: min 2 independent peers
             networkStage: "GENESIS_QUORUM", // Use existing stage type
             networkStageInfo: {
               stage: "GENESIS_QUORUM",
-              relaxedChecks: ["QuorumScore", "StateLock", "Finality"],
-              description: "First year: Relaxed rules - only require ≥2 independent IPs, bootstrap complete, no critical drift",
+              relaxedChecks: ["StateLock", "Finality", "GSN"], // Quorum score is still required (≥50)
+              description: "First year: Relaxed rules - require ≥2 independent IPs, Quorum ≥50, bootstrap complete, no critical drift",
             },
           },
         };
@@ -733,6 +743,21 @@ export class MiningGuard {
     // Phase 33: All checks passed, return with mining mode and quorum info
     // Phase 39: Include network stage information
     // Phase 44: Include IP sharing weight information
+    // First year: Set requiredQuorumScore to 50, requiredIndependentPeers to 2
+    const isFirstYearModeForDisplay = this.isFirstYear(chainContext) && isMainnet(chainContext.params);
+    const requiredQuorumScoreForDisplay = isFirstYearModeForDisplay ? 50 : quorumStatus.requiredScore;
+    
+    // Get required independent peers (first year: 2, normal: from admission status)
+    let requiredIndependentPeers = 3; // Default for normal mode
+    if (isFirstYearModeForDisplay) {
+      requiredIndependentPeers = 2; // First year: min 2 independent peers
+    } else if (p2pNode) {
+      const quorumManager = getQuorumManager();
+      quorumManager.initialize(p2pNode, chainContext);
+      const admissionStatus = quorumManager.getMainnetAdmissionStatus();
+      requiredIndependentPeers = admissionStatus.requiredIndependentPeers;
+    }
+    
     return {
       ok: true,
       mode: miningMode,
@@ -741,8 +766,9 @@ export class MiningGuard {
         peerCount,
         requiredPeers: minPeersRequired,
         quorumScore: quorumStatus.totalScore,
-        requiredQuorumScore: quorumStatus.requiredScore,
+        requiredQuorumScore: requiredQuorumScoreForDisplay,
         independentPeerCount: quorumStatus.independentPeerCount,
+        requiredIndependentPeers: isFirstYearModeForDisplay ? (quorumStatus.independentPeerCount >= 2 ? 2 : 1) : requiredIndependentPeers,
         networkStage,
         networkStageInfo: stageInfo,
         // Phase 44: IP sharing information
@@ -783,6 +809,13 @@ export class MiningGuard {
           : `🚫 Mining Ready: BLOCKED - Node not synced (local height: ${result.details?.localHeight || 0})`;
       
       case "INSUFFICIENT_PEERS":
+        // First year mode: Show friendly message (requiredQuorumScore === 50)
+        const isFirstYearMode = result.details?.requiredQuorumScore === 50;
+        if (isFirstYearMode && result.reason) {
+          // Use the reason from first year mode (already formatted)
+          return result.reason;
+        }
+        
         // Phase 39: Show independent peers requirement for mainnet, or total peers for dev/testnet
         const requiredPeers = result.details?.requiredIndependentPeers ?? result.details?.requiredPeers ?? 3;
         const currentPeers = result.details?.requiredIndependentPeers !== undefined 
@@ -796,7 +829,7 @@ export class MiningGuard {
         const peersInsufficient = currentPeers < requiredPeers;
         
         // If peers are sufficient but quorum score is insufficient, show quorum score issue instead
-        if (!peersInsufficient && result.details?.quorumScore !== undefined && result.details?.requiredQuorumScore !== undefined) {
+        if (!peersInsufficient && result.details?.quorumScore !== undefined && result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore > 0) {
           const quorumScore = result.details.quorumScore;
           const requiredQuorumScore = result.details.requiredQuorumScore;
           return isZh

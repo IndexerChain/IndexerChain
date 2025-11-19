@@ -157,7 +157,46 @@ export function MiningStatusBar({
       return isZh ? "本设备不是 Active Miner" : "Not Active Miner";
     }
 
-    if (miningGuardResult.details?.quorumScore !== undefined) {
+    // First year mode: Use friendly reason message (requiredQuorumScore === 50)
+    const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore === 50;
+    if (isFirstYearMode && miningGuardResult.reason) {
+      // Remove "First year: " prefix for cleaner display
+      const reason = miningGuardResult.reason.replace(/^First year: /i, "");
+      return reason;
+    }
+
+    // For INSUFFICIENT_PEERS, show friendly message
+    if (miningGuardResult.code === "INSUFFICIENT_PEERS") {
+      const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? 3;
+      const currentPeers = miningGuardResult.details?.requiredIndependentPeers !== undefined 
+        ? (miningGuardResult.details?.independentPeerCount ?? 0)
+        : (miningGuardResult.details?.peerCount ?? 0);
+      const peerLabel = miningGuardResult.details?.requiredIndependentPeers !== undefined
+        ? (isZh ? "独立节点" : "independent peers")
+        : (isZh ? "对等节点" : "peers");
+      
+      // First year mode: Show friendly message
+      if (isFirstYearMode) {
+        if (currentPeers < 1) {
+          return isZh 
+            ? `需要至少 1 个独立节点（当前: ${currentPeers}），建议 ≥2 个`
+            : `Need at least 1 independent peer (current: ${currentPeers}), recommend ≥2`;
+        }
+        // If peers are sufficient but bootstrap not complete, show bootstrap message
+        if (miningGuardResult.reason?.includes("Bootstrap")) {
+          return miningGuardResult.reason.replace(/^First year: /i, "");
+        }
+      }
+      
+      // Normal mode: Show peer count
+      if (currentPeers < requiredPeers) {
+        return isZh
+          ? `${peerLabel}不足（${currentPeers} < ${requiredPeers}）`
+          : `Insufficient ${peerLabel} (${currentPeers} < ${requiredPeers})`;
+      }
+    }
+
+    if (miningGuardResult.details?.quorumScore !== undefined && !isFirstYearMode) {
       const score = miningGuardResult.details.quorumScore;
       const required = miningGuardResult.details.requiredQuorumScore || 80;
       if (score < required) {
