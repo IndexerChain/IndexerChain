@@ -308,6 +308,13 @@ export function MiningMainCard({
               {miningGuardResult.details.independentPeerCount !== undefined && (
                 <div>
                   {isZh ? "独立节点" : "Independent Peers"}: {miningGuardResult.details.independentPeerCount} / {miningGuardResult.details.requiredIndependentPeers || 1}
+                  {miningGuardResult.details.independentPeerCount < (miningGuardResult.details.requiredIndependentPeers || 1) && (
+                    <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
+                      {isZh 
+                        ? "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）"
+                        : "💡 Need peers from different IPs (multiple tabs on same computer don't count)"}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -410,14 +410,36 @@ export class BrowserP2PNode implements P2PNode {
         
         // Handle IP hash
         if (message.ipHash) {
+          logger.debug(`[P2P] Received own IP hash in JOIN_ACK: ${message.ipHash}`);
           if (typeof window !== "undefined") {
             (async () => {
               try {
                 const { getQuorumManager } = await import("./quorumManager.js");
                 const quorumManager = getQuorumManager();
                 quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
+                logger.debug(`[P2P] Set own IP hash in QuorumManager: ${this.nodeId.substring(0, 16)}... -> ${message.ipHash}`);
               } catch (error) {
                 logger.warn("[P2P] Failed to set IP hash:", error);
+              }
+            })();
+          }
+        }
+        
+        // Phase 33: Handle IP hashes for peer list in JOIN_ACK
+        if (message.peerIPHashes) {
+          const peerIPHashes = message.peerIPHashes;
+          logger.debug(`[P2P] Received IP hashes in JOIN_ACK for ${Object.keys(peerIPHashes).length} peer(s):`, peerIPHashes);
+          if (typeof window !== "undefined") {
+            (async () => {
+              try {
+                const { getQuorumManager } = await import("./quorumManager.js");
+                const quorumManager = getQuorumManager();
+                for (const [peerId, ipHash] of Object.entries(peerIPHashes)) {
+                  quorumManager.setPeerIPHash(peerId, ipHash as string);
+                  logger.debug(`[P2P] Set IP hash for peer ${peerId.substring(0, 16)}... from JOIN_ACK: ${ipHash}`);
+                }
+              } catch (error) {
+                logger.warn("[P2P] Failed to set peer IP hashes from JOIN_ACK:", error);
               }
             })();
           }
@@ -458,12 +480,14 @@ export class BrowserP2PNode implements P2PNode {
           // Set our own IP hash
           // Note: This is set when we receive the 'peers' response
           // We'll store it and use it for quorum scoring
+          logger.debug(`[P2P] Received own IP hash from signal server: ${message.ipHash}`);
           if (typeof window !== "undefined") {
             (async () => {
               try {
                 const { getQuorumManager } = await import("./quorumManager.js");
                 const quorumManager = getQuorumManager();
                 quorumManager.setPeerIPHash(this.nodeId, message.ipHash);
+                logger.debug(`[P2P] Set own IP hash in QuorumManager: ${this.nodeId.substring(0, 16)}... -> ${message.ipHash}`);
               } catch (error) {
                 logger.warn("[P2P] Failed to set IP hash:", error);
               }
@@ -475,6 +499,7 @@ export class BrowserP2PNode implements P2PNode {
         if (message.peerIPHashes) {
           // Signal server may send IP hashes for all peers
           const peerIPHashes = message.peerIPHashes;
+          logger.debug(`[P2P] Received IP hashes for ${Object.keys(peerIPHashes).length} peer(s):`, peerIPHashes);
           if (typeof window !== "undefined") {
             (async () => {
               try {
@@ -482,6 +507,7 @@ export class BrowserP2PNode implements P2PNode {
                 const quorumManager = getQuorumManager();
                 for (const [peerId, ipHash] of Object.entries(peerIPHashes)) {
                   quorumManager.setPeerIPHash(peerId, ipHash as string);
+                  logger.debug(`[P2P] Set IP hash for peer ${peerId.substring(0, 16)}...: ${ipHash}`);
                 }
               } catch (error) {
                 logger.warn("[P2P] Failed to set peer IP hashes:", error);
@@ -530,6 +556,22 @@ export class BrowserP2PNode implements P2PNode {
         // Phase 37: Handle new peer notification from signal server
         // When signal server notifies us about a new peer, initiate connection
         const newPeerId = message.peerId;
+        const newPeerIPHash = message.ipHash;
+        
+        // Phase 33: Set IP hash for new peer if provided
+        if (newPeerIPHash && typeof window !== "undefined") {
+          (async () => {
+            try {
+              const { getQuorumManager } = await import("./quorumManager.js");
+              const quorumManager = getQuorumManager();
+              quorumManager.setPeerIPHash(newPeerId, newPeerIPHash);
+              logger.debug(`[P2P] Set IP hash for new peer ${newPeerId.substring(0, 16)}...: ${newPeerIPHash}`);
+            } catch (error) {
+              logger.warn("[P2P] Failed to set IP hash for new peer:", error);
+            }
+          })();
+        }
+        
         if (newPeerId && newPeerId !== this.nodeId && !this.peers.has(newPeerId)) {
           logger.debug(`[P2P] Signal server notified about new peer: ${newPeerId.substring(0, 16)}..., initiating connection`);
           this.initiatePeerConnection(newPeerId);
@@ -847,6 +889,26 @@ export class BrowserP2PNode implements P2PNode {
       peerInfo.connected = true;
       peerInfo.lastSeen = Date.now();
       logger.debug(`[P2P] Total connected peers: ${this.getPeerCount()}`);
+      
+      // Phase 33: Log IP hash for connected peer
+      if (typeof window !== "undefined") {
+        (async () => {
+          try {
+            const { getQuorumManager } = await import("./quorumManager.js");
+            const quorumManager = getQuorumManager();
+            const ipHash = quorumManager.getPeerIPHash(peerInfo.id);
+            const peerIPHash = (peerInfo as any).ipHash;
+            logger.debug(`[P2P] Peer ${peerInfo.id.substring(0, 16)}... connected - IP hash: ${ipHash || peerIPHash || "not set"}`);
+            
+            // If IP hash is not set, try to get it from signal server
+            if (!ipHash && !peerIPHash) {
+              logger.warn(`[P2P] ⚠️ Peer ${peerInfo.id.substring(0, 16)}... has no IP hash - independent peer count may be incorrect`);
+            }
+          } catch (error) {
+            logger.warn("[P2P] Failed to check peer IP hash:", error);
+          }
+        })();
+      }
       
       // Phase 30: Send network handshake when data channel opens
       // This will be handled by App.tsx after P2P connection is established

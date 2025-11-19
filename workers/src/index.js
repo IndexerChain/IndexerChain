@@ -16,6 +16,8 @@ export class SignalingRoom {
     this.state = state;
     this.env = env;
     this.peers = new Map();
+    // Phase 33: Track IP hashes for all peers
+    this.peerIPHashes = new Map(); // Map<nodeId, ipHash>
     this.bootstrapState = {
       latestHeight: 0,
       latestHeader: null,
@@ -118,15 +120,27 @@ export class SignalingRoom {
           ipHash = btoa(ipHash).substring(0, 16);
 
           console.log(`[SignalingRoom] Node ${nodeId.substring(0, 16)}... joined. Total peers: ${this.peers.size}. IP hash: ${ipHash}`);
+          
+          // Phase 33: Store IP hash for this peer
+          this.peerIPHashes.set(nodeId, ipHash);
 
           // Send list of existing peers to the new node
           const peerList = Array.from(this.peers.keys()).filter((id) => id !== nodeId);
+          
+          // Phase 33: Build IP hashes object for all existing peers
+          const peerIPHashes = {};
+          for (const [id, hash] of this.peerIPHashes.entries()) {
+            if (id !== nodeId) {
+              peerIPHashes[id] = hash;
+            }
+          }
           
           // Send JOIN_ACK with peers list AND rootTip (even if peers is empty)
           server.send(JSON.stringify({
             type: 'JOIN_ACK',
             peers: peerList,
             ipHash: ipHash,
+            peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all existing peers
             // Phase 37: Include current rootTip so node can immediately sync
             // Also include trustLevel and stateCommitment for client verification
             rootTip: {
@@ -147,6 +161,7 @@ export class SignalingRoom {
             type: 'peers',
             peers: peerList,
             ipHash: ipHash,
+            peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all existing peers
           }));
 
           // Notify other peers about the new node
@@ -161,9 +176,23 @@ export class SignalingRoom {
           }
         } else if (data.type === 'request-peers') {
           const peerList = Array.from(this.peers.keys()).filter((id) => id !== nodeId);
+          
+          // Phase 33: Build IP hashes object for all peers
+          const peerIPHashes = {};
+          for (const [id, hash] of this.peerIPHashes.entries()) {
+            if (id !== nodeId) {
+              peerIPHashes[id] = hash;
+            }
+          }
+          
+          // Get IP hash for requesting node
+          const requestingNodeIPHash = this.peerIPHashes.get(nodeId) || '';
+          
           server.send(JSON.stringify({
             type: 'peers',
             peers: peerList,
+            ipHash: requestingNodeIPHash, // Phase 33: Include requesting node's IP hash
+            peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all peers
           }));
         } else if (data.type === 'REQUEST_BOOTSTRAP') {
           console.log(`[SignalingRoom] Received REQUEST_BOOTSTRAP from ${nodeId?.substring(0, 16)}...`);
@@ -303,6 +332,7 @@ export class SignalingRoom {
     server.addEventListener('close', () => {
       if (nodeId) {
         this.peers.delete(nodeId);
+        this.peerIPHashes.delete(nodeId); // Phase 33: Remove IP hash when peer disconnects
         console.log(`[SignalingRoom] Node ${nodeId.substring(0, 16)}... disconnected. Total peers: ${this.peers.size}`);
 
         // Notify other peers

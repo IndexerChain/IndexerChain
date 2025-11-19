@@ -491,12 +491,21 @@ function App() {
   const [showAdvancedTabs, setShowAdvancedTabs] = useState<boolean>(false); // Advanced tabs collapsed by default
   
   // Auto-expand advanced tabs if user navigates to an advanced tab
+  // Auto-collapse when navigating away from advanced tabs
   useEffect(() => {
     const advancedTabs = ["storage", "advanced", "token", "privacy", "tools", "runtime"];
-    if (advancedTabs.includes(activeTab) && !showAdvancedTabs) {
-      setShowAdvancedTabs(true);
+    if (advancedTabs.includes(activeTab)) {
+      // If navigating to an advanced tab, expand if not already expanded
+      if (!showAdvancedTabs) {
+        setShowAdvancedTabs(true);
+      }
+    } else {
+      // If navigating away from advanced tabs, collapse if currently expanded
+      if (showAdvancedTabs) {
+        setShowAdvancedTabs(false);
+      }
     }
-  }, [activeTab, showAdvancedTabs]);
+  }, [activeTab]); // Remove showAdvancedTabs from dependencies to avoid conflicts
 
   // Save state to localStorage whenever relevant state changes
   useEffect(() => {
@@ -1560,12 +1569,39 @@ function App() {
                     }
                   } else {
                     console.warn(`[Sync] No snapshot metadata received from peers`);
-                    // Show user-friendly error message
-                    const errorMsg = locale === "zh" 
-                      ? `⚠️ 无法同步：本地高度 ${localHeight}，对等节点只能从高度 ${payload.availableFromHeight} 提供区块（差距 ${gap} 个）。\n\n对等节点没有快照，无法填补缺失的区块。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）`
-                      : `⚠️ Cannot sync: Local height ${localHeight}, peer can only provide from height ${payload.availableFromHeight} (gap: ${gap} blocks).\n\nPeer has no snapshots to fill the gap.\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)`;
-                    console.error(`[Sync] ${errorMsg}`);
-                    setError(errorMsg);
+                    
+                    // Phase 38: Check if Worker has snapshot in rootTIP
+                    const workerHasSnapshot = typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta;
+                    const workerHeight = typeof window !== "undefined" ? ((window as any).lastRootTipHeight || 0) : 0;
+                    
+                    if (workerHasSnapshot && workerHeight > localHeight) {
+                      // Worker has snapshot, try to download from Worker
+                      const workerSnapshotMeta = (window as any).lastRootTipSnapshotMeta;
+                      console.log(`[Sync] Worker has snapshot at height ${workerSnapshotMeta.height}, attempting download...`);
+                      
+                      setTimeout(async () => {
+                        try {
+                          await snapshotDownloader.downloadSnapshot(workerSnapshotMeta, {}, (progress) => {
+                            console.log(`[Sync] Snapshot download from Worker: ${progress.percent.toFixed(1)}%`);
+                          });
+                          console.log(`[Sync] ✅ Snapshot downloaded from Worker at height ${workerSnapshotMeta.height}`);
+                          setError(""); // Clear error on success
+                        } catch (error) {
+                          console.error(`[Sync] ❌ Failed to download snapshot from Worker:`, error);
+                          const errorMsg = locale === "zh" 
+                            ? `⚠️ 无法同步：本地高度 ${localHeight}，网络高度 ${workerHeight}（差距 ${gap} 个）。\n\n已尝试从 Cloudflare Worker 下载快照，但失败。\n\n解决方案：\n1. 检查网络连接\n2. 等待有快照的对等节点连接\n3. 或者重置链数据重新开始（在 Advanced 标签页）`
+                            : `⚠️ Cannot sync: Local height ${localHeight}, network height ${workerHeight} (gap: ${gap} blocks).\n\nAttempted to download snapshot from Cloudflare Worker but failed.\n\nSolutions:\n1. Check network connection\n2. Wait for peers with snapshots to connect\n3. Or reset chain data to start fresh (in Advanced tab)`;
+                          setError(errorMsg);
+                        }
+                      }, 500);
+                    } else {
+                      // No snapshot available from Worker or peers
+                      const errorMsg = locale === "zh" 
+                        ? `⚠️ 无法同步：本地高度 ${localHeight}，对等节点只能从高度 ${payload.availableFromHeight} 提供区块（差距 ${gap} 个）。\n\n对等节点没有快照，无法填补缺失的区块。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）\n\n提示：如果 Cloudflare Worker 有快照，系统会自动尝试下载。`
+                        : `⚠️ Cannot sync: Local height ${localHeight}, peer can only provide from height ${payload.availableFromHeight} (gap: ${gap} blocks).\n\nPeer has no snapshots to fill the gap.\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)\n\nNote: If Cloudflare Worker has a snapshot, the system will automatically attempt to download it.`;
+                      console.error(`[Sync] ${errorMsg}`);
+                      setError(errorMsg);
+                    }
                   }
                 } catch (error) {
                   console.error(`[Sync] Error requesting snapshot:`, error);
@@ -1683,12 +1719,16 @@ function App() {
       });
       
       // Phase 37: Store rootTip info for debug overlay
+      // Phase 38: Also store snapshot meta for later use
       if (typeof window !== "undefined" && payload.latestHeight > 0) {
         (window as any).lastRootTipHeight = payload.latestHeight;
         (window as any).lastRootTipHash = payload.latestHeaderHash || "";
         (window as any).lastBootstrapResponseTime = Date.now();
         (window as any).lastRootTipTrustLevel = payload.trustLevel || 'root-only';
         (window as any).lastRootTipStateCommitment = payload.stateCommitment || null;
+        if (payload.latestSnapshotMeta) {
+          (window as any).lastRootTipSnapshotMeta = payload.latestSnapshotMeta;
+        }
       }
       
       if (!chainContext) {
@@ -1870,12 +1910,16 @@ function App() {
       console.log(`[Phase 32] Received ROOT_TIP_UPDATE: root height=${rootHeight}, local height=${localHeight}, hasHeader=${!!rootHeader}, recentHeaders=${recentHeaders?.length || 0}`);
       
       // Phase 37: Store rootTip info for debug overlay
+      // Phase 38: Also store snapshot meta for later use
       if (typeof window !== "undefined" && rootHeight > 0) {
         (window as any).lastRootTipHeight = rootHeight;
         (window as any).lastRootTipHash = rootHeaderHash || "";
         (window as any).lastBootstrapResponseTime = Date.now();
         (window as any).lastRootTipTrustLevel = rootTip.trustLevel || payload.trustLevel || 'root-only';
         (window as any).lastRootTipStateCommitment = rootTip.stateCommitment || payload.stateCommitment || null;
+        if (snapshotMeta) {
+          (window as any).lastRootTipSnapshotMeta = snapshotMeta;
+        }
       }
       
       // Use BootstrapSyncManager to handle the update
@@ -4812,6 +4856,11 @@ function App() {
                             {locale === "zh"
                               ? `规则 3: 需要至少 ${miningGuardResult.details.requiredIndependentPeers} 个独立节点 (当前: ${miningGuardResult.details.independentPeerCount})`
                               : `Rule 3: At least ${miningGuardResult.details.requiredIndependentPeers} independent peers required (current: ${miningGuardResult.details.independentPeerCount})`}
+                            <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic", marginLeft: "1rem" }}>
+                              {locale === "zh"
+                                ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
+                                : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`}
+                            </div>
                           </li>
                         )}
                       {localRole === "FOLLOWER" && (

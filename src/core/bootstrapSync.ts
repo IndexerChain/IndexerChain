@@ -180,14 +180,19 @@ export class BootstrapSyncManager {
 
     // Step 2: Check if we need snapshot sync
     const snapshotInterval = this.chainContext.params.snapshotInterval || 1000;
-    if (heightDiff >= snapshotInterval && response.latestSnapshotMeta) {
-      console.log(`[Phase 32] Large height difference (${heightDiff}), recommending snapshot sync`);
-      actions.push(`Snapshot sync recommended (height diff: ${heightDiff})`);
-      
-      // Store snapshot meta for later use
-      // The actual snapshot download will be handled by SnapshotDownloader
-      if (typeof window !== "undefined") {
-        (window as any).pendingBootstrapSnapshot = response.latestSnapshotMeta;
+    if (heightDiff >= snapshotInterval) {
+      if (response.latestSnapshotMeta) {
+        console.log(`[Phase 38] Large height difference (${heightDiff}), Worker has snapshot at height ${response.latestSnapshotMeta.height}`);
+        actions.push(`Snapshot sync recommended (height diff: ${heightDiff}, snapshot at ${response.latestSnapshotMeta.height})`);
+        
+        // Phase 38: Store snapshot meta for later use (including in window for App.tsx to access)
+        if (typeof window !== "undefined") {
+          (window as any).pendingBootstrapSnapshot = response.latestSnapshotMeta;
+          (window as any).lastRootTipSnapshotMeta = response.latestSnapshotMeta;
+        }
+      } else {
+        console.warn(`[Phase 38] Large height difference (${heightDiff}), but Worker has no snapshot meta`);
+        actions.push(`Snapshot sync needed but Worker has no snapshot (height diff: ${heightDiff})`);
       }
     }
 

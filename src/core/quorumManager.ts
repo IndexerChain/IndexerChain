@@ -400,7 +400,56 @@ export class QuorumManager {
       .sort((a, b) => b.quorumScore - a.quorumScore);
     
     const totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
-    const independentPeerCount = new Set(peerMetrics.map(m => m.ipHash).filter(Boolean)).size;
+    
+    // Calculate independent peer count: include all peers with IP hashes + local node
+    const peerIPHashes = new Set<string>();
+    
+    // Add IP hashes from peer metrics
+    for (const metrics of peerMetrics) {
+      if (metrics.ipHash) {
+        peerIPHashes.add(metrics.ipHash);
+      }
+    }
+    
+    // Also check peerInfo for IP hashes (in case metrics haven't been updated yet)
+    for (const peer of peers) {
+      const ipHash = (peer as any).ipHash;
+      if (ipHash) {
+        peerIPHashes.add(ipHash);
+      }
+    }
+    
+    // Include local node's IP hash (if available)
+    const localIPHash = this.getPeerIPHash(this.p2pNode.nodeId);
+    if (localIPHash) {
+      peerIPHashes.add(localIPHash);
+    }
+    
+    const independentPeerCount = peerIPHashes.size;
+    
+    // Debug logging - always log when checking quorum status
+    console.log("[QuorumManager] Quorum status check:", {
+      peerCount: peers.length,
+      independentPeerCount,
+      peerIPHashes: Array.from(peerIPHashes),
+      peerMetrics: peerMetrics.map(m => ({
+        peerId: m.peerId.substring(0, 16),
+        ipHash: m.ipHash || "none",
+        score: m.quorumScore,
+      })),
+      peerInfo: peers.map(p => ({
+        peerId: p.id.substring(0, 16),
+        ipHash: (p as any).ipHash || "none",
+        connected: p.connected,
+      })),
+      localIPHash: localIPHash || "none",
+      localStorageIPHashes: Object.keys(this.loadIPHashes()),
+    });
+    
+    // Warning if independent peer count is 0 but peers exist
+    if (independentPeerCount === 0 && peers.length > 0) {
+      console.warn("[QuorumManager] ⚠️ Independent peer count is 0 but peers exist - IP hashes may not be set correctly");
+    }
     
     // Determine required score based on network stage
     const isMainnetNetwork = isMainnet(this.chainContext.params);
@@ -470,6 +519,21 @@ export class QuorumManager {
 
     const quorumStatus = this.getQuorumStatus();
     const stage = this.getNetworkStage();
+    
+    // Debug logging for independent peer count
+    if (quorumStatus.peerCount > 0) {
+      console.log(`[QuorumManager] Admission status check:`, {
+        stage,
+        peerCount: quorumStatus.peerCount,
+        independentPeerCount: quorumStatus.independentPeerCount,
+        totalScore: quorumStatus.totalScore,
+        peerMetrics: quorumStatus.peerMetrics.map(m => ({
+          peerId: m.peerId.substring(0, 16),
+          ipHash: m.ipHash || "none",
+          score: m.quorumScore,
+        })),
+      });
+    }
     
     // Get thresholds from chain params or use defaults
     const thresholds = this.chainContext.params.mainnetQuorumThresholds || DEFAULT_MAINNET_THRESHOLDS.quorumScore;
