@@ -54,7 +54,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         slotPreview,
         toggleMining,
         setIsLiveFeedActive: setHookIsLiveFeedActive,
-        miningGuardResult: _miningGuardResult
+        miningGuardResult
     } = useMiningData({
         chainContext: props.chainContext,
         isMiningGlobal: props.isMining,
@@ -67,6 +67,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         bootstrapComplete: props.bootstrapComplete
     });
 
+    // Show guard reason / user feedback
+    const [guardMessage, setGuardMessage] = useState<string>("");
+
     // Sync local state with hook state
     useEffect(() => {
         if (hookIsLiveFeedActive !== isLiveFeedActive) {
@@ -74,14 +77,45 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
     }, [hookIsLiveFeedActive]);
 
+    const isCatchingUp = status === 'CatchingUp' || status === 'Syncing';
+    const isMining = status === 'Mining';
+
+    // Auto-start mining when ready and autoMining enabled
+    useEffect(() => {
+        if (!props.chainContext) return;
+        if (autoMining && !isMining && miningGuardResult?.ok) {
+            toggleMining(); // start mining
+        }
+    }, [autoMining, isMining, miningGuardResult?.ok]);
+
     const handleToggleLiveFeed = () => {
         const newState = !isLiveFeedActive;
         setIsLiveFeedActive(newState);
         setHookIsLiveFeedActive(newState);
     };
 
-    const isCatchingUp = status === 'CatchingUp' || status === 'Syncing';
-    const isMining = status === 'Mining';
+    // Compute whether starting is allowed; and keep a human-readable reason when blocked
+    const canStartMining = (miningGuardResult?.ok ?? false) && !isMining && peerCount > 0 && networkHeight <= localHeight;
+    useEffect(() => {
+        if (isMining) {
+            setGuardMessage('');
+            return;
+        }
+        if (peerCount <= 0) {
+            setGuardMessage('⚠️ No peers connected. Connect to network to start mining.');
+            return;
+        }
+        if (networkHeight > localHeight) {
+            const diff = networkHeight - localHeight;
+            setGuardMessage(`⚠️ Not synced (behind ${diff} blocks). Please catch up first.`);
+            return;
+        }
+        if (miningGuardResult && !miningGuardResult.ok) {
+            setGuardMessage(`⚠️ ${miningGuardResult.reason || 'Mining guard blocked.'}`);
+            return;
+        }
+        setGuardMessage('');
+    }, [isMining, peerCount, networkHeight, localHeight, miningGuardResult]);
 
     // Auto rebase: if local has old chain and network has progressed, reset local chain and catch up to network
     const autoRebasedRef = useRef(false);
@@ -350,8 +384,13 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         <button
                                             id="toggle-mining"
                                             className={`${styles.btn} ${isMining ? styles.btnDanger : styles.btnStart}`}
-                                            onClick={toggleMining}
-                                            disabled={isCatchingUp && !isMining}
+                                            onClick={() => {
+                                                if (isMining || canStartMining) {
+                                                    toggleMining();
+                                                }
+                                            }}
+                                            disabled={!isMining && !canStartMining}
+                                            title={!isMining && !canStartMining ? guardMessage : ''}
                                         >
                                             {isMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
                                         </button>
@@ -362,12 +401,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         </div>
                                     </div>
 
-                                    <div 
-                                        id="error-alert" 
-                                        className={styles.errorAlert}
-                                        style={{ display: 'none' }}
+                                    <div
+                                      id="error-alert"
+                                      className={styles.errorAlert}
+                                      style={{ display: !isMining && guardMessage ? 'block' : 'none' }}
                                     >
-                                        ⚠️ <strong>Quorum Check:</strong> Need 30 points (Independent IP required).
+                                      {guardMessage}
                                     </div>
 
                                     <div style={{ marginTop: 10 }}>
@@ -396,6 +435,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     >
                                         {isCatchingUp ? `Catching Up (${(networkHeight - localHeight).toFixed(0)} blocks left)` : 'Synced'}
                                     </button>
+
+                                    {/* Secondary force-start button removed to avoid confusion */}
 
                                     <p style={{ fontSize: '0.8em', color: '#58a6ff', marginTop: 5 }}>
                                         Sync Mode: <span id="sync-mode">{getSyncMode()}</span> | Rate: <span id="sync-rate">{syncRate > 0 ? `${syncRate.toFixed(1)} blocks/s` : '-- blocks/s'}</span>
@@ -459,7 +500,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         className={`${styles.liveToggleBtn} ${isLiveFeedActive ? styles.liveToggleLive : styles.liveTogglePaused}`}
                                         onClick={handleToggleLiveFeed}
                                     >
-                                        {isLiveFeedActive ? '实时 (Live) 🟢' : '暂停 (Paused) ⏸️'}
+                                        {isLiveFeedActive ? '暂停 (Pause) ⏸️' : '实时 (Live) 🟢'}
                                     </button>
                                 </h3>
                                 <div className={styles.liveFeedContainer} id="live-feed-container">
