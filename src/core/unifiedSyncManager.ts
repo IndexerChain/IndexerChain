@@ -1705,6 +1705,47 @@ export async function handleRootTipUpdate(
   if (localTipHash !== rootTipHash && rootTip.recentHeaders && rootTip.recentHeaders.length > 0) {
       // Only miners can trigger fork detection and reorg
       if (isMiner) {
+        // Optional: cumulative work fork-choice (feature flag)
+        // Enable via window.USE_CUMULATIVE_WORK === true or localStorage "indexerchain_use_cumwork" === "1"
+        let useCumulativeWork = false;
+        if (typeof window !== "undefined") {
+          try {
+            useCumulativeWork = (window as any).USE_CUMULATIVE_WORK === true ||
+              (localStorage.getItem("indexerchain_use_cumwork") === "1");
+          } catch {}
+        }
+        if (useCumulativeWork) {
+          // Estimate cumulative work over a recent window for both local and root
+          const windowSize = 200;
+          const pow2 = (n: number) => {
+            // Avoid huge numbers; cap difficulty for stability
+            const capped = Math.min(Math.max(0, Math.floor(n || 0)), 64);
+            // Use BigInt for wider range
+            return 1n << BigInt(capped);
+          };
+          const localBlocks = chainContext.storage.getAllBlocks();
+          const localSlice = localBlocks.slice(Math.max(0, localBlocks.length - windowSize));
+          let localWork = 0n;
+          for (const b of localSlice) {
+            localWork += pow2(b.header?.difficulty ?? 0);
+          }
+          const rootHeaders = rootTip.recentHeaders.slice(-windowSize);
+          let rootWork = 0n;
+          for (const h of rootHeaders) {
+            // headers could be BlockHeader or compact header with difficulty
+            const diff = (h as any)?.difficulty ?? 0;
+            rootWork += pow2(diff);
+          }
+          // If root cumulative work is significantly higher, proceed with reorg preference
+          // Use a small margin to avoid oscillation
+          const preferRoot = rootWork > localWork;
+          if (!preferRoot) {
+            // If local has more work, prefer to keep local chain; skip reorg attempt.
+            // Proceed with normal sync toward root height without rollback.
+            return await fastSync500(chainContext, p2pNode, rootHeight, rootTip.recentHeaders);
+          }
+          // Else: proceed with fork handling below (find common ancestor and rollback)
+        }
         // Hash mismatch detected, checking for common ancestor
         const ancestor = await findCommonAncestor(chainContext, localTip, rootTip.recentHeaders, 500);
       

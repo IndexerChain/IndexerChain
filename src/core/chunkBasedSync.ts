@@ -196,20 +196,43 @@ export class ChunkBasedSyncManager {
     // Split gaps into chunks
     const chunks = this.splitGapsIntoChunks(gaps);
 
-    // Request chunks
+    // Request chunks (targeted first, then fallback broadcast)
+    const sendDirect = (from: number, to: number) => {
+      const peers = Array.from((this.p2pNode as any).peers?.values() || [])
+        .filter((p: any) => p.connected && p.dataChannel && p.dataChannel.readyState === "open");
+      // Simple heuristic: take up to 3 most recently seen peers
+      const topPeers = peers
+        .sort((a: any, b: any) => (b.lastSeen || 0) - (a.lastSeen || 0))
+        .slice(0, 3)
+        .map((p: any) => p.id);
+      let sent = 0;
+      if (typeof (this.p2pNode as any).sendToPeer === "function") {
+        for (const pid of topPeers) {
+          try {
+            (this.p2pNode as any).sendToPeer(pid, "REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
+            sent++;
+          } catch {}
+        }
+      }
+      if (sent === 0) {
+        const node = this.p2pNode;
+        if (node) {
+          node.broadcast("REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
+        }
+      }
+    };
+
     if (this.config.useParallelSync && chunks.length > 1) {
-      // Use parallel sync for multiple chunks
+      // Use parallel sync for multiple chunks (still targeted)
       const parallelSyncManager = getParallelSyncManager();
       for (const chunk of chunks) {
         parallelSyncManager.startParallelSync(chunk.fromHeight, chunk.toHeight);
+        sendDirect(chunk.fromHeight, chunk.toHeight);
       }
     } else {
-      // Use normal broadcast for single chunk or when parallel sync is disabled
+      // Single chunk or parallel disabled: targeted send
       for (const chunk of chunks) {
-        this.p2pNode.broadcast("REQUEST_BLOCKS", {
-          fromHeight: chunk.fromHeight,
-          toHeight: chunk.toHeight,
-        });
+        sendDirect(chunk.fromHeight, chunk.toHeight);
       }
     }
 

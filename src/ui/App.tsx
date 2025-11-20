@@ -84,12 +84,9 @@ import { GenesisQuorumBanner } from "./mining/GenesisQuorumBanner.js";
 import { MultiTerminalSyncNotice } from "./mining/MultiTerminalSyncNotice.js";
 import { QuorumScoreExplanation } from "./mining/QuorumScoreExplanation.js";
 // Phase 45: New Mining UX components
-import { MiningStatusBar } from "./mining/MiningStatusBar.js";
 import { RewardBreakdownCard } from "./mining/RewardBreakdownCard.js";
 import { ReferralAndBoosterCard } from "./mining/ReferralAndBoosterCard.js";
 import { NetworkMiniHealthCard } from "./mining/NetworkMiniHealthCard.js";
-import { getOrCreateDeviceId } from "../core/ipSharingWeight.js";
-import { QuickStatusDashboard } from "./components/QuickStatusDashboard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
 import { DailyInfoBar } from "./components/DailyInfoBar.js";
 import "./index.css";
@@ -1236,20 +1233,42 @@ function App() {
           // Phase 18: Stop cluster mining if active
           if (clusterMining) {
             minerCluster.stopMining("replaced");
-            // Restart cluster mining after a short delay
-            setTimeout(() => {
-              if (clusterMining) {
-                handleStartClusterMining();
-              }
+            // STRICT: Only restart if MiningGuard allows mining (synced and ready)
+            setTimeout(async () => {
+              try {
+                const { MiningGuard } = await import("../core/miningGuard.js");
+                const guard = await MiningGuard.canMineNow(
+                  chainContext,
+                  p2pNodeRef.current || null,
+                  finalityManager,
+                  localCoordinator.getRole(),
+                  nodeAddress || undefined,
+                  bootstrapComplete
+                );
+                if (guard.ok && clusterMining) {
+                  handleStartClusterMining();
+                }
+              } catch {}
             }, 50);
           } else if (isMining || autoMining) {
             // Single worker mining
             minerClient.stopMining("replaced");
-            // Restart mining after a short delay
-            setTimeout(() => {
-              if (autoMining || isMining) {
-                handleStartMining();
-              }
+            // STRICT: Only restart if MiningGuard allows mining (synced and ready)
+            setTimeout(async () => {
+              try {
+                const { MiningGuard } = await import("../core/miningGuard.js");
+                const guard = await MiningGuard.canMineNow(
+                  chainContext,
+                  p2pNodeRef.current || null,
+                  finalityManager,
+                  localCoordinator.getRole(),
+                  nodeAddress || undefined,
+                  bootstrapComplete
+                );
+                if (guard.ok && (autoMining || isMining)) {
+                  handleStartMining();
+                }
+              } catch {}
             }, 100);
           }
         }
