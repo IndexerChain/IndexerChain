@@ -220,9 +220,34 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 } catch {}
             }); 
         } catch {}
+        // Handle BOOTSTRAP_BLOCKS (WS) → append blocks directly
+        try {
+            p2p.onMessage?.("BOOTSTRAP_BLOCKS", async (payload: any) => {
+                try {
+                    const list: any[] = Array.isArray(payload?.blocks) ? payload.blocks : [];
+                    if (!ctx || list.length === 0) return;
+                    // Append in ascending order
+                    const sorted = list.slice().sort((a, b) => (a?.header?.height || 0) - (b?.header?.height || 0));
+                    for (const b of sorted) {
+                        try {
+                            ctx.storage.appendBlock(b);
+                            ctx.indexState.applyBlock(b);
+                        } catch (e) {
+                            // ignore individual failures
+                        }
+                    }
+                    const tip = ctx.storage.getTip();
+                    if (tip) {
+                        (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, tip.header.height);
+                    }
+                } catch {}
+            });
+        } catch {}
 
         // Proactively query network view on mount
         try { p2p.broadcast?.("GLOBAL_VIEW_REQUEST", {}); } catch {}
+        // Expose for debugging in console
+        try { (window as any).p2p = p2p; (window as any).chainContext = ctx; } catch {}
 
         return () => {
             try { p2p.offMessage?.("GLOBAL_VIEW_RESPONSE", onGlobalViewResponse); } catch {}
@@ -346,10 +371,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             try {
                 const local = chainContext.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 1;
                 if (peerCount > 0 && (network === 0 || local < network)) {
                     const step = 500;
-                    const target = Math.max(network, local + step);
-                    for (let from = local + 1; from <= target; from += step) {
+                    const startFrom = Math.max(local + 1, availableFrom);
+                    const target = Math.max(network, startFrom + step);
+                    for (let from = startFrom; from <= target; from += step) {
                         const to = Math.min(from + step - 1, target);
                         p2pNode.broadcast?.("REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
                         if (p2pNode.sendToPeer && p2pNode.peers) {
@@ -364,6 +391,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     }
                     // Also ask for bootstrap occasionally
                     p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {});
+                    p2pNode.broadcast?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: startFrom + step });
                     p2pNode.broadcast?.("GLOBAL_VIEW_REQUEST", {});
                 }
             } catch {}

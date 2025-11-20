@@ -40,7 +40,8 @@ export class SignalingRoom {
     this.bootstrapBlocksMeta = {
       availableFromHeight: 0,
       availableToHeight: 0,
-      maxStoredHeight: 1024, // Maximum height to store bootstrap blocks
+      // Raise default to cover early network quickly (dev-friendly)
+      maxStoredHeight: 20000, // Maximum height to store bootstrap blocks
     };
     this.initialized = false;
   }
@@ -823,10 +824,25 @@ export class SignalingRoom {
             trustLevel: this.bootstrapState.trustLevel,
             stale: false, // Phase 37: Can be set to true if rootTip is outdated
             timestamp: Date.now(),
+            // Include bootstrap range hints for clients to start from correct height
+            availableFromHeight: this.bootstrapBlocksMeta?.availableFromHeight || 0,
+            availableToHeight: this.bootstrapBlocksMeta?.availableToHeight || 0,
           };
           
           console.log(`[SignalingRoom] Sending BOOTSTRAP_RESPONSE: height=${response.latestHeight}, hasHeader=${!!response.latestHeader}, recentHeaders=${response.recentHeaders?.length || 0}, trustLevel=${response.trustLevel}`);
           server.send(JSON.stringify(response));
+        } else if (data.type === 'GLOBAL_VIEW_REQUEST') {
+          // Respond with a minimal global view from signal server (fallback when peers unavailable)
+          const resp = {
+            type: 'GLOBAL_VIEW_RESPONSE',
+            height: this.bootstrapState.latestHeight,
+            tipHash: this.bootstrapState.latestHeaderHash,
+            availableFromHeight: this.bootstrapBlocksMeta?.availableFromHeight || 0,
+            availableToHeight: this.bootstrapBlocksMeta?.availableToHeight || 0,
+            timestamp: Date.now(),
+            sender: 'signal-server',
+          };
+          try { server.send(JSON.stringify(resp)); } catch (e) {}
         } else if (data.type === 'UPDATE_ROOT_TIP') {
           // Phase 37: Accept both old format (data.header, data.headerHash) and new format (data.payload)
           const payload = data.payload || data;
