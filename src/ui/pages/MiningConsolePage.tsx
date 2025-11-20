@@ -231,8 +231,10 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return 'Synced';
     };
 
+    const displayMining = isMining || (autoMining && (miningGuardResult?.ok ?? false));
+
     const getStatusBadgeText = () => {
-        if (isMining) return '✅ Active Mining';
+        if (displayMining) return '✅ Active Mining';
         if (isCatchingUp) {
             const diff = networkHeight - localHeight;
             return `Catching Up (${diff.toFixed(0)})`;
@@ -241,7 +243,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     };
 
     const getStatusBadgeClass = () => {
-        if (isMining) return styles.statusReady;
+        if (displayMining) return styles.statusReady;
         if (isCatchingUp) return styles.statusSyncing;
         return styles.statusReady;
     };
@@ -288,6 +290,39 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             // no-op
         }
     };
+
+    // Persistent catch-up retry until synced
+    useEffect(() => {
+        const { chainContext, p2pNode } = props;
+        if (!chainContext || !p2pNode) return;
+        const retry = setInterval(() => {
+            try {
+                const local = chainContext.storage.getTip()?.header.height || 0;
+                const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+                if (peerCount > 0 && (network === 0 || local < network)) {
+                    const step = 500;
+                    const target = Math.max(network, local + step);
+                    for (let from = local + 1; from <= target; from += step) {
+                        const to = Math.min(from + step - 1, target);
+                        p2pNode.broadcast?.("REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
+                        if (p2pNode.sendToPeer && p2pNode.peers) {
+                            const ids: string[] = Array.from(p2pNode.peers.keys());
+                            ids.forEach((id: string) => {
+                                const peer = p2pNode.peers.get(id);
+                                if (peer?.connected && peer.dataChannel?.readyState === "open") {
+                                    p2pNode.sendToPeer(id, "REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
+                                }
+                            });
+                        }
+                    }
+                    // Also ask for bootstrap occasionally
+                    p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {});
+                    p2pNode.broadcast?.("GLOBAL_VIEW_REQUEST", {});
+                }
+            } catch {}
+        }, 2000);
+        return () => clearInterval(retry);
+    }, [props.chainContext, props.p2pNode, peerCount]);
 
     const formatAddress = (addr: string) => {
         if (!addr) return 'Loading...';
@@ -388,14 +423,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                             id="toggle-mining"
                                             className={`${styles.btn} ${isMining ? styles.btnDanger : styles.btnStart}`}
                                             onClick={() => {
-                                                if (isMining || canStartMining) {
+                                                if (displayMining || canStartMining) {
                                                     toggleMining();
                                                 }
                                             }}
-                                            disabled={!isMining && !canStartMining}
-                                            title={!isMining && !canStartMining ? guardMessage : ''}
+                                            disabled={!displayMining && !canStartMining}
+                                            title={!displayMining && !canStartMining ? guardMessage : ''}
                                         >
-                                            {isMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
+                                            {displayMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
                                         </button>
 
                                         <div id="mining-status-badge" className={`${styles.miningStatusBadge} ${getStatusBadgeClass()}`}>

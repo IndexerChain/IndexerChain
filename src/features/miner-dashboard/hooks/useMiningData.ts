@@ -163,6 +163,23 @@ export const useMiningData = ({
     useEffect(() => {
         if (!chainContext || !p2pNode) return;
 
+        // Helper: derive leader string from block content
+        const deriveLeader = (block: any): { label: string; isSelf: boolean } => {
+            let leaderAddr: string | null = block?.header?.proposer || null;
+            // Fallback to coinbase recipient
+            try {
+                if (!leaderAddr && block?.txs?.length > 0) {
+                    const coinbase = block.txs[0];
+                    const op0 = coinbase?.ops?.[0];
+                    if (op0?.type === 'TRANSFER' && op0?.to) leaderAddr = op0.to;
+                }
+            } catch {}
+            if (!leaderAddr) return { label: 'Unknown', isSelf: false };
+            const isSelf = !!nodeAddress && leaderAddr === nodeAddress;
+            const short = leaderAddr.substring(0, 10) + '...';
+            return { label: isSelf ? `${short} (You)` : short, isSelf };
+        };
+
         // Initialize with recent blocks
         const initializeBlocks = () => {
             const allBlocks = chainContext.storage.getAllBlocks();
@@ -170,21 +187,17 @@ export const useMiningData = ({
             
             const blockData: BlockData[] = recentBlocks.map((block: Block) => {
                 const prevBlock = chainContext.storage.getBlockByHeight(block.header.height - 1);
-                const blockTime = prevBlock 
-                    ? (block.header.timestamp - prevBlock.header.timestamp) * 1000 // Convert to ms
-                    : 0;
+                const rawDelta = prevBlock ? Math.abs(block.header.timestamp - prevBlock.header.timestamp) : 0;
+                const blockTimeMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000; // Heuristic: seconds→ms
+                const leaderInfo = deriveLeader(block);
                 
                 return {
                     height: block.header.height,
                     hash: block.hash.substring(0, 10) + '...',
-                    leader: block.header.proposer 
-                        ? (block.header.proposer === nodeAddress 
-                            ? block.header.proposer.substring(0, 10) + '... (You)'
-                            : block.header.proposer.substring(0, 10) + '...')
-                        : 'Unknown',
-                    time: blockTime > 0 ? `${blockTime.toFixed(0)}ms` : '--',
+                    leader: leaderInfo.label,
+                    time: blockTimeMs > 0 ? `${blockTimeMs.toFixed(0)}ms` : '--',
                     recipients: block.txs.length,
-                    isSelf: block.header.proposer === nodeAddress
+                    isSelf: leaderInfo.isSelf
                 };
             });
             
@@ -196,41 +209,51 @@ export const useMiningData = ({
 
         initializeBlocks();
 
-        // Listen to NEW_BLOCK_HEADER messages for real-time updates
+        // Listen to NEW_BLOCK_HEADER messages for real-time updates (ensure continuity)
         const handleNewBlock = async (compactHeader: any, _sender: string) => {
             if (!isLiveFeedActive) return;
 
             try {
-                // Get the actual block from storage (it should have been appended by sync handler)
-                const block = chainContext.storage.getBlockByHeight(compactHeader.height);
-                if (!block) return;
-
-                const prevBlock = chainContext.storage.getBlockByHeight(block.header.height - 1);
-                const blockTime = prevBlock 
-                    ? (block.header.timestamp - prevBlock.header.timestamp) * 1000
-                    : 0;
-
-                const newBlock: BlockData = {
-                    height: block.header.height,
-                    hash: block.hash.substring(0, 10) + '...',
-                    leader: block.header.proposer 
-                        ? (block.header.proposer === nodeAddress 
-                            ? block.header.proposer.substring(0, 10) + '... (You)'
-                            : block.header.proposer.substring(0, 10) + '...')
-                        : 'Unknown',
-                    time: blockTime > 0 ? `${blockTime.toFixed(0)}ms` : '--',
-                    recipients: block.txs.length,
-                    isSelf: block.header.proposer === nodeAddress
-                };
-
-                setBlocks(prev => {
-                    const newBlocks = [newBlock, ...prev].slice(0, 20);
-                    return newBlocks;
-                });
+                const targetHeight = compactHeader.height;
+                let fromHeight = Math.max(1, lastHeightRef.current + 1);
+                if (fromHeight > targetHeight) fromHeight = targetHeight;
+                const appended: BlockData[] = [];
+                for (let h = fromHeight; h <= targetHeight; h++) {
+                    const b = chainContext.storage.getBlockByHeight(h);
+                    if (!b) continue;
+                    const prev = chainContext.storage.getBlockByHeight(h - 1);
+                    const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
+                    const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
+                    const leaderInfo = deriveLeader(b);
+                    appended.push({
+                        height: b.header.height,
+                        hash: b.hash.substring(0, 10) + '...',
+                        leader: leaderInfo.label,
+                        time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
+                        recipients: b.txs.length,
+                        isSelf: leaderInfo.isSelf,
+                    });
+                }
+                if (appended.length > 0) {
+                    setBlocks(prev => {
+                        const merged = [...appended.reverse(), ...prev]; // newest first, keep list contiguous
+                        // De-dup by height and keep top 50
+                        const seen = new Set<number>();
+                        const unique: BlockData[] = [];
+                        for (const it of merged) {
+                            if (!seen.has(it.height)) {
+                                seen.add(it.height);
+                                unique.push(it);
+                            }
+                            if (unique.length >= 50) break;
+                        }
+                        return unique;
+                    });
+                }
 
                 // Update sync rate
                 const now = Date.now();
-                heightHistoryRef.current.push({ height: block.header.height, time: now });
+                heightHistoryRef.current.push({ height: targetHeight, time: now });
                 // Keep only last 5 seconds
                 heightHistoryRef.current = heightHistoryRef.current.filter(h => now - h.time < 5000);
                 
@@ -244,15 +267,86 @@ export const useMiningData = ({
                     }
                 }
 
-                lastHeightRef.current = block.header.height;
+                lastHeightRef.current = targetHeight;
             } catch (error) {
                 // Ignore errors
             }
         };
 
-        // Register message handler
+        // Register message handlers
         if (p2pNode.onMessage) {
             p2pNode.onMessage('NEW_BLOCK_HEADER', handleNewBlock);
+            // Direct NEW_BLOCK payloads - update UI immediately
+            p2pNode.onMessage('NEW_BLOCK', (blockPayload: any) => {
+                if (!isLiveFeedActive || !blockPayload) return;
+                try {
+                    const b = blockPayload as any;
+                    const prev = chainContext.storage.getBlockByHeight((b?.header?.height || 0) - 1);
+                    const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
+                    const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
+                    const leaderInfo = deriveLeader(b);
+                    const row: BlockData = {
+                        height: b.header.height,
+                        hash: String(b.hash || '').substring(0, 10) + '...',
+                        leader: leaderInfo.label,
+                        time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
+                        recipients: Array.isArray(b.txs) ? b.txs.length : 0,
+                        isSelf: leaderInfo.isSelf,
+                    };
+                    setBlocks(prev => {
+                        const merged = [row, ...prev];
+                        const seen = new Set<number>();
+                        const unique: BlockData[] = [];
+                        for (const it of merged) {
+                            if (!seen.has(it.height)) {
+                                seen.add(it.height);
+                                unique.push(it);
+                            }
+                            if (unique.length >= 50) break;
+                        }
+                        return unique;
+                    });
+                    lastHeightRef.current = Math.max(lastHeightRef.current, row.height);
+                } catch {}
+            });
+            // Batched BLOCKS payloads - append sequentially
+            p2pNode.onMessage('BLOCKS', (payload: any) => {
+                if (!isLiveFeedActive || !payload?.blocks) return;
+                try {
+                    const list: any[] = Array.isArray(payload.blocks) ? payload.blocks : [];
+                    const appended: BlockData[] = [];
+                    for (const b of list) {
+                        const prev = chainContext.storage.getBlockByHeight((b?.header?.height || 0) - 1);
+                        const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
+                        const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
+                        const leaderInfo = deriveLeader(b);
+                        appended.push({
+                            height: b.header.height,
+                            hash: String(b.hash || '').substring(0, 10) + '...',
+                            leader: leaderInfo.label,
+                            time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
+                            recipients: Array.isArray(b.txs) ? b.txs.length : 0,
+                            isSelf: leaderInfo.isSelf,
+                        });
+                    }
+                    if (appended.length > 0) {
+                        setBlocks(prev => {
+                            const merged = [...appended.reverse(), ...prev];
+                            const seen = new Set<number>();
+                            const unique: BlockData[] = [];
+                            for (const it of merged) {
+                                if (!seen.has(it.height)) {
+                                    seen.add(it.height);
+                                    unique.push(it);
+                                }
+                                if (unique.length >= 50) break;
+                            }
+                            return unique;
+                        });
+                        lastHeightRef.current = Math.max(lastHeightRef.current, ...appended.map(a => a.height));
+                    }
+                } catch {}
+            });
         }
 
         // Also poll for new blocks as fallback
