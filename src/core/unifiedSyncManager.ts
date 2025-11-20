@@ -1155,22 +1155,8 @@ async function trySignalBootstrapBlocks(
     });
     
     if (!res.ok) {
-      // Handle different error statuses
-      if (res.status === 404) {
-        // No bootstrap blocks available (normal case when signal server hasn't stored any yet)
-        if (statusCallback) {
-          statusCallback(`Signal server has no bootstrap blocks yet (404). This is normal if no blocks have been stored.`);
-        }
-        // Fallback to WS
-        return await trySignalBootstrapBlocksWS(chainContext, statusCallback);
-      } else if (res.status === 416) {
-        // Requested range is out of available range
-        if (statusCallback) {
-          statusCallback(`Requested bootstrap block range is out of available range (416).`);
-        }
-        // Fallback to WS
-        return await trySignalBootstrapBlocksWS(chainContext, statusCallback);
-      } else if (res.status === 503) {
+      // Handle different error statuses (server errors, network issues, etc.)
+      if (res.status === 503) {
         // Service unavailable - signal server might not be ready
         if (statusCallback) {
           statusCallback(`Signal server temporarily unavailable (503). Will retry later.`);
@@ -1178,7 +1164,7 @@ async function trySignalBootstrapBlocks(
         // Fallback to WS
         return await trySignalBootstrapBlocksWS(chainContext, statusCallback);
       } else {
-        // Other errors
+        // Other errors (404, 500, etc.) - now worker returns 200 with ok:false, but keep this for compatibility
         if (statusCallback) {
           statusCallback(`Signal server returned ${res.status}. Bootstrap blocks not available.`);
         }

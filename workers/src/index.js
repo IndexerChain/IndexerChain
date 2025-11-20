@@ -185,7 +185,7 @@ export class SignalingRoom {
           availableToHeight: 0,
         }),
         { 
-          status: 404, 
+          status: 200, 
           headers: { 
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -208,7 +208,7 @@ export class SignalingRoom {
           requestedTo: to,
         }),
         { 
-          status: 416, 
+          status: 200, 
           headers: { 
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -780,7 +780,8 @@ export default {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Max-Age': '86400',
     };
 
     // Handle CORS preflight
