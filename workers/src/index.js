@@ -33,6 +33,12 @@ export class SignalingRoom {
       stateCommitment: null, // Phase 37: Store state commitment for verification
       trustLevel: 'root-only', // Phase 37: Trust level: 'root-only', 'local-majority', 'stale'
     };
+    // Phase 48: Bootstrap blocks metadata (for genesis node bootstrap)
+    this.bootstrapBlocksMeta = {
+      availableFromHeight: 0,
+      availableToHeight: 0,
+      maxStoredHeight: 1024, // Maximum height to store bootstrap blocks
+    };
     this.initialized = false;
   }
 
@@ -54,6 +60,26 @@ export class SignalingRoom {
       }
     } catch (error) {
       console.error(`[SignalingRoom] Failed to load rootTip from storage:`, error);
+    }
+    return false;
+  }
+
+  /**
+   * Phase 48: Load bootstrap blocks metadata from persistent storage
+   */
+  async loadBootstrapBlocksMeta() {
+    try {
+      const meta = await this.state.storage.get('bootstrapBlocksMeta');
+      if (meta) {
+        this.bootstrapBlocksMeta = {
+          ...this.bootstrapBlocksMeta,
+          ...meta,
+        };
+        console.log(`[SignalingRoom] Loaded bootstrap blocks meta: from=${meta.availableFromHeight}, to=${meta.availableToHeight}`);
+        return true;
+      }
+    } catch (error) {
+      console.error(`[SignalingRoom] Failed to load bootstrap blocks meta:`, error);
     }
     return false;
   }
@@ -135,11 +161,137 @@ export class SignalingRoom {
     console.log(`[SignalingRoom] ✅ RootTip reset complete: height=0, hash=${newGenesisHash.substring(0, 16)}...`);
   }
 
+  /**
+   * Phase 48: Handle bootstrap blocks HTTP request
+   */
+  async handleBootstrapBlocksRequest(from, to) {
+    try {
+      // Ensure bootstrap blocks meta is loaded
+      if (!this.initialized) {
+        await this.loadBootstrapBlocksMeta();
+      } else {
+        // Reload to get latest data
+        await this.loadBootstrapBlocksMeta();
+      }
+      
+      const meta = this.bootstrapBlocksMeta;
+    
+    if (!meta.availableFromHeight || !meta.availableToHeight) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          reason: "NO_BOOTSTRAP_BLOCKS",
+          availableFromHeight: 0,
+          availableToHeight: 0,
+        }),
+        { 
+          status: 404, 
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          } 
+        }
+      );
+    }
+    
+    const start = Math.max(from, meta.availableFromHeight);
+    const end = Math.min(to, meta.availableToHeight);
+    
+    if (start > end) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          reason: "OUT_OF_RANGE",
+          availableFromHeight: meta.availableFromHeight,
+          availableToHeight: meta.availableToHeight,
+          requestedFrom: from,
+          requestedTo: to,
+        }),
+        { 
+          status: 416, 
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          } 
+        }
+      );
+    }
+    
+    const blocks = [];
+    for (let h = start; h <= end; h++) {
+      const key = `block:${h}`;
+      const block = await this.state.storage.get(key);
+      if (block) {
+        blocks.push(block);
+      }
+    }
+    
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          blocks,
+          availableFromHeight: meta.availableFromHeight,
+          availableToHeight: meta.availableToHeight,
+        }),
+        { 
+          status: 200, 
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          } 
+        }
+      );
+    } catch (error) {
+      console.error(`[SignalingRoom] Error in handleBootstrapBlocksRequest:`, error);
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          reason: "INTERNAL_ERROR",
+          error: error instanceof Error ? error.message : String(error),
+        }),
+        { 
+          status: 500, 
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          } 
+        }
+      );
+    }
+  }
+
   async fetch(request) {
     // Phase 37: Load rootTip from storage on first request (lazy initialization)
     if (!this.initialized) {
       await this.loadRootTip();
+      await this.loadBootstrapBlocksMeta(); // Phase 48: Load bootstrap blocks meta
       this.initialized = true;
+    }
+
+    // Phase 48: Handle bootstrap blocks HTTP request (before WebSocket upgrade check)
+    const url = new URL(request.url);
+    if (url.pathname === '/bootstrap-blocks' && request.method === 'GET') {
+      try {
+        const from = parseInt(url.searchParams.get('from') || '1', 10);
+        const to = parseInt(url.searchParams.get('to') || '100', 10);
+        return await this.handleBootstrapBlocksRequest(from, to);
+      } catch (error) {
+        console.error(`[SignalingRoom] Error handling bootstrap blocks request:`, error);
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            reason: "INTERNAL_ERROR",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+          { 
+            status: 500, 
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            } 
+          }
+        );
+      }
     }
 
     // Handle WebSocket upgrade
@@ -287,6 +439,7 @@ export class SignalingRoom {
           const snapshotMeta = payload.latestSnapshotMeta || payload.snapshotMeta;
           const stateCommitment = payload.stateCommitment || header?.stateCommitment;
           const finalityCert = payload.finalityCert; // Optional: finality certificate
+          const canonicalBlock = payload.canonicalBlock; // Phase 48: Optional full block for bootstrap storage
           
           // Phase 37: Basic validation
           if (!header || !headerHash || !height) {
@@ -331,7 +484,37 @@ export class SignalingRoom {
           if (snapshotMeta) {
             this.bootstrapState.latestSnapshotMeta = snapshotMeta;
           }
-          
+
+          // Phase 48: Store bootstrap block if provided and height is within range
+          if (canonicalBlock && height > 0 && height <= this.bootstrapBlocksMeta.maxStoredHeight) {
+            try {
+              const blockKey = `block:${height}`;
+              await this.state.storage.put(blockKey, canonicalBlock);
+              
+              // Update available range
+              if (this.bootstrapBlocksMeta.availableFromHeight === 0) {
+                this.bootstrapBlocksMeta.availableFromHeight = height;
+              } else {
+                this.bootstrapBlocksMeta.availableFromHeight = Math.min(
+                  this.bootstrapBlocksMeta.availableFromHeight,
+                  height
+                );
+              }
+              this.bootstrapBlocksMeta.availableToHeight = Math.max(
+                this.bootstrapBlocksMeta.availableToHeight,
+                height
+              );
+              
+              // Persist metadata
+              await this.state.storage.put('bootstrapBlocksMeta', this.bootstrapBlocksMeta);
+              
+              console.log(`[SignalingRoom] Stored bootstrap block at height ${height} (range: ${this.bootstrapBlocksMeta.availableFromHeight}-${this.bootstrapBlocksMeta.availableToHeight})`);
+            } catch (error) {
+              console.error(`[SignalingRoom] Failed to store bootstrap block at height ${height}:`, error);
+              // Don't fail the rootTip update if block storage fails
+            }
+          }
+
           // Phase 37: Persist to storage
           await this.saveRootTip();
           
@@ -360,6 +543,73 @@ export class SignalingRoom {
                 console.error(`[SignalingRoom] Failed to send ROOT_TIP_UPDATE to ${id.substring(0, 16)}...:`, error);
               }
             }
+          }
+        } else if (data.type === 'REQUEST_BOOTSTRAP_BLOCKS') {
+          try {
+            // WebSocket-based bootstrap blocks (bypass CORS)
+            const from = parseInt(data.from || '1', 10);
+            const to = parseInt(data.to || '100', 10);
+            const requestId = data.requestId || `${Date.now()}`;
+            
+            await this.loadBootstrapBlocksMeta();
+            const meta = this.bootstrapBlocksMeta;
+            
+            if (!meta.availableFromHeight || !meta.availableToHeight) {
+              server.send(JSON.stringify({
+                type: 'BOOTSTRAP_BLOCKS',
+                ok: false,
+                reason: 'NO_BOOTSTRAP_BLOCKS',
+                availableFromHeight: 0,
+                availableToHeight: 0,
+                requestId,
+              }));
+              return;
+            }
+            
+            const start = Math.max(from, meta.availableFromHeight);
+            const end = Math.min(to, meta.availableToHeight);
+            
+            if (start > end) {
+              server.send(JSON.stringify({
+                type: 'BOOTSTRAP_BLOCKS',
+                ok: false,
+                reason: 'OUT_OF_RANGE',
+                availableFromHeight: meta.availableFromHeight,
+                availableToHeight: meta.availableToHeight,
+                requestedFrom: from,
+                requestedTo: to,
+                requestId,
+              }));
+              return;
+            }
+            
+            const blocks = [];
+            for (let h = start; h <= end; h++) {
+              const key = `block:${h}`;
+              const block = await this.state.storage.get(key);
+              if (block) {
+                blocks.push(block);
+              }
+            }
+            
+            server.send(JSON.stringify({
+              type: 'BOOTSTRAP_BLOCKS',
+              ok: true,
+              blocks,
+              availableFromHeight: meta.availableFromHeight,
+              availableToHeight: meta.availableToHeight,
+              requestId,
+            }));
+          } catch (error) {
+            console.error(`[SignalingRoom] Error handling REQUEST_BOOTSTRAP_BLOCKS:`, error);
+            const requestId = data.requestId || `${Date.now()}`;
+            server.send(JSON.stringify({
+              type: 'BOOTSTRAP_BLOCKS',
+              ok: false,
+              reason: 'INTERNAL_ERROR',
+              error: error instanceof Error ? error.message : String(error),
+              requestId,
+            }));
           }
         } else if (data.type === 'RESET_ROOT_TIP') {
           // Phase 45: Handle rootTip reset request (admin only)
@@ -559,6 +809,72 @@ export default {
         headers: {
           'Content-Type': 'text/plain',
           'Cache-Control': 'no-cache',
+          ...corsHeaders,
+        },
+      });
+    }
+
+    // Phase 48: Handle bootstrap blocks endpoint (forward to SignalingRoom)
+    // This must be before the general SignalingRoom fetch to ensure proper routing
+    if (url.pathname === '/bootstrap-blocks' && request.method === 'GET') {
+      try {
+        const roomId = env.SIGNALING_ROOM.idFromName('main');
+        const room = env.SIGNALING_ROOM.get(roomId);
+        const response = await room.fetch(request);
+        
+        // Ensure CORS headers are present
+        const newHeaders = new Headers(response.headers);
+        if (!newHeaders.has('Access-Control-Allow-Origin')) {
+          newHeaders.set('Access-Control-Allow-Origin', '*');
+        }
+        
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: newHeaders,
+        });
+      } catch (error) {
+        console.error(`[Worker] Error forwarding bootstrap blocks request:`, error);
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            reason: "INTERNAL_ERROR",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+          { 
+            status: 500, 
+            headers: { 
+              'Content-Type': 'application/json',
+              ...corsHeaders,
+            } 
+          }
+        );
+      }
+    }
+
+    // Phase 47: Handle block download endpoint for genesis nodes
+    // GET /blocks?fromHeight=1&toHeight=100
+    if (url.pathname === '/blocks' && request.method === 'GET') {
+      const roomId = env.SIGNALING_ROOM.idFromName('main');
+      const room = env.SIGNALING_ROOM.get(roomId);
+      
+      // Forward to SignalingRoom to handle block request
+      // We'll add a method to handle this
+      const fromHeight = parseInt(url.searchParams.get('fromHeight') || '1');
+      const toHeight = parseInt(url.searchParams.get('toHeight') || '100');
+      
+      // For now, return a message indicating this feature needs to be implemented
+      // The signal server would need to store initial blocks (height 1-100) to provide this
+      return new Response(JSON.stringify({ 
+        error: 'Block download from signal server not yet implemented',
+        note: 'Signal server currently only stores rootTip and headers, not full blocks',
+        suggestion: 'Use warp sync (snapshots) or wait for peers with blocks',
+        fromHeight,
+        toHeight,
+      }), {
+        status: 501, // Not Implemented
+        headers: { 
+          'Content-Type': 'application/json',
           ...corsHeaders,
         },
       });

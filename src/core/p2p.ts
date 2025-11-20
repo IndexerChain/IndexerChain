@@ -60,6 +60,8 @@ export type P2PMessageType =
   | "CHECKPOINT_REQUEST" // Request checkpoint state commitment at specific height
   | "CHECKPOINT_RESPONSE" // Response with checkpoint state commitment
   | "HEIGHT_VOTE" // Broadcast height vote for consensus
+  // Phase 48: Signal bootstrap blocks over WebSocket (bypass CORS)
+  | "BOOTSTRAP_BLOCKS"
   // Phase 32: Bootstrap Sync Protocol
   | "REQUEST_BOOTSTRAP" // Request bootstrap data (latest height, header, snapshot meta)
   | "BOOTSTRAP_RESPONSE" // Response with bootstrap data
@@ -832,6 +834,27 @@ export class BrowserP2PNode implements P2PNode {
           }
         } else {
           logger.warn(`[Phase 32] ⚠️ No handlers registered for ROOT_TIP_UPDATE`);
+        }
+        break;
+      
+      // Phase 48: Forward BOOTSTRAP_BLOCKS (signal-server WS response) to handlers
+      case "BOOTSTRAP_BLOCKS":
+        logger.debug(`[Phase 48] Received BOOTSTRAP_BLOCKS from signal server:`, {
+          ok: message.ok,
+          count: message.blocks?.length || 0,
+          availableFromHeight: message.availableFromHeight,
+          availableToHeight: message.availableToHeight,
+          requestId: message.requestId,
+        });
+        {
+          const handlers = this.messageHandlers.get("BOOTSTRAP_BLOCKS" as any);
+          if (handlers && handlers.size > 0) {
+            for (const handler of handlers) {
+              handler(message, "signal-server");
+            }
+          } else {
+            logger.debug(`[Phase 48] No handlers registered for BOOTSTRAP_BLOCKS (this is fine if not using WS bootstrap)`);
+          }
         }
         break;
 

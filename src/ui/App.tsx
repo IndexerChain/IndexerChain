@@ -124,6 +124,7 @@ function App() {
   // Removed unused state: miningHash, miningNonce (replaced by MiningLiveStatsCard)
   const [error, setError] = useState<string>("");
   const [successMessage, setSuccessMessage] = useState<string>(""); // Success message for transfers
+  const [syncMessage, setSyncMessage] = useState<string>(""); // Phase 47: Sync status message for UI display
   // Phase 17: Support mainnet mode (default) and dev mode
   // Default to mainnet signaling server (can be configured)
   const [bootstrapUrl, setBootstrapUrl] = useState<string>(persistedState.bootstrapUrl ?? DEFAULT_MAINNET_SIGNALING);
@@ -1673,7 +1674,10 @@ function App() {
                     recentHeaders: lastRootTipRecentHeaders,
                     stateCommitment: (window as any).lastRootTipStateCommitment || undefined,
                   },
-                  isMiner
+                  isMiner,
+                  (message: string) => {
+                    setSyncMessage(message);
+                  }
                 );
                 
                 if (syncResult.success && syncResult.synced) {
@@ -1837,7 +1841,10 @@ function App() {
                     chainContext,
                     p2pNodeRef.current,
                     rootTip,
-                    isMiner
+                    isMiner,
+                    (message: string) => {
+                      setSyncMessage(message);
+                    }
                   );
                   
                   if (syncResult.success) {
@@ -1972,12 +1979,29 @@ function App() {
       
       // Phase 47: Handle availableFromHeight hint (when peer can't provide requested blocks)
       if (payload && typeof payload.availableFromHeight === 'number' && payload.availableFromHeight > 0) {
+        // Store availableFromHeight for chunkSync to check
+        if (typeof window !== "undefined") {
+          (window as any).lastAvailableFromHeight = payload.availableFromHeight;
+        }
+        
         const localTip = chainContext.storage.getTip();
         const localHeight = localTip?.header?.height ?? -1;
         const gap = payload.availableFromHeight - localHeight;
         
         // Phase 47: If local is at genesis (height 0) and availableFromHeight > 1, force warp sync
         if (localHeight === 0 && payload.availableFromHeight > 1) {
+          // Deduplication: Only trigger once per height
+          const syncKey = `genesis_warp_${payload.height}`;
+          const lastSyncTime = (window as any)[syncKey] || 0;
+          const now = Date.now();
+          
+          // Only trigger if we haven't synced this height in the last 30 seconds
+          if (now - lastSyncTime < 30000) {
+            return; // Skip duplicate trigger
+          }
+          
+          (window as any)[syncKey] = now;
+          
           logger.info(`[Phase 47] 🚀 Genesis node detected with availableFromHeight=${payload.availableFromHeight} → FORCING warp sync`);
           
           // Trigger UnifiedSyncManager to force warp sync
@@ -1991,9 +2015,18 @@ function App() {
               stateCommitment: payload.stateCommitment,
             };
             
-            // Force warp sync
-            handleRootTipUpdate(chainContext, p2pNodeRef.current, rootTip, false).catch((error) => {
+            // Force warp sync with status callback
+            handleRootTipUpdate(
+              chainContext, 
+              p2pNodeRef.current, 
+              rootTip, 
+              false,
+              (message: string) => {
+                setSyncMessage(message);
+              }
+            ).catch((error) => {
               logger.error(`[Phase 47] Failed to trigger warp sync:`, error);
+              setSyncMessage(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
             });
           }
           
@@ -2565,7 +2598,12 @@ function App() {
         const networkHeight = payload.latestHeight || 0;
         const peerCount = p2p.getPeerCount();
         
-        logger.info(`[Phase 46] BOOTSTRAP_RESPONSE received: local=${localHeight}, network=${networkHeight}, peers=${peerCount}, hasHeader=${!!payload.latestHeader}, hasRecentHeaders=${!!payload.recentHeaders?.length}`);
+        logger.info(`[Phase 46] BOOTSTRAP_RESPONSE received: local=${localHeight}, network=${networkHeight}, peers=${peerCount}, hasHeader=${!!payload.latestHeader}, hasRecentHeaders=${!!payload.recentHeaders?.length}, hasSnapshotMeta=${!!payload.latestSnapshotMeta}`);
+        
+        // Phase 47: Special handling for genesis nodes (height 0)
+        if (localHeight === 0 && networkHeight > 0) {
+          logger.info(`[Phase 47] 🚀 Genesis node detected in BOOTSTRAP_RESPONSE: local=0, network=${networkHeight}, forcing warp sync`);
+        }
         
         if (networkHeight > 0 && p2pNodeRef.current) {
           logger.info(`[Phase 46] 🚀 Processing BOOTSTRAP_RESPONSE via UnifiedSyncManager: local=${localHeight}, network=${networkHeight}, peers=${peerCount}`);
@@ -2573,7 +2611,7 @@ function App() {
           const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
           const isMiner = isMining || clusterMining;
           
-          logger.info(`[Phase 46] Calling handleRootTipUpdate with: height=${networkHeight}, hasHeader=${!!payload.latestHeader}, recentHeaders=${payload.recentHeaders?.length || 0}`);
+          logger.info(`[Phase 46] Calling handleRootTipUpdate with: height=${networkHeight}, hasHeader=${!!payload.latestHeader}, recentHeaders=${payload.recentHeaders?.length || 0}, hasSnapshotMeta=${!!payload.latestSnapshotMeta}`);
           
           const syncResult = await handleRootTipUpdate(
             chainContext,
@@ -2586,10 +2624,20 @@ function App() {
               latestSnapshotMeta: payload.latestSnapshotMeta,
               stateCommitment: payload.stateCommitment,
             },
-            isMiner
+            isMiner,
+            (message: string) => {
+              // Phase 47: Update UI with sync status
+              setSyncMessage(message);
+            }
           );
           
           logger.info(`[Phase 46] handleRootTipUpdate result: success=${syncResult.success}, synced=${syncResult.synced}, method=${syncResult.method}, error=${syncResult.error || 'none'}`);
+          
+          // Phase 47: If genesis sync failed, log more details
+          if (localHeight === 0 && !syncResult.synced) {
+            logger.warn(`[Phase 47] ⚠️ Genesis sync not completed: success=${syncResult.success}, method=${syncResult.method}, error=${syncResult.error || 'none'}`);
+            logger.warn(`[Phase 47] Current state: localHeight=${localHeight}, networkHeight=${networkHeight}, peers=${peerCount}, hasSnapshotDownloader=${!!(typeof window !== "undefined" && (window as any).snapshotDownloader)}`);
+          }
           
           if (syncResult.success) {
             if (syncResult.synced) {
@@ -6063,7 +6111,19 @@ function App() {
                               gap: "0.5rem"
                             }}>
                               <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
-                              {t("localStateSync.syncingMessage")}
+                              {syncMessage || t("localStateSync.syncingMessage")}
+                            </div>
+                          )}
+                          {syncMessage && !syncStatus.isSyncing && (
+                            <div style={{ 
+                              marginTop: "0.5rem", 
+                              fontSize: "0.85rem", 
+                              color: "#667eea",
+                              padding: "0.5rem",
+                              background: "#f0f0f0",
+                              borderRadius: "4px"
+                            }}>
+                              {syncMessage}
                             </div>
                           )}
                         </div>

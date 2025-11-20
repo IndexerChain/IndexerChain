@@ -678,7 +678,7 @@ export async function appendMinedBlock(
         
         // Phase 37: Send UPDATE_ROOT_TIP to signal server (if LEADER and signal server available)
         if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
-          (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", {
+          const updatePayload: any = {
             header: block.header,
             headerHash: block.hash,
             latestHeight: block.header.height,
@@ -686,7 +686,20 @@ export async function appendMinedBlock(
             latestSnapshotMeta: latestSnapshotMeta,
             stateCommitment: block.header.stateCommitment, // Phase 37: Include stateCommitment for Worker verification
             // Note: finalityCert can be added here if available from finalityManager
-          });
+          };
+          
+          // Phase 48: Include canonicalBlock for bootstrap storage (only for low heights ≤ 1024)
+          // This allows signal server to store bootstrap blocks for new nodes
+          if (block.header.height > 0 && block.header.height <= 1024) {
+            updatePayload.canonicalBlock = {
+              header: block.header,
+              txs: block.txs,
+              hash: block.hash,
+              // Include all necessary block data for verification
+            };
+          }
+          
+          (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", updatePayload);
           // Removed frequent log: Updated root tip on signal server
         }
         
