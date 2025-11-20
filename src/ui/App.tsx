@@ -2841,6 +2841,9 @@ function App() {
         if (recentHeaders) {
           (window as any).lastRootTipRecentHeaders = recentHeaders;
         }
+        // Phase 47: Mark bootstrap as complete upon receiving a valid root tip
+        // This prevents "Bootstrap 未完成" gating on refresh before BOOTSTRAP_RESPONSE arrives
+        setBootstrapComplete(true);
       }
       
       // Phase 46: Use Unified Sync Manager
