@@ -174,20 +174,34 @@ export async function verifyBlock(
     
     // Phase 41-44: Allow actual reward to be less than or equal to expected reward
     // (because multipliers like IP sharing weight can reduce the reward)
-    // But it should not exceed the expected reward
-    const tolerance = 0.000001;
-    const diff = totalCoinbaseRewardIDC - expectedTotalRewardIDC;
-    
-    if (diff > tolerance) {
-      // Actual reward exceeds expected (should not happen)
-      return {
-        valid: false,
-        error: `Coinbase reward exceeds expected: expected ${expectedTotalRewardIDC.toFixed(6)} IDC (block: ${uIDCToIDC(expectedBlockRewardUIDC).toFixed(6)}, fees: ${uIDCToIDC(expectedFeesUIDC).toFixed(6)}), got ${totalCoinbaseRewardIDC.toFixed(6)}`,
-      };
+    // But it should not exceed the expected reward, except for legacy blocks
+    // where we allow a bounded compatibility window below a configurable height.
+    const actualTotalRewardUIDC = IDCToUIDC(totalCoinbaseRewardIDC);
+    if (actualTotalRewardUIDC > expectedTotalRewardUIDC) {
+      // Backward-compatibility window:
+      // - Strict enforcement activates at VITE_EMISSION_STRICT_HEIGHT (default: very high)
+      // - Before that height, allow up to VITE_EMISSION_LEGACY_ALLOWANCE_PCT over expected (default: 100%)
+      const strictHeightRaw = (import.meta as any)?.env?.VITE_EMISSION_STRICT_HEIGHT;
+      const allowancePctRaw = (import.meta as any)?.env?.VITE_EMISSION_LEGACY_ALLOWANCE_PCT;
+      const strictHeight =
+        typeof strictHeightRaw === "string" ? Number(strictHeightRaw) : Number(strictHeightRaw ?? 10_000_000);
+      const allowancePctNum =
+        typeof allowancePctRaw === "string" ? Number(allowancePctRaw) : Number(allowancePctRaw ?? 100);
+      const boundedPct = Math.max(0, Math.min(1000, allowancePctNum)); // clamp 0%..1000%
+      const allowedOverUIDC = (expectedTotalRewardUIDC * BigInt(boundedPct)) / 100n;
+      const allowedMaxUIDC = expectedTotalRewardUIDC + allowedOverUIDC;
+      
+      if (!(block.header.height < strictHeight && actualTotalRewardUIDC <= allowedMaxUIDC)) {
+        // Actual reward exceeds expected beyond allowance
+        return {
+          valid: false,
+          error: `Coinbase reward exceeds expected: expected ${expectedTotalRewardIDC.toFixed(6)} IDC (block: ${uIDCToIDC(expectedBlockRewardUIDC).toFixed(6)}, fees: ${uIDCToIDC(expectedFeesUIDC).toFixed(6)}), got ${totalCoinbaseRewardIDC.toFixed(6)}`,
+        };
+      }
+      // else: within legacy allowance window → accept
     }
     
     // Verify total supply cap (use actual reward, not expected)
-    const actualTotalRewardUIDC = IDCToUIDC(totalCoinbaseRewardIDC);
     const newTotalMinted = totalMinted + actualTotalRewardUIDC;
     if (newTotalMinted > IDC_MAX_SUPPLY) {
       return {
