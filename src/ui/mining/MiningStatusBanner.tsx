@@ -108,10 +108,7 @@ export function MiningStatusBanner({
           label = isZh ? "已准备好，可以开始挖矿" : "Ready to Mine";
           color = "#28a745";
           
-          // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-          const isFirstYearMode = result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore <= 50;
-          
-          // Build summary
+          // Build summary (no special "first year" labeling; constant threshold 30)
           const stageLabels: Record<string, string> = {
             coldStart: isZh ? "冷启动" : "Cold Start",
             earlyGrowth: isZh ? "早期增长" : "Early Growth",
@@ -120,15 +117,7 @@ export function MiningStatusBanner({
           };
           const stageLabel = stageLabels[networkStage] || networkStage;
           
-          if (isFirstYearMode) {
-            const independentPeers = result.details?.independentPeerCount || 0;
-            const quorumScore = result.details?.quorumScore || 0;
-            const requiredQuorumScore = result.details?.requiredQuorumScore || 40; // Phase 45: First year mode default is 40
-            const modeLabel = result.mode === "SAFE" ? (isZh ? "安全模式" : "SAFE") : (isZh ? "保护模式" : "GUARDED");
-            summary = isZh
-              ? `第一年模式 · ${modeLabel} · ${independentPeers} 个独立节点 · Quorum ${quorumScore}/${requiredQuorumScore}`
-              : `First Year Mode · ${modeLabel} · ${independentPeers} independent peers · Quorum ${quorumScore}/${requiredQuorumScore}`;
-          } else if (isGenesis) {
+          if (isGenesis) {
             summary = isZh
               ? `创世阶段 · ${quorumStatus.independentPeerCount} 个独立节点 · Quorum ${quorumStatus.totalScore}/100`
               : `Genesis · ${quorumStatus.independentPeerCount} independent peers · Quorum ${quorumStatus.totalScore}/100`;
@@ -143,9 +132,7 @@ export function MiningStatusBanner({
           label = t("miningStatusBanner.miningBlocked");
           color = "#dc3545";
           
-          // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-          const isFirstYearModeBlocked = result.details?.requiredQuorumScore !== undefined && result.details.requiredQuorumScore <= 50;
-          if (isFirstYearModeBlocked && result.reason) {
+          if (result.reason) {
             // Translate first year rule messages
             let translatedReason = result.reason;
             

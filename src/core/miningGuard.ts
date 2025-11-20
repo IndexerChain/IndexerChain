@@ -42,6 +42,8 @@ import { validateMainnetParams, isMainnet } from "./networkParams.js";
 import { getQuorumManager } from "./quorumManager.js";
 import { logger } from "./logger.js";
 import { getYear } from "./idcEmission.js";
+import { isSlotLeaderModeEnabled } from "./featureFlags.js";
+import { getSlotIdentity, deriveRandSeed, selectLeader } from "./slotSchedule.js";
 
 /**
  * Phase 33: Mining permission level
@@ -251,8 +253,8 @@ export class MiningGuard {
     // This is important for Cold Start phase: even with 0 peers, if bootstrapComplete === true,
     // we should allow mining (subject to QuorumScore and other checks)
     
-    // Phase 45: First year requires only 2 independent peers (define early)
-    const MIN_PEERS_FIRST_YEAR = 2;
+    // Phase 45: First year requires only 1 independent peer (define early)
+    const MIN_PEERS_FIRST_YEAR = 1;
     
     // Check 1: P2P connection to signal server (required for bootstrap)
     if (!p2pNode || !p2pNode.isConnected) {
@@ -299,7 +301,7 @@ export class MiningGuard {
     );
     
     // Phase 45: Dynamic minimum peers based on network age
-    // First year (age < 1 year OR height < 50,000): Require only 2 independent peers
+    // First year (age < 1 year OR height < 50,000): Require only 1 independent peer
     const tip = chainContext.storage.getTip();
     const currentHeight = tip?.header.height ?? 0;
     const networkAgeYears = quorumManager.getNetworkAgeYears(chainContext.params);
@@ -332,7 +334,7 @@ export class MiningGuard {
     const isFirstYearMode = (networkAgeYears < 1 || currentHeight < 50_000) && isMainnetNetwork;
     
     if (isFirstYearMode && p2pNode) {
-      // Phase 45: First year requirements: ≥2 independent IPs, Quorum ≥ 40, bootstrapComplete, no critical state drift
+      // Phase 45: First year requirements: ≥1 independent IP, Quorum ≥ 40, bootstrapComplete, no critical state drift
       // Check state drift (only critical drift blocks mining)
       let stateDriftCritical = false;
       try {
@@ -349,7 +351,7 @@ export class MiningGuard {
       const firstYearRequiredQuorumScore = quorumManager.getRequiredQuorumScore(chainContext.params, { height: currentHeight });
       const firstYearRequiredPeers = MIN_PEERS_FIRST_YEAR;
       
-      // Phase 45: Check independent peers first (must have ≥2)
+      // Phase 45: Check independent peers first (must have ≥1)
       if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
         return {
           ok: false,
@@ -366,13 +368,13 @@ export class MiningGuard {
         };
       }
       
-      // Phase 45: Check quorum score (first year = 40)
+      // Check quorum score (constant = current policy threshold)
       if (quorumStatus.totalScore < firstYearRequiredQuorumScore) {
         return {
           ok: false,
           mode: "BLOCKED",
           code: "INSUFFICIENT_PEERS",
-          reason: `规则 2：当前 Quorum 分数为 ${quorumStatus.totalScore}，首年要求 ≥ ${firstYearRequiredQuorumScore}`,
+          reason: `规则 2：当前 Quorum 分数为 ${quorumStatus.totalScore}，需要 ≥ ${firstYearRequiredQuorumScore}`,
           details: {
             peerCount,
             requiredPeers: firstYearRequiredPeers,
@@ -416,12 +418,12 @@ export class MiningGuard {
             quorumScore: quorumStatus.totalScore,
             requiredQuorumScore: firstYearRequiredQuorumScore,
             independentPeerCount: quorumStatus.independentPeerCount,
-            requiredIndependentPeers: firstYearRequiredPeers, // Phase 45: First year: min 2 independent peers
+            requiredIndependentPeers: firstYearRequiredPeers,
             networkStage: "GENESIS_QUORUM", // Use existing stage type
             networkStageInfo: {
               stage: "GENESIS_QUORUM",
-              relaxedChecks: ["StateLock", "Finality", "GSN"], // Quorum score is still required (≥50)
-              description: "First year: Relaxed rules - require ≥2 independent IPs, Quorum ≥50, bootstrap complete, no critical drift",
+              relaxedChecks: ["StateLock", "Finality", "GSN"], // Quorum score is still required (≥30)
+              description: "First year: Relaxed rules - require ≥1 independent IP, Quorum ≥30, bootstrap complete, no critical drift",
             },
           },
         };
@@ -431,8 +433,8 @@ export class MiningGuard {
     // Phase 39: Stage 1 - Genesis Quorum Mode (height = 0)
     if (networkStage === "GENESIS_QUORUM" && isMainnetNetwork && p2pNode && !isFirstYearMode) {
       // Genesis mode: Check minimal requirements
-      // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
-      if (quorumStatus.ready && quorumStatus.independentPeerCount >= 2) {
+      // Requirements: ≥1 independent IP, online >2 minutes, bootstrapComplete
+      if (quorumStatus.ready && quorumStatus.independentPeerCount >= 1) {
         logger.info(`[Phase 39] 🌟 Genesis Quorum Mode: Allowing mining at height 0 (independent peers: ${quorumStatus.independentPeerCount}, score: ${quorumStatus.totalScore})`);
         // Skip all finality/state checks in Genesis mode
         // Continue to wallet/network checks, then return success
@@ -441,14 +443,14 @@ export class MiningGuard {
           ok: false,
           mode: "BLOCKED",
           code: "INSUFFICIENT_PEERS",
-          reason: `Genesis phase: Need ≥2 independent peers (current: ${quorumStatus.independentPeerCount}), stable peers, and bootstrap complete`,
+          reason: `Genesis phase: Need ≥1 independent peer (current: ${quorumStatus.independentPeerCount}), stable peers, and bootstrap complete`,
           details: {
             peerCount,
-            requiredPeers: 2,
+            requiredPeers: 1,
             quorumScore: quorumStatus.totalScore,
             requiredQuorumScore: quorumStatus.requiredScore,
             independentPeerCount: quorumStatus.independentPeerCount,
-            requiredIndependentPeers: 2,
+            requiredIndependentPeers: 1,
             networkStage,
             networkStageInfo: stageInfo,
           },
@@ -849,15 +851,53 @@ export class MiningGuard {
       requiredQuorumScoreForDisplay = quorumManager.getRequiredQuorumScore(chainContext.params, { height });
     }
     
-    // Get required independent peers (first year: 2, normal: from admission status)
+    // Get required independent peers (first year: 1, normal: from admission status)
     let requiredIndependentPeers = 3; // Default for normal mode
     if (isFirstYearModeForDisplay) {
-      requiredIndependentPeers = 2; // First year: min 2 independent peers
+      requiredIndependentPeers = 1; // First year: min 1 independent peer
     } else if (p2pNode) {
       const quorumManager = getQuorumManager();
       quorumManager.initialize(p2pNode, chainContext);
       const admissionStatus = quorumManager.getMainnetAdmissionStatus();
       requiredIndependentPeers = admissionStatus.requiredIndependentPeers;
+    }
+    
+    // Phase 48-C: Optional strict slot-leader gating before success return
+    try {
+      if (isSlotLeaderModeEnabled() && miningWalletAddress) {
+        const nowMs = Date.now();
+        const { epochId, slotIndex } = getSlotIdentity(nowMs);
+        const tipBlock = chainContext.storage.getTip();
+        const seed = await deriveRandSeed(tipBlock?.hash, epochId, slotIndex);
+        const recipients: string[] = [];
+        const prevCoinbase = tipBlock?.txs?.[0];
+        if (prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+          for (const op of prevCoinbase.ops) {
+            if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
+              if (!recipients.includes(op.to)) recipients.push(op.to);
+            }
+          }
+        }
+        if (!recipients.includes(miningWalletAddress)) recipients.push(miningWalletAddress);
+        const candidates = recipients.map((a) => ({ address: a, weight: 1 }));
+        const leader = await selectLeader(epochId, slotIndex, seed, candidates);
+        if (!leader || leader !== miningWalletAddress) {
+          return {
+            ok: false,
+            mode: "BLOCKED",
+            code: "FOLLOWER_MODE",
+            reason: "Not slot leader for current time window (leader-only mining enabled)",
+            details: {
+              peerCount,
+              requiredPeers: minPeersRequired,
+              independentPeerCount: quorumStatus.independentPeerCount,
+              requiredIndependentPeers,
+            },
+          };
+        }
+      }
+    } catch (e) {
+      // Do not block if leader computation fails
     }
     
     return {
@@ -870,7 +910,7 @@ export class MiningGuard {
         quorumScore: quorumStatus.totalScore,
         requiredQuorumScore: requiredQuorumScoreForDisplay,
         independentPeerCount: quorumStatus.independentPeerCount,
-        requiredIndependentPeers: isFirstYearModeForDisplay ? (quorumStatus.independentPeerCount >= 2 ? 2 : 1) : requiredIndependentPeers,
+        requiredIndependentPeers,
         networkStage,
         networkStageInfo: stageInfo,
         // Phase 44: IP sharing information

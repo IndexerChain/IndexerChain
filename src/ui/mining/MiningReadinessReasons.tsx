@@ -69,7 +69,8 @@ export function MiningReadinessReasons({
 
         // Check Genesis phase
         if (isGenesis) {
-          if (result.ok && quorumStatus.independentPeerCount >= 2) {
+        const firstYearRequiredPeers = 1;
+        if (result.ok && quorumStatus.independentPeerCount >= firstYearRequiredPeers) {
             reasonItems.push({
               type: "success",
               icon: "🌟",
@@ -80,14 +81,14 @@ export function MiningReadinessReasons({
               priority: 1,
             });
           } else {
-            if (quorumStatus.independentPeerCount < 2) {
+          if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
               reasonItems.push({
                 type: "error",
                 icon: "❌",
                 title: isZh ? "独立节点不足" : "Insufficient Independent Peers",
                 description: isZh
-                  ? `当前只有 ${quorumStatus.independentPeerCount} 个独立节点在线，需要至少 2 个。请再启动一台设备或让朋友连接 signal.indexerchain.com。`
-                  : `Currently only ${quorumStatus.independentPeerCount} independent peer(s) online, need at least 2. Please start another device or ask a friend to connect to signal.indexerchain.com.`,
+                ? `当前只有 ${quorumStatus.independentPeerCount} 个独立节点在线，需要至少 ${firstYearRequiredPeers} 个。请再启动一台设备或让朋友连接 signal.indexerchain.com。`
+                : `Currently only ${quorumStatus.independentPeerCount} independent peer(s) online, need at least ${firstYearRequiredPeers}. Please start another device or ask a friend to connect to signal.indexerchain.com.`,
                 priority: 1,
               });
             }

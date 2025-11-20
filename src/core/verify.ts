@@ -21,6 +21,8 @@ import {
   IDCToUIDC,
   IDC_MAX_SUPPLY,
 } from "./idcEmission.js";
+import { isProposerEnforceEnabled } from "./featureFlags.js";
+import { deriveRandSeed, selectLeader } from "./slotSchedule.js";
 
 /**
  * Verify a block
@@ -117,6 +119,41 @@ export async function verifyBlock(
         valid: false,
         error: `Difficulty mismatch: expected ${expectedDifficulty}, got ${block.header.difficulty}`,
       };
+    }
+  }
+
+  // Phase 48-C: Optional proposer enforcement (single-leader slots)
+  // Only apply when explicitly enabled and when previous block context exists.
+  if (isProposerEnforceEnabled() && prevBlock) {
+    const h = block.header;
+    // Require proposer metadata to be present to enforce
+    if (typeof h.epochId === "number" && typeof h.slotIndex === "number" && typeof h.proposer === "string") {
+      try {
+        const seed = await deriveRandSeed(prevBlock.hash, h.epochId, h.slotIndex);
+        // Candidates from previous block coinbase recipients (deterministic across nodes)
+        const recipients: string[] = [];
+        const prevCoinbase = prevBlock.txs?.[0];
+        if (prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+          for (const op of prevCoinbase.ops) {
+            if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
+              if (!recipients.includes(op.to)) recipients.push(op.to);
+            }
+          }
+        }
+        // If no recipients found, skip enforcement (legacy blocks)
+        if (recipients.length > 0) {
+          const candidates = recipients.map((a) => ({ address: a, weight: 1 }));
+          const expectedLeader = await selectLeader(h.epochId, h.slotIndex, seed, candidates);
+          if (!expectedLeader || expectedLeader !== h.proposer) {
+            return {
+              valid: false,
+              error: `Proposer mismatch: expected ${expectedLeader || "none"}, got ${h.proposer}`,
+            };
+          }
+        }
+      } catch (e) {
+        // On error, do not fail verification for compatibility
+      }
     }
   }
 

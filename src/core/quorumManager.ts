@@ -80,22 +80,7 @@ export interface QuorumStatus {
   reason?: string; // Why quorum is not ready
 }
 
-/**
- * Phase 33: Quorum thresholds by network stage
- */
-export interface QuorumThresholds {
-  devnet: number; // Dev/testnet threshold
-  coldStart: number; // Mainnet cold start (Day 1)
-  mature: number; // Mainnet mature (normal operation)
-  capacity: number; // Mainnet capacity expansion (future)
-}
-
-const DEFAULT_THRESHOLDS: QuorumThresholds = {
-  devnet: 80, // Allow 2 nodes in dev/testnet
-  coldStart: 80, // Allow 2 nodes during mainnet cold start
-  mature: 150, // Require 2-3 quality nodes in mature mainnet
-  capacity: 300, // Future: multiple validation nodes
-};
+// Threshold presets no longer used (constant policy = 30)
 
 /**
  * Phase 35: Mainnet admission thresholds
@@ -331,43 +316,13 @@ export class QuorumManager {
    * Phase 45: Get required quorum score based on network age and height
    * 
    * Dynamic threshold strategy:
-   * - First year (age < 1 year OR height < 50,000): ≥ 40 (very lenient)
+   * - First year (age < 1 year OR height < 50,000): ≥ 30 (independent IP alone is enough)
    * - 1-3 years: ≥ 80 (moderate)
    * - 3+ years: Use Phase 35 stage-based thresholds (mature/secure)
    */
-  getRequiredQuorumScore(chainParams: ChainParams, context: { height: number }): number {
-    const ageYears = this.getNetworkAgeYears(chainParams);
-    const height = context.height;
-
-    // Phase 45: Ultra-lenient "First Year Mode"
-    // First year OR height < 50,000: Only require 40 points
-    // Goal: Allow network to start with just 2 real independent nodes
-    if (ageYears < 1 || height < 50_000) {
-      return 40;
-    }
-
-    // Phase 45: 1-3 years: Moderate threshold
-    if (ageYears < 3) {
-      return 80;
-    }
-
-    // Phase 45: 3+ years: Use Phase 35 stage-based strategy
-    // Get network stage and use corresponding threshold
-    const stage = this.getNetworkStage();
-    const thresholds = chainParams.mainnetQuorumThresholds || DEFAULT_MAINNET_THRESHOLDS.quorumScore;
-    
-    switch (stage) {
-      case "coldStart":
-        return thresholds.coldStart || 80;
-      case "earlyGrowth":
-        return thresholds.earlyGrowth || 150;
-      case "mature":
-        return thresholds.mature || 250;
-      case "secure":
-        return thresholds.secure || 400;
-      default:
-        return 80; // Fallback
-    }
+  getRequiredQuorumScore(_chainParams: ChainParams, _context: { height: number }): number {
+    // Constant threshold: 30
+    return 30;
   }
 
   /**
@@ -386,9 +341,9 @@ export class QuorumManager {
     if (isFirstYearMode) {
       // 🟦 First Year (Year 0-1) - Relaxed scoring (max 75 points per peer)
       
-      // 1. IP Independence (0-30 points) - Same as normal mode
+      // 1. IP Independence (0-30 points) - Fallback to 30 if ipHash not yet available
       if (!metrics.ipHash) {
-        breakdown.ipIndependence = 0;
+        breakdown.ipIndependence = 30;
       } else {
         const sameIPCount = Object.values(ipHashes).filter(hash => hash === metrics.ipHash).length;
         if (sameIPCount > 1) {
@@ -447,9 +402,9 @@ export class QuorumManager {
     } else {
       // Normal scoring (max 100 points per peer)
       
-      // 1. IP Independence (0-30 points)
+      // 1. IP Independence (0-30 points) - Fallback to 30 if ipHash not yet available
       if (!metrics.ipHash) {
-        breakdown.ipIndependence = 0;
+        breakdown.ipIndependence = 30;
       } else {
         const sameIPCount = Object.values(ipHashes).filter(hash => hash === metrics.ipHash).length;
         if (sameIPCount > 1) {
@@ -619,47 +574,20 @@ export class QuorumManager {
         independentPeerCount = fallbackIndependent;
       }
     }
+    // If no peers yet, treat local as one independent entity
+    if (peers.length === 0 && independentPeerCount === 0) {
+      independentPeerCount = 1;
+    }
     
     // Phase 38: Genesis Quorum Mode - special handling for height 0
     const isGenesis = this.isGenesisPhase();
     let totalScore: number;
     let genesisReason: string | undefined;
     
-    if (isGenesis) {
-      // Genesis mode: Check if we meet the minimal requirements
-      // Requirements: ≥2 independent IPs, online >2 minutes, bootstrapComplete
-      const hasEnoughIndependentPeers = independentPeerCount >= 2;
-      
-      // Check if peers have been online > 2 minutes
-      const hasStablePeers = peerMetrics.length > 0 && 
-        peerMetrics.some(m => m.onlineDuration >= this.MIN_ONLINE_DURATION_MS);
-      
-      // Check bootstrapComplete (stored in window or bootstrapSync)
-      let bootstrapComplete = false;
-      if (typeof window !== "undefined") {
-        // Check if bootstrap is complete (from bootstrapSync or App.tsx)
-        bootstrapComplete = (window as any).bootstrapComplete === true || 
-                           (window as any).lastBootstrapHeight !== undefined;
-      }
-      
-      if (hasEnoughIndependentPeers && hasStablePeers && bootstrapComplete) {
-        // Genesis mode: Grant full score (100) to allow mining
-        totalScore = 100;
-        genesisReason = "Genesis phase: Network starting, minimal requirements met";
-        logger.info("[QuorumManager] 🌟 Genesis Quorum Mode activated:", {
-          independentPeerCount,
-          peerCount: peers.length,
-          bootstrapComplete,
-          reason: genesisReason,
-        });
-      } else {
-        // Genesis mode but requirements not met
-        totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
-        genesisReason = `Genesis phase: Requirements not met (independent peers: ${independentPeerCount} < 2, stable peers: ${hasStablePeers}, bootstrap: ${bootstrapComplete})`;
-      }
-    } else {
-      // Normal mode: Calculate score normally
-      totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
+    // Calculate score (Genesis or Normal) - constant 30 baseline if no peers
+    totalScore = peerMetrics.reduce((sum, m) => sum + m.quorumScore, 0);
+    if (peerMetrics.length === 0) {
+      totalScore = 30;
     }
     
     // Debug logging - only log when values change or in debug mode
@@ -687,13 +615,8 @@ export class QuorumManager {
     const isMainnetNetwork = isMainnet(this.chainContext.params);
     let requiredScore: number;
     
-    if (isGenesis) {
-      // Genesis mode: Require 100 score (only granted if requirements met)
-      requiredScore = 100;
-    } else {
-      // Normal mode: Use standard thresholds
-      requiredScore = this.getRequiredScore(isMainnetNetwork);
-    }
+    // Use constant threshold in all stages
+    requiredScore = this.getRequiredScore(isMainnetNetwork);
     
     const ready = totalScore >= requiredScore;
     
@@ -788,14 +711,14 @@ export class QuorumManager {
     const thresholds = this.chainContext.params.mainnetQuorumThresholds || DEFAULT_MAINNET_THRESHOLDS.quorumScore;
     const peerThresholds = this.chainContext.params.mainnetMinIndependentPeers || DEFAULT_MAINNET_THRESHOLDS.independentPeers;
     
-    // First year mode: Override thresholds (min 2 peers, Quorum ≥ 50)
+    // First year mode: Override thresholds (min 1 peer, Quorum ≥ 30)
     const isFirstYearMode = this.isFirstYear();
     let requiredQuorumScore = thresholds[stage];
     let requiredIndependentPeers = peerThresholds[stage];
     
     if (isFirstYearMode) {
-      requiredQuorumScore = 50; // First year: Quorum ≥ 50
-      requiredIndependentPeers = 2; // First year: min 2 independent peers
+      requiredQuorumScore = 30; // First year: Quorum ≥ 30
+      requiredIndependentPeers = 1; // First year: min 1 independent peer
     }
     
     const admissionReady = 
@@ -834,38 +757,9 @@ export class QuorumManager {
    * Phase 34: Support quorum debug override
    * Phase 35: Use mainnet admission thresholds
    */
-  private getRequiredScore(isMainnet: boolean): number {
-    // Phase 34: Quorum Debug Mode (dev/testnet only)
-    if (!isMainnet && this.chainContext?.params.quorumDebugOverride) {
-      return 20; // Very low threshold for debugging
-    }
-    
-    if (!isMainnet) {
-      return DEFAULT_THRESHOLDS.devnet;
-    }
-    
-    // Phase 45: Use dynamic threshold based on network age
-    if (isMainnet && this.chainContext) {
-      const localTip = this.chainContext.storage.getTip();
-      const height = localTip?.header.height ?? 0;
-      return this.getRequiredQuorumScore(this.chainContext.params, { height });
-    }
-    
-    // Fallback to old logic
-    if (!this.chainContext) {
-      return DEFAULT_THRESHOLDS.mature;
-    }
-    
-    const localTip = this.chainContext.storage.getTip();
-    const height = localTip?.header.height ?? 0;
-    
-    if (height < 100) {
-      return DEFAULT_THRESHOLDS.coldStart;
-    } else if (height < 1000) {
-      return DEFAULT_THRESHOLDS.mature;
-    } else {
-      return DEFAULT_THRESHOLDS.capacity;
-    }
+  private getRequiredScore(_isMainnet: boolean): number {
+    // Constant threshold: 30
+    return 30;
   }
 
   /**

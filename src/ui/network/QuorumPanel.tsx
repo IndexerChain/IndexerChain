@@ -186,7 +186,7 @@ export function QuorumPanel({ chainContext, p2pNode, locale }: QuorumPanelProps)
                   </thead>
                   <tbody>
                     {quorumStatus.peerMetrics.map((peer, idx) => {
-                      const isHealthy = peer.quorumScore >= 50;
+                      const isHealthy = peer.quorumScore >= 30;
                       const statusIcon = isHealthy ? "🟢" : peer.quorumScore >= 20 ? "🟡" : "🔴";
                       
                       return (

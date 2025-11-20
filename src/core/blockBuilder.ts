@@ -34,6 +34,8 @@ import {
   getIPSharingTracker,
   getOrCreateDeviceId,
 } from "./ipSharingWeight.js";
+import { isSlotLeaderModeEnabled } from "./featureFlags.js";
+import { getSlotIdentity, deriveRandSeed, selectLeader } from "./slotSchedule.js";
 
 /**
  * Create coinbase transaction (mining reward)
@@ -481,6 +483,40 @@ export async function buildCandidateBlock(
     nonce: 0, // Will be incremented during mining
     stateCommitment, // Phase 15: State commitment hash
   };
+
+  // Phase 48-C: Optional slot metadata + proposer (scaffolding; non-enforcing by default)
+  try {
+    if (isSlotLeaderModeEnabled()) {
+      const nowMs = Date.now();
+      const { epochId, slotIndex } = getSlotIdentity(nowMs);
+      const randSeed = await deriveRandSeed(prevHash, epochId, slotIndex);
+      // Derive candidate set from previous block coinbase recipients (deterministic)
+      const prevCoinbase = prevBlock?.txs?.[0];
+      const recipients: Address[] = [];
+      if (prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+        for (const op of prevCoinbase.ops) {
+          if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
+            if (!recipients.includes(op.to as Address)) {
+              recipients.push(op.to as Address);
+            }
+          }
+        }
+      }
+      // Fallback: include current miner address to ensure header is filled
+      if (!recipients.includes(minerAddress)) {
+        recipients.push(minerAddress);
+      }
+      const candidates = recipients.map((a) => ({ address: a, weight: 1 }));
+      const proposer = await selectLeader(epochId, slotIndex, randSeed, candidates) || minerAddress;
+      header.epochId = epochId;
+      header.slotIndex = slotIndex;
+      header.randSeed = randSeed;
+      header.proposer = proposer;
+      // payoutRoot will be set by allocator wiring in Phase B/C when used for enforcement
+    }
+  } catch {
+    // Ignore slot metadata on failure; backward compatible
+  }
 
   // Block hash will be computed during mining
   const block: Block = {

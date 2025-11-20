@@ -152,6 +152,36 @@ export interface Translations {
     globalPoolMining: string;
   };
 
+  // Mining Main Card (concise strings used in MiningMainCard)
+  miningMain: {
+    autoMineTitle: string;
+    autoMineShortLabel: string;
+    autoMineEnabledTooltip: string;
+    autoEnabledAlert: string;
+    catchUp: string;
+    catchUpTitle: string;
+    projectedRewardTitle: string;
+    timescaleLabel: string;
+    perBlock: string;
+    perMin: string;
+    perHour: string;
+    perDay: string;
+    perWeek: string;
+    baseRewardIDC: string;
+    myEffectiveWeight: string;
+    projectedRewardInline: string;
+    miningRequirementsHeading: string;
+    needDifferentIPsHint: string;
+    waiting: string;
+    synced: string;
+    catchingUp: string;
+    outOfSync: string;
+    followerBlockedAlert: string;
+    followerTabWarning: string;
+    failedPrefix: string;
+    localNetworkHeightsTitle: string;
+  };
+
   // Network (expanded)
   network: {
     title: string;
@@ -1869,6 +1899,34 @@ export const translations: Record<Locale, Translations> = {
       noActiveMiner: "⚪ 未设置 Active Miner",
       details: "详情",
     },
+    miningMain: {
+      autoMineTitle: "开机自启挖矿",
+      autoMineShortLabel: "开机自启",
+      autoMineEnabledTooltip: "自动挖矿已启用，系统会自动开始挖矿",
+      autoEnabledAlert: "自动挖矿已启用，系统会在链准备就绪时自动开始挖矿。",
+      catchUp: "一键追赶",
+      catchUpTitle: "使用统一同步管理器优先追赶，否则请求区块",
+      projectedRewardTitle: "预计分红（池化预览）",
+      timescaleLabel: "时间窗口",
+      perBlock: "每块",
+      perMin: "每分钟",
+      perHour: "每小时",
+      perDay: "每天",
+      perWeek: "每周",
+      baseRewardIDC: "基础奖励（IDC）",
+      myEffectiveWeight: "我的有效权重",
+      projectedRewardInline: "预计分红",
+      miningRequirementsHeading: "挖矿要求",
+      needDifferentIPsHint: "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）",
+      waiting: "等待网络",
+      synced: "已同步",
+      catchingUp: "追赶中",
+      outOfSync: "未同步",
+      followerBlockedAlert: "此实例是 FOLLOWER，只有 LEADER 实例可以在主网挖矿。",
+      followerTabWarning: "⚠️ 此标签页是 FOLLOWER。只有本机的 LEADER 标签页可以在主网挖矿。",
+      failedPrefix: "失败：",
+      localNetworkHeightsTitle: "本地/网络高度",
+    },
     rewardBreakdown: {
       expectedBlockReward: "💰 预期区块奖励",
       calculating: "计算中...",
@@ -2009,13 +2067,13 @@ export const translations: Record<Locale, Translations> = {
       gsnContribution: "• GSN 贡献：0-10 分（提供快照区块）",
       firstYearModeNote: "• 第一年模式：最终性参与和 GSN 贡献不计分（固定 0 分）",
       summaryNormal: "每个节点最高 100 分，总分数 = 所有节点的分数之和",
-      summaryFirstYear: "第一年模式：每个节点最高 75 分（30+20+15+10），总分数 = 所有节点的分数之和。要求 ≥50 分即可挖矿。",
+      summaryFirstYear: "第一年模式：每个节点最高 75 分（30+20+15+10），总分数 = 所有节点的分数之和。要求 ≥30 分即可挖矿。",
       firstYearRelaxedNote: "💡 第一年规则更宽松，便于网络启动。第二年后将自动恢复严格模式（要求 ≥100 分，3 个独立节点）。",
     },
     genesisQuorum: {
       bootstrapIncomplete: "Genesis Quorum Mode",
-      firstYearModeDesc: "当前网络处于创世阶段（第一年模式），当有 ≥ 2 个独立节点在线、Quorum 分数 ≥ 50 并且已完成引导同步后，即可开始挖出第一个区块。第一年规则更宽松，更容易启动网络。",
-      normalModeDesc: "当前网络处于创世阶段，当有 ≥ 2 个独立节点在线并且已完成引导同步后，即可开始挖出第一个区块。",
+      firstYearModeDesc: "当前网络处于创世阶段（第一年模式），当有 ≥ 1 个独立节点在线、Quorum 分数 ≥ 30 并且已完成引导同步后，即可开始挖出第一个区块。第一年规则更宽松，更容易启动网络。",
+      normalModeDesc: "当前网络处于创世阶段，当有 ≥ 1 个独立节点在线并且已完成引导同步后，即可开始挖出第一个区块。",
       currentStatus: "当前状态：",
       independentPeersStatus: "独立节点：{current} / {required}（需要至少 {required} 个）",
       onlyOneNodeOnline: "当前只有你一个节点在线，请再启动一台设备或让朋友连接 signal.indexerchain.com。",
@@ -2037,7 +2095,7 @@ export const translations: Record<Locale, Translations> = {
     miningGuard: {
       firstYearRuleInsufficientPeers: "首年规则：需要至少 {required} 个独立 IP 对等节点，目前只有 {current} 个",
       firstYearRuleMultipleReasons: "首年规则：{reasons}",
-      rule2InsufficientQuorum: "规则 2：当前 Quorum 分数为 {current}，首年要求 ≥ {required}",
+      rule2InsufficientQuorum: "规则 2：当前 Quorum 分数为 {current}，需要 ≥ {required}",
       needAtLeastIndependentPeers: "需要 ≥{required} 个独立对等节点（当前: {current}）",
       quorumScoreInsufficient: "Quorum 分数 {current} < 要求 {required}",
       bootstrapIncomplete: "Bootstrap 未完成",
@@ -2951,6 +3009,34 @@ export const translations: Record<Locale, Translations> = {
       noActiveMiner: "⚪ No Active Miner",
       details: "Details",
     },
+    miningMain: {
+      autoMineTitle: "Auto Mine on Launch",
+      autoMineShortLabel: "Auto",
+      autoMineEnabledTooltip: "Auto mining is enabled, the system will automatically start mining",
+      autoEnabledAlert: "Auto mining is enabled. The system will automatically start mining when the chain is ready.",
+      catchUp: "Catch up",
+      catchUpTitle: "Use UnifiedSyncManager first; otherwise request blocks",
+      projectedRewardTitle: "Projected Reward (pooled preview)",
+      timescaleLabel: "Timescale",
+      perBlock: "per block",
+      perMin: "per minute",
+      perHour: "per hour",
+      perDay: "per day",
+      perWeek: "per week",
+      baseRewardIDC: "Base Reward (IDC)",
+      myEffectiveWeight: "My Effective Weight",
+      projectedRewardInline: "Projected reward",
+      miningRequirementsHeading: "Mining Requirements",
+      needDifferentIPsHint: "💡 Need peers from different IPs (multiple tabs on same computer don't count)",
+      waiting: "Waiting",
+      synced: "Synced",
+      catchingUp: "Catching up",
+      outOfSync: "Out of sync",
+      followerBlockedAlert: "This instance is a FOLLOWER. Only the LEADER instance can mine on mainnet.",
+      followerTabWarning: "⚠️ This tab is FOLLOWER. Only the LEADER tab on this machine can mine on mainnet.",
+      failedPrefix: "Failed: ",
+      localNetworkHeightsTitle: "Local/Network",
+    },
     rewardBreakdown: {
       expectedBlockReward: "💰 Expected Block Reward",
       calculating: "Calculating...",
@@ -3096,8 +3182,8 @@ export const translations: Record<Locale, Translations> = {
     },
     genesisQuorum: {
       bootstrapIncomplete: "Genesis Quorum Mode",
-      firstYearModeDesc: "The network is currently in Genesis phase (First Year Mode). Once there are ≥ 2 independent peers online, Quorum score ≥ 50, and bootstrap sync is complete, you can start mining the first block. First year rules are more relaxed for easier network startup.",
-      normalModeDesc: "The network is currently in Genesis phase. Once there are ≥ 2 independent peers online and bootstrap sync is complete, you can start mining the first block.",
+      firstYearModeDesc: "The network is currently in Genesis phase (First Year Mode). Once there is ≥ 1 independent peer online, Quorum score ≥ 30, and bootstrap sync is complete, you can start mining the first block. First year rules are more relaxed for easier network startup.",
+      normalModeDesc: "The network is currently in Genesis phase. Once there is ≥ 1 independent peer online and bootstrap sync is complete, you can start mining the first block.",
       currentStatus: "Current Status:",
       independentPeersStatus: "Independent Peers: {current} / {required} (need at least {required})",
       onlyOneNodeOnline: "Currently only you are online, please start another device or ask a friend to connect to signal.indexerchain.com.",
@@ -3119,7 +3205,7 @@ export const translations: Record<Locale, Translations> = {
     miningGuard: {
       firstYearRuleInsufficientPeers: "First Year Rule: Need at least {required} independent IP peer nodes, currently only {current}",
       firstYearRuleMultipleReasons: "First Year Rule: {reasons}",
-      rule2InsufficientQuorum: "Rule 2: Current Quorum score is {current}, first year requires ≥ {required}",
+      rule2InsufficientQuorum: "Rule 2: Current Quorum score is {current}, need ≥ {required}",
       needAtLeastIndependentPeers: "Need ≥{required} independent peer nodes (current: {current})",
       quorumScoreInsufficient: "Quorum score {current} < required {required}",
       bootstrapIncomplete: "Bootstrap incomplete",

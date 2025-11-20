@@ -9,6 +9,12 @@ import type { ChainContext } from "../../core/chain.js";
 import type { P2PNode } from "../../core/p2p.js";
 import { MiningGuard } from "../../core/miningGuard.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { SlotInfoBar } from "./SlotInfoBar.js";
+import { computeEffectiveWeight } from "../../core/rewardPoolAllocator.js";
+import { computeOnlineScore, getBalanceUIDC } from "../../core/weightSignals.js";
+import { getBlockRewardRaw, uIDCToIDC } from "../../core/idcEmission.js";
+// useState already imported above
+import { MiningWeightCard } from "./MiningWeightCard.js";
 
 interface MiningMainCardProps {
   chainContext: ChainContext | null;
@@ -87,8 +93,8 @@ export function MiningMainCard({
         const quorumScore = result.details.quorumScore ?? 0;
         const requiredQuorumScore = result.details.requiredQuorumScore ?? 80;
         const isGenesisMode = result.details.networkStage === "GENESIS_QUORUM";
-        // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-        const isFirstYearMode = requiredQuorumScore !== undefined && requiredQuorumScore <= 50;
+        // First year mode: requiredQuorumScore is <= 30
+        const isFirstYearMode = requiredQuorumScore !== undefined && requiredQuorumScore <= 30;
         const independentPeerCount = result.details.independentPeerCount ?? 0;
         const firstYearRequiredScore = requiredQuorumScore || 40; // Phase 45: Default to 40 for first year
         
@@ -237,25 +243,78 @@ export function MiningMainCard({
   
   const isFollowerBlocked = localRole === "FOLLOWER" && chainContext?.params?.networkId === "IXC_MAINNET_V1";
 
+  // One-click catch up (mining page)
+  const [syncMsgMine, setSyncMsgMine] = useState<string>("");
+  const handleCatchUpMining = async () => {
+    try {
+      if (!chainContext || !p2pNode) {
+        setSyncMsgMine(isZh ? "节点未就绪" : "Node not ready");
+        return;
+      }
+      const local = chainContext.storage.getTip()?.header.height ?? 0;
+      const network = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+      if (network <= 0) {
+        setSyncMsgMine(isZh ? "暂无网络高度" : "No network height");
+        return;
+      }
+      const diff = network - local;
+      if (diff <= 0) {
+        setSyncMsgMine(isZh ? "已在最新高度" : "Already at latest height");
+        return;
+      }
+      setSyncMsgMine((isZh ? "同步中..." : "Syncing...") + ` (${local} → ${network})`);
+      try {
+        const { handleRootTipUpdate } = await import("../../core/unifiedSyncManager.js");
+        const result = await handleRootTipUpdate(
+          chainContext,
+          p2pNode as any,
+          {
+            latestHeight: network,
+            latestHeaderHash: "",
+          } as any,
+          false,
+          (msg: string) => setSyncMsgMine((isZh ? "同步中：" : "Syncing: ") + msg)
+        );
+        if (result.success) {
+          setSyncMsgMine(isZh ? "✅ 同步完成" : "✅ Synced");
+          return;
+        }
+      } catch {
+        // fall through
+      }
+      const requestRange = Math.min(diff, 500);
+      (p2pNode as any).broadcast("REQUEST_BLOCKS", {
+        fromHeight: local + 1,
+        toHeight: local + requestRange,
+      });
+      setSyncMsgMine(
+        (isZh ? "已请求区块：" : "Requested blocks: ") +
+          `${local + 1}-${local + requestRange}`
+      );
+    } catch (e) {
+      setSyncMsgMine(t("miningMain.failedPrefix") + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   // Get button label
   const getButtonLabel = () => {
     if (isMining || clusterMining) {
       if (clusterMining) {
-        return isZh ? "停止集群挖矿" : "Stop Cluster Mining";
+        return t("miningStatus.stopClusterMining");
       }
-      return isZh ? "停止挖矿" : "Stop Mining";
+      return t("miningStatus.stopMining");
     }
 
     if (isFollowerBlocked) {
-      return isZh ? "仅 LEADER 可挖矿" : "LEADER Only";
+      return t("miningStatus.leaderOnly");
     }
 
     if (miningMode === "cluster") {
-      return isZh ? "开始集群挖矿" : "Start Mining (Cluster)";
+      return t("miningStatus.startClusterMining");
     } else if (miningMode === "global-pool") {
-      return isZh ? "开始挖矿（全局矿池）" : "Start Mining (Global Pool)";
+      return t("miningStatus.startMiningGlobalPool");
     } else {
-      return isZh ? "开始挖矿" : "Start Mining (Solo)";
+      return t("miningStatus.startMiningSolo");
     }
   };
 
@@ -269,7 +328,7 @@ export function MiningMainCard({
     } else {
       // Show feedback when button is clicked but mining cannot start
       if (autoMining) {
-        alert(isZh ? "自动挖矿已启用，系统会在链准备就绪时自动开始挖矿。" : "Auto mining is enabled. The system will automatically start mining when the chain is ready.");
+        alert(t("miningMain.autoEnabledAlert"));
       } else if (!canMine) {
         // Production: No console logs
         // Optionally show an alert or toast message
@@ -277,7 +336,7 @@ export function MiningMainCard({
           alert(tooltip);
         }
       } else if (isFollowerBlocked) {
-        alert(isZh ? "此实例是 FOLLOWER，只有 LEADER 实例可以在主网挖矿。" : "This instance is a FOLLOWER. Only the LEADER instance can mine on mainnet.");
+        alert(t("miningMain.followerBlockedAlert"));
       }
     }
   };
@@ -298,7 +357,7 @@ export function MiningMainCard({
       }}
     >
       <h2 style={{ margin: 0, marginBottom: "1rem", fontSize: "1.3rem" }}>
-        {isZh ? "⛏️ 挖矿状态" : "⛏️ Mining Status"}
+        {"⛏️ " + t("miningStatus.mining")}
       </h2>
 
       {/* Status Indicator */}
@@ -367,6 +426,56 @@ export function MiningMainCard({
                     ? t("mining.localClusterMining")
                     : t("mining.globalPoolMining")}
                 </div>
+                {/* Sync status label (compact) */}
+                <div style={{ marginTop: "0.25rem" }}>
+                  {(() => {
+                    const lh = chainContext?.storage.getTip()?.header.height ?? 0;
+                    const nh = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+                    const diff = Math.max(0, nh - lh);
+                    const label = nh <= 0 ? t("miningMain.waiting")
+                      : diff <= 1 ? t("miningMain.synced")
+                      : diff <= 50 ? t("miningMain.catchingUp")
+                      : t("miningMain.outOfSync");
+                    const color = diff <= 1 ? "#28a745" : diff <= 50 ? "#ffc107" : "#dc3545";
+                    return (
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "0.15rem 0.5rem",
+                          borderRadius: "12px",
+                          background: color,
+                          color: "white",
+                          fontSize: "0.7rem",
+                          fontWeight: "bold",
+                        }}
+                        title={`${t("miningMain.localNetworkHeightsTitle")}: ${lh}/${nh}`}
+                      >
+                        {label}
+                      </span>
+                    );
+                  })()}
+                  <button
+                    onClick={handleCatchUpMining}
+                    style={{
+                      marginLeft: "0.5rem",
+                      padding: "0.15rem 0.5rem",
+                      fontSize: "0.75rem",
+                      borderRadius: "12px",
+                      border: "1px solid #17a2b8",
+                      background: "white",
+                      color: "#17a2b8",
+                      cursor: "pointer",
+                    }}
+                    title={t("miningMain.catchUpTitle")}
+                  >
+                    {t("miningMain.catchUp")}
+                  </button>
+                  {syncMsgMine && (
+                    <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.35rem" }}>
+                      {syncMsgMine}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div
@@ -384,117 +493,228 @@ export function MiningMainCard({
           </div>
         )}
         
-        <button
-          onClick={handleButtonClick}
-          disabled={autoMining && !isMining && !clusterMining} // Disable if auto-mining is enabled and not currently mining
-          style={{
-            width: "100%",
-            padding: "1rem 2rem",
-            fontSize: "1.1rem",
-            fontWeight: "bold",
-            borderRadius: "8px",
-            border: "none",
-            background: (canMine && !autoMining) || isMining || clusterMining
-              ? status.color
-              : "#6c757d",
-            color: "white",
-            cursor: (autoMining && !isMining && !clusterMining) ? "not-allowed" : "pointer",
-            transition: "all 0.2s",
-            opacity: (canMine && !autoMining) || isMining || clusterMining || isFollowerBlocked ? 1 : 0.7,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "0.5rem",
-          }}
-          onMouseEnter={(e) => {
-            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && !autoMining) {
-              e.currentTarget.style.opacity = "0.9";
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && !autoMining) {
-              e.currentTarget.style.opacity = "0.7";
-            }
-          }}
-          title={autoMining && !isMining && !clusterMining 
-            ? (isZh ? "自动挖矿已启用，系统会自动开始挖矿" : "Auto mining is enabled, the system will automatically start mining")
-            : (tooltip || undefined)}
-        >
-          {isMining || clusterMining ? (
-            <>
-              <span>⏹️</span>
-              {getButtonLabel()}
-            </>
-          ) : (
-            <>
-              <span>▶️</span>
-              {getButtonLabel()}
-            </>
-          )}
-        </button>
-        
-        {/* Auto-Mining Toggle */}
-        {onAutoMiningChange && (
-          <div
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <button
+            onClick={handleButtonClick}
+            disabled={autoMining && !isMining && !clusterMining} // Disable if auto-mining is enabled and not currently mining
             style={{
-              marginTop: "1rem",
-              padding: "0.75rem 1rem",
-              background: "rgba(255, 255, 255, 0.9)",
-              borderRadius: "6px",
-              border: "1px solid #e0e0e0",
+              flex: 1,
+              padding: "1rem 2rem",
+              fontSize: "1.1rem",
+              fontWeight: "bold",
+              borderRadius: "8px",
+              border: "none",
+              background: (canMine && !autoMining) || isMining || clusterMining
+                ? status.color
+                : "#6c757d",
+              color: "white",
+              cursor: (autoMining && !isMining && !clusterMining) ? "not-allowed" : "pointer",
+              transition: "all 0.2s",
+              opacity: (canMine && !autoMining) || isMining || clusterMining || isFollowerBlocked ? 1 : 0.7,
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              justifyContent: "center",
+              gap: "0.5rem",
             }}
+            onMouseEnter={(e) => {
+              if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && !autoMining) {
+                e.currentTarget.style.opacity = "0.9";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!canMine && !isMining && !clusterMining && !isFollowerBlocked && !autoMining) {
+                e.currentTarget.style.opacity = "0.7";
+              }
+            }}
+            title={autoMining && !isMining && !clusterMining 
+              ? t("miningMain.autoMineEnabledTooltip")
+              : (tooltip || undefined)}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <span style={{ fontSize: "1.2rem" }}>⚙️</span>
-              <div>
-                <div style={{ fontSize: "0.9rem", fontWeight: "bold", color: "#333" }}>
-                  {isZh ? "自动挖矿" : "Auto Mining"}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
-                  {isZh 
-                    ? "启用后，当链准备就绪时自动开始挖矿" 
-                    : "Automatically start mining when chain is ready"}
-                </div>
-              </div>
-            </div>
+            {isMining || clusterMining ? (
+              <>
+                <span>⏹️</span>
+                {getButtonLabel()}
+              </>
+            ) : (
+              <>
+                <span>▶️</span>
+                {getButtonLabel()}
+              </>
+            )}
+          </button>
+          
+          {onAutoMiningChange && (
             <label
               style={{
                 display: "flex",
                 alignItems: "center",
+                gap: "0.4rem",
+                whiteSpace: "nowrap",
+                padding: "0.5rem 0.6rem",
+                border: "1px solid #e0e0e0",
+                borderRadius: "8px",
+                background: "#fff",
                 cursor: "pointer",
-                userSelect: "none",
               }}
+              title={t("miningMain.autoMineTitle")}
             >
               <input
                 type="checkbox"
                 checked={autoMining}
                 onChange={(e) => {
-                  if (onAutoMiningChange) {
-                    onAutoMiningChange(e.target.checked);
-                  }
+                  if (onAutoMiningChange) onAutoMiningChange(e.target.checked);
                 }}
-                style={{
-                  width: "1.2rem",
-                  height: "1.2rem",
-                  cursor: "pointer",
-                  marginRight: "0.5rem",
-                }}
+                style={{ width: "1.1rem", height: "1.1rem", cursor: "pointer" }}
               />
-              <span
-                style={{
-                  fontSize: "0.9rem",
-                  color: autoMining ? "#28a745" : "#666",
-                  fontWeight: autoMining ? "bold" : "normal",
-                }}
-              >
-                {autoMining ? (isZh ? "已启用" : "Enabled") : (isZh ? "已禁用" : "Disabled")}
+              <span style={{ fontSize: "0.85rem", color: autoMining ? "#28a745" : "#666", fontWeight: autoMining ? "bold" : "normal" }}>
+                {t("miningMain.autoMineShortLabel")}
               </span>
             </label>
+          )}
+        </div>
+        
+        {/* Slot & Leader info */}
+        <SlotInfoBar chainContext={chainContext} nodeAddress={nodeAddress} locale={locale} />
+        
+        {/* Projected Reward (pooled preview) */}
+        <div
+          className="status-card"
+          style={{
+            marginTop: "0.75rem",
+            background: "rgba(255,255,255,0.9)",
+            border: "1px solid #e0e0e0",
+            borderRadius: "8px",
+            padding: "0.75rem",
+          }}
+        >
+          {/* Timescale selector */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+            <div style={{ fontWeight: "bold" }}>
+              {t("miningMain.projectedRewardTitle")}
+            </div>
+            <div style={{ fontSize: "0.85rem", color: "#666" }}>
+              {t("miningMain.timescaleLabel")}:{" "}
+              <select
+                value={(() => {
+                  try { return localStorage.getItem("indexerchain_reward_timescale") || "block"; } catch { return "block"; }
+                })()}
+                onChange={(e) => {
+                  try { localStorage.setItem("indexerchain_reward_timescale", e.target.value); } catch {}
+                  // force rerender
+                  (e.currentTarget as any)._forceUpdateKey = Date.now();
+                }}
+                style={{ padding: "0.25rem 0.5rem", border: "1px solid #ddd", borderRadius: "4px" }}
+              >
+                <option value="block">{t("miningMain.perBlock")}</option>
+                <option value="min">{t("miningMain.perMin")}</option>
+                <option value="hour">{t("miningMain.perHour")}</option>
+                <option value="day">{t("miningMain.perDay")}</option>
+                <option value="week">{t("miningMain.perWeek")}</option>
+              </select>
+            </div>
           </div>
-        )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("miningMain.baseRewardIDC")}</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
+                {uIDCToIDC(getBlockRewardRaw((chainContext?.storage.getTip()?.header.height ?? 0) + 1)).toFixed(6)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("miningMain.myEffectiveWeight")}</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
+                {(() => {
+                  try {
+                    const bal = getBalanceUIDC(chainContext, (nodeAddress as any) || null);
+                    const online = computeOnlineScore();
+                    const reliab = 80;
+                    const ew = computeEffectiveWeight({
+                      address: (nodeAddress as any) || "idc_unknown",
+                      balanceUIDC: bal,
+                      onlineScore: online,
+                      reliabilityScore: reliab,
+                      eligible: true,
+                    });
+                    return ew.toFixed(4);
+                  } catch {
+                    return "0.0000";
+                  }
+                })()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.85rem", color: "#666" }}>{isZh ? "总权重（可配置）" : "Total Weight (configurable)"}</div>
+              <input
+                type="number"
+                value={(() => {
+                  try { return Number(localStorage.getItem("indexerchain_estimated_total_weight") || "100"); } catch { return 100; }
+                })()}
+                min={1}
+                onChange={(e) => {
+                  const v = Math.max(1, Number(e.target.value || "1"));
+                  try { localStorage.setItem("indexerchain_estimated_total_weight", String(v)); } catch {}
+                }}
+                style={{
+                  width: "100%",
+                  padding: "0.35rem 0.5rem",
+                  border: "1px solid #ddd",
+                  borderRadius: "4px",
+                  fontSize: "0.95rem",
+                }}
+              />
+            </div>
+          </div>
+          <div style={{ marginTop: "0.5rem", fontSize: "0.95rem" }}>
+            {t("miningMain.projectedRewardInline")}:{" "}
+            <b>
+              {(() => {
+                try {
+                  const total = Math.max(1, Number(localStorage.getItem("indexerchain_estimated_total_weight") || "100"));
+                  const base = uIDCToIDC(getBlockRewardRaw((chainContext?.storage.getTip()?.header.height ?? 0) + 1));
+                  const bal = getBalanceUIDC(chainContext, (nodeAddress as any) || null);
+                  const online = computeOnlineScore();
+                  const reliab = 80;
+                  const ew = computeEffectiveWeight({
+                    address: (nodeAddress as any) || "idc_unknown",
+                    balanceUIDC: bal,
+                    onlineScore: online,
+                    reliabilityScore: reliab,
+                    eligible: true,
+                  });
+                  const projPerBlock = (base * ew) / total;
+                  const scale = (() => {
+                    try { return localStorage.getItem("indexerchain_reward_timescale") || "block"; } catch { return "block"; }
+                  })();
+                  const tb = Math.max(1, chainContext?.params?.targetBlockTime || 10); // seconds
+                  let factor = 1;
+                  if (scale === "min") factor = 60 / tb;
+                  else if (scale === "hour") factor = 3600 / tb;
+                  else if (scale === "day") factor = 86400 / tb;
+                  else if (scale === "week") factor = (86400 * 7) / tb;
+                  const value = projPerBlock * factor;
+                  const label = scale === "block" ? t("miningMain.perBlock")
+                    : scale === "min" ? t("miningMain.perMin")
+                    : scale === "hour" ? t("miningMain.perHour")
+                    : scale === "day" ? t("miningMain.perDay")
+                    : t("miningMain.perWeek");
+                  return `${value.toFixed(6)} IDC (${label})`;
+                } catch {
+                  return `0.000000 IDC (${t("miningMain.perBlock")})`;
+                }
+              })()}
+            </b>
+          </div>
+        </div>
+        
+        {/* Weight signals (preview of pooled rewards weighting) */}
+        <MiningWeightCard
+          chainContext={chainContext}
+          p2pNode={p2pNode}
+          nodeAddress={nodeAddress}
+          locale={locale}
+        />
+        
       </div>
 
       {/* Quick Status Hint */}
@@ -511,47 +731,31 @@ export function MiningMainCard({
           }}
         >
           {(() => {
-            // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-            const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
-            const reason = miningGuardResult.reason?.replace(/^First year: /i, "") || (isZh ? "无法开始挖矿" : "Cannot start mining");
-            
+            const reason = miningGuardResult.reason || t("miningStatus.cannotStartMining");
             return (
               <>
                 <div style={{ fontWeight: "bold", marginBottom: "0.5rem" }}>
-                  {isFirstYearMode ? (isZh ? "第一年模式挖矿要求" : "First Year Mode Requirements") : (isZh ? "挖矿要求" : "Mining Requirements")}
+                  {t("miningMain.miningRequirementsHeading")}
                 </div>
                 <div>{reason}</div>
                 {miningGuardResult.details && (
                   <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
                     {miningGuardResult.details.quorumScore !== undefined && (
                       <div>
-                        {isZh ? "Quorum分数" : "Quorum Score"}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || (isFirstYearMode ? 40 : 80)}
-                        {isFirstYearMode && (
-                          <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
-                            {isZh ? `(第一年要求 ≥${miningGuardResult.details.requiredQuorumScore || 40})` : `(First Year: ≥${miningGuardResult.details.requiredQuorumScore || 40})`}
-                          </span>
-                        )}
+                        {t("miningStatus.quorumScore")}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || 30}
                       </div>
                     )}
                     {miningGuardResult.details.independentPeerCount !== undefined && (
                       <div>
                         {(() => {
                           const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
-                          const defaultRequiredPeers = isFirstYearMode ? 2 : minPeersRequired;
-                          const requiredPeers = miningGuardResult.details.requiredIndependentPeers || defaultRequiredPeers;
+                          const requiredPeers = miningGuardResult.details.requiredIndependentPeers || minPeersRequired;
                           return (
                             <>
-                              {isZh ? "独立节点" : "Independent Peers"}: {miningGuardResult.details.independentPeerCount} / {requiredPeers}
-                              {isFirstYearMode && (
-                                <span style={{ fontSize: "0.75rem", color: "#666", marginLeft: "0.5rem" }}>
-                                  {isZh ? "(第一年要求 ≥2)" : "(First Year: ≥2)"}
-                                </span>
-                              )}
+                              {t("miningStatus.independentPeers")}: {miningGuardResult.details.independentPeerCount} / {requiredPeers}
                               {miningGuardResult.details.independentPeerCount < requiredPeers && (
                                 <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
-                                  {isZh 
-                                    ? "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）"
-                                    : "💡 Need peers from different IPs (multiple tabs on same computer don't count)"}
+                                  {t("miningMain.needDifferentIPsHint")}
                                 </div>
                               )}
                             </>
@@ -580,9 +784,7 @@ export function MiningMainCard({
             color: "#0c5460",
           }}
         >
-          {isZh
-            ? "⚠️ 此标签页是 FOLLOWER。只有本机的 LEADER 标签页可以在主网挖矿。"
-            : "⚠️ This tab is FOLLOWER. Only the LEADER tab on this machine can mine on mainnet."}
+          {t("miningMain.followerTabWarning")}
         </div>
       )}
 

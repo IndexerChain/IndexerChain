@@ -66,9 +66,9 @@ export function GenesisQuorumBanner({
             (window as any).lastBootstrapResponseTime !== undefined
           ));
 
-        // Phase 45: First year mode: Require ≥2 independent peers, Quorum ≥40
+        // Phase 45: First year mode: Require ≥1 independent peer, Quorum ≥40
         const isFirstYear = chainContext ? MiningGuard.isFirstYear(chainContext) : false;
-        const requiredPeers = isFirstYear ? 2 : 2; // First year: min 2 peers (same as normal Genesis)
+        const requiredPeers = isFirstYear ? 1 : 1; // First year & normal Genesis: min 1 peer
         
         setRequirements({
           independentPeers: quorumStatus.independentPeerCount,

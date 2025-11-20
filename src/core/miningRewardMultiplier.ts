@@ -25,7 +25,7 @@
  * - 150+: 1.3x (high quality independent node)
  */
 export function getIPReputationMultiplier(quorumScore: number): number {
-  if (quorumScore < 50) {
+  if (quorumScore < 30) {
     return 0.0; // No reward for very low quality
   } else if (quorumScore < 80) {
     return 0.3; // Low quality node - reduced reward

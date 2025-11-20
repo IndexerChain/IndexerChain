@@ -96,6 +96,16 @@ export interface BlockHeader {
   nonce: number; // PoW random number
   stateCommitment?: string; // Phase 15: SHA-256 hash of normalized IndexState after applying all transactions
   finalityCert?: FinalityCertificate; // Phase 22: Finality certificate for fast confirmation
+  
+  // Phase 48-A (Optional, non-enforcing scaffolding):
+  // Slot scheduling and pooled rewards metadata. These fields are optional
+  // and not used in consensus hashing/verification unless the corresponding
+  // feature flag is enabled. They exist to enable gradual rollout.
+  epochId?: number;      // floor(timestampMs / epochMs)
+  slotIndex?: number;    // 0..(slotsPerEpoch-1)
+  proposer?: Address;    // Expected leader address for this slot
+  payoutRoot?: string;   // Merkle root of previous epoch's payout plan
+  randSeed?: string;     // Random seed driving leader selection (derived from prev block)
 }
 
 /**

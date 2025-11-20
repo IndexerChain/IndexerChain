@@ -86,9 +86,9 @@ export const MAINNET_PARAMS: ChainParams = {
   },
   mainnetMinIndependentPeers: {
     coldStart: 1, // Cold start: minimum 1 independent peer
-    earlyGrowth: 2, // Early growth: minimum 2 independent peers
-    mature: 3, // Mature: minimum 3 independent peers
-    secure: 5, // Secure mode: minimum 5 independent peers
+    earlyGrowth: 1, // Early growth: minimum 1 independent peer
+    mature: 1, // Mature: minimum 1 independent peer
+    secure: 1, // Secure mode: minimum 1 independent peer
   },
 };
 

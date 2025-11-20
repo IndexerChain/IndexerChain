@@ -85,6 +85,39 @@ export class SignalingRoom {
   }
 
   /**
+   * Phase 49: Clear all bootstrap blocks from storage
+   */
+  async clearBootstrapBlocks() {
+    try {
+      await this.loadBootstrapBlocksMeta();
+      const from = this.bootstrapBlocksMeta.availableFromHeight || 0;
+      const to = this.bootstrapBlocksMeta.availableToHeight || 0;
+      
+      // Delete all stored blocks
+      let deleted = 0;
+      for (let h = from; h <= to; h++) {
+        const key = `block:${h}`;
+        await this.state.storage.delete(key);
+        deleted++;
+      }
+      
+      // Reset metadata
+      this.bootstrapBlocksMeta = {
+        availableFromHeight: 0,
+        availableToHeight: 0,
+        maxStoredHeight: 256,
+      };
+      await this.state.storage.put('bootstrapBlocksMeta', this.bootstrapBlocksMeta);
+      
+      console.log(`[SignalingRoom] Cleared ${deleted} bootstrap blocks (height ${from}-${to})`);
+      return { deleted, from, to };
+    } catch (error) {
+      console.error(`[SignalingRoom] Error clearing bootstrap blocks:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Phase 37: Save rootTip to persistent storage
    */
   async saveRootTip() {
@@ -268,8 +301,43 @@ export class SignalingRoom {
       this.initialized = true;
     }
 
-    // Phase 48: Handle bootstrap blocks HTTP request (before WebSocket upgrade check)
+    // Phase 49: Handle internal reset request (from HTTP API)
     const url = new URL(request.url);
+    if (url.pathname === '/reset' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        if (body.type === 'RESET_ROOT_TIP') {
+          const { newGenesisHeader, newGenesisHash, newStateCommitment } = body;
+          if (!newGenesisHeader || !newGenesisHash || !newStateCommitment) {
+            return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          
+          await this.resetRootTip(newGenesisHeader, newGenesisHash, newStateCommitment);
+          
+          return new Response(JSON.stringify({
+            ok: true,
+            message: 'RootTip reset to new genesis block',
+            newGenesisHash: newGenesisHash.substring(0, 16) + '...',
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      } catch (error) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Phase 48: Handle bootstrap blocks HTTP request (before WebSocket upgrade check)
     if (url.pathname === '/bootstrap-blocks' && request.method === 'GET') {
       try {
         const from = parseInt(url.searchParams.get('from') || '1', 10);
@@ -294,6 +362,37 @@ export class SignalingRoom {
       }
     }
     
+    // Phase 49: Handle clear bootstrap blocks (admin only)
+    if (url.pathname === '/admin/clear-bootstrap-blocks' && request.method === 'POST') {
+      try {
+        const result = await this.clearBootstrapBlocks();
+        return new Response(JSON.stringify({
+          ok: true,
+          message: 'All bootstrap blocks cleared',
+          deleted: result.deleted,
+          from: result.from,
+          to: result.to,
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+    }
+
     // Phase 48: Handle seeding bootstrap blocks (admin/dev only)
     if (url.pathname === '/seed-bootstrap-blocks' && request.method === 'POST') {
       try {
@@ -708,6 +807,20 @@ export class SignalingRoom {
             message: 'RootTip reset to new genesis block',
             newGenesisHash: newGenesisHash.substring(0, 16) + '...',
           }));
+        } else if (data.type === 'CLEAR_BOOTSTRAP_BLOCKS') {
+          // Phase 49: Handle clear bootstrap blocks request (admin only)
+          try {
+            await this.clearBootstrapBlocks();
+            server.send(JSON.stringify({
+              type: 'CLEAR_BOOTSTRAP_BLOCKS_SUCCESS',
+              message: 'All bootstrap blocks cleared',
+            }));
+          } catch (error) {
+            server.send(JSON.stringify({
+              type: 'error',
+              message: `Failed to clear bootstrap blocks: ${error instanceof Error ? error.message : String(error)}`,
+            }));
+          }
         } else if (
           data.type === 'offer' ||
           data.type === 'answer' ||
@@ -1054,6 +1167,67 @@ export default {
           ...corsHeaders,
         },
       });
+    }
+
+    // Phase 49: Handle admin endpoint to clear bootstrap blocks
+    if (url.pathname === '/admin/clear-bootstrap-blocks' && request.method === 'POST') {
+      const roomId = env.SIGNALING_ROOM.idFromName('main');
+      const room = env.SIGNALING_ROOM.get(roomId);
+      
+      // Forward to SignalingRoom to clear bootstrap blocks
+      return room.fetch(new Request(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify({ type: 'CLEAR_BOOTSTRAP_BLOCKS' }),
+      }));
+    }
+
+    // Phase 49: Handle admin endpoint to reset rootTip via HTTP (no WebSocket needed)
+    if (url.pathname === '/admin/reset-root-tip-http' && request.method === 'POST') {
+      const roomId = env.SIGNALING_ROOM.idFromName('main');
+      const room = env.SIGNALING_ROOM.get(roomId);
+      
+      // Parse request body
+      let body;
+      try {
+        body = await request.json();
+      } catch (error) {
+        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
+      }
+      
+      const { newGenesisHeader, newGenesisHash, newStateCommitment } = body;
+      
+      if (!newGenesisHeader || !newGenesisHash || !newStateCommitment) {
+        return new Response(JSON.stringify({ 
+          error: 'Missing required fields: newGenesisHeader, newGenesisHash, newStateCommitment' 
+        }), {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
+      }
+      
+      // Forward to SignalingRoom via internal fetch
+      const internalRequest = new Request('http://internal/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'RESET_ROOT_TIP',
+          newGenesisHeader,
+          newGenesisHash,
+          newStateCommitment,
+        }),
+      });
+      
+      return room.fetch(internalRequest);
     }
 
     // Get or create the signaling room Durable Object

@@ -158,13 +158,7 @@ export function MiningStatusBar({
       return t("miningStatusBar.notActiveMiner");
     }
 
-    // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-    const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
-    if (isFirstYearMode && miningGuardResult.reason) {
-      // Remove "First year: " prefix for cleaner display
-      const reason = miningGuardResult.reason.replace(/^First year: /i, "");
-      return reason;
-    }
+    // No special-casing for first-year; use generic reasons
 
     // For INSUFFICIENT_PEERS, show friendly message
     if (miningGuardResult.code === "INSUFFICIENT_PEERS") {
@@ -177,26 +171,15 @@ export function MiningStatusBar({
         ? t("miningStatus.independentPeers")
         : t("network.peers");
       
-      // First year mode: Show friendly message
-      if (isFirstYearMode) {
-        if (currentPeers < 1) {
-          return t("miningStatus.needAtLeastOnePeer", { current: currentPeers });
-        }
-        // If peers are sufficient but bootstrap not complete, show bootstrap message
-        if (miningGuardResult.reason?.includes("Bootstrap")) {
-          return miningGuardResult.reason.replace(/^First year: /i, "");
-        }
-      }
-      
       // Normal mode: Show peer count
       if (currentPeers < requiredPeers) {
         return t("miningStatus.insufficientPeers", { current: currentPeers, required: requiredPeers, peerLabel });
       }
     }
 
-    if (miningGuardResult.details?.quorumScore !== undefined && !isFirstYearMode) {
+    if (miningGuardResult.details?.quorumScore !== undefined) {
       const score = miningGuardResult.details.quorumScore;
-      const required = miningGuardResult.details.requiredQuorumScore || 80;
+      const required = miningGuardResult.details.requiredQuorumScore || 30;
       if (score < required) {
         return t("miningStatus.quorumScoreInsufficient", { score, required });
       }

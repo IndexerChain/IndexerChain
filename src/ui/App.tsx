@@ -82,6 +82,7 @@ import { MiningOnboardingDialog } from "./mining/MiningOnboardingDialog.js";
 import { MiningStatusBanner } from "./mining/MiningStatusBanner.js";
 import { GenesisQuorumBanner } from "./mining/GenesisQuorumBanner.js";
 import { MultiTerminalSyncNotice } from "./mining/MultiTerminalSyncNotice.js";
+import { OverviewDashboard } from "./overview/OverviewDashboard.js";
 import { QuorumScoreExplanation } from "./mining/QuorumScoreExplanation.js";
 // Phase 45: New Mining UX components
 import { RewardBreakdownCard } from "./mining/RewardBreakdownCard.js";
@@ -90,6 +91,7 @@ import { NetworkMiniHealthCard } from "./mining/NetworkMiniHealthCard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
 import { DailyInfoBar } from "./components/DailyInfoBar.js";
 import "./index.css";
+import { WalletSummaryCard } from "./wallet/WalletSummaryCard.js";
 
 /**
  * Main App Component
@@ -309,8 +311,8 @@ function App() {
   } | null>(null);
   const [isRecompressing, setIsRecompressing] = useState<boolean>(false);
   
-  // Auto-mining option (persisted)
-  const [autoMining, setAutoMining] = useState<boolean>(persistedState.autoMining ?? false);
+  // Auto-mining option (persisted) - default enabled
+  const [autoMining, setAutoMining] = useState<boolean>(persistedState.autoMining ?? true);
 
   // Phase 30: Global Consistency Sentinel
   const [globalSentinel, setGlobalSentinel] = useState<GlobalStateSentinel | null>(null);
@@ -5517,15 +5519,7 @@ function App() {
             >
               {t("tabs.wallet")}
             </button>
-            <button
-              className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("transactions");
-              }}
-            >
-              {t("tabs.transactions")}
-            </button>
+            {/* Transactions moved to advanced to keep core clean */}
             <button
               className={`tab-button ${activeTab === "network" ? "active" : ""}`}
               onClick={(e) => {
@@ -5584,6 +5578,15 @@ function App() {
             </div>
             {showAdvancedTabs && (
               <>
+                <button
+                  className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setActiveTab("transactions");
+                  }}
+                >
+                  {t("tabs.transactions")}
+                </button>
                 <button
                   className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
                   onClick={(e) => {
@@ -5654,19 +5657,21 @@ function App() {
                     locale={locale}
                   />
 
-                  {/* Phase 39: Multi-terminal Sync Notice */}
-                  <MultiTerminalSyncNotice
-                    chainContext={chainContext}
-                    locale={locale}
-                  />
-
-                  {/* Phase 39: Genesis Quorum Banner */}
-                  <GenesisQuorumBanner
-                    chainContext={chainContext}
-                    p2pNode={chainContext?.p2p || null}
-                    bootstrapComplete={bootstrapComplete}
-                    locale={locale}
-                  />
+                  {/* Optional notices kept under advanced toggle to keep overview clean */}
+                  {showAdvancedTabs && (
+                    <>
+                      <MultiTerminalSyncNotice
+                        chainContext={chainContext}
+                        locale={locale}
+                      />
+                      <GenesisQuorumBanner
+                        chainContext={chainContext}
+                        p2pNode={chainContext?.p2p || null}
+                        bootstrapComplete={bootstrapComplete}
+                        locale={locale}
+                      />
+                    </>
+                  )}
 
                   {/* Phase 39: Multi-terminal Sync Info */}
                   <div
@@ -5692,13 +5697,19 @@ function App() {
                       )}
                     </div>
                   </div>
+
+                  {/* Phase 48: Overview Dashboard (slots + pooled rewards preview) */}
+                  <OverviewDashboard
+                    chainContext={chainContext}
+                    p2pNode={chainContext?.p2p || null}
+                    nodeAddress={nodeAddress}
+                    locale={locale}
+                  />
                 </>
               )}
 
-              {/* Quick Status Dashboard removed to reduce duplication with MiningStatusBanner */}
-
-              {/* Phase 30: Global Consistency Sentinel Panel - Collapsed by default */}
-              {chainContext && chainContext.params.globalSentinelEnabled !== false && (
+              {/* Advanced diagnostic panels under advanced toggle */}
+              {showAdvancedTabs && chainContext && chainContext.params.globalSentinelEnabled !== false && (
                 <AccordionCard
                   title={t("app.globalConsistencySentinel")}
                   defaultExpanded={false}
@@ -5738,9 +5749,7 @@ function App() {
                   />
                 </AccordionCard>
               )}
-              
-              {/* Phase 34: Network Health Dashboard - Collapsed by default */}
-              {chainContext && (
+              {showAdvancedTabs && chainContext && (
                 <AccordionCard
                   title={t("app.networkHealthStatus")}
                   defaultExpanded={false}
@@ -6280,19 +6289,13 @@ function App() {
                                     : "✅ Mining Ready: SAFE (Network Healthy)";
                                   break;
                                 case "GUARDED":
-                                  // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
-                                  if (isFirstYearMode) {
-                                    const independentPeers = miningGuardResult.details?.independentPeerCount || 0;
-                                    const quorumScore = miningGuardResult.details?.quorumScore || 0;
-                                    const requiredQuorumScore = miningGuardResult.details?.requiredQuorumScore || 40;
-                                    statusMessage = `🟡 ${t("networkHealth.miningReady")}: ${t("networkHealth.guardedMode")} (${t("mainnetAdmission.firstYearMode")}, ${independentPeers} ${t("network.independentPeers")}, Quorum ${quorumScore}/${requiredQuorumScore})`;
-                                  } else {
-                                    const peerCount = miningGuardResult.details?.peerCount || 0;
-                                    const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
-                                    const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? minPeersRequired;
-                                    statusMessage = `🟡 ${t("networkHealth.miningReady")}: ${t("networkHealth.guardedMode")} (${t("network.independentPeers")}: ${peerCount} < ${requiredPeers})`;
-                                  }
+                                  // Generic guarded message (constant threshold 30)
+                                  const peerCount = miningGuardResult.details?.peerCount || 0;
+                                  const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
+                                  const requiredPeers = miningGuardResult.details?.requiredIndependentPeers ?? miningGuardResult.details?.requiredPeers ?? minPeersRequired;
+                                  const quorumScore = miningGuardResult.details?.quorumScore || 0;
+                                  const requiredQuorumScore = miningGuardResult.details?.requiredQuorumScore || 30;
+                                  statusMessage = `🟡 ${t("networkHealth.miningReady")}: ${t("networkHealth.guardedMode")} (${t("network.independentPeers")}: ${peerCount} < ${requiredPeers}, Quorum ${quorumScore}/${requiredQuorumScore})`;
                                   break;
                                 case "LOCAL_ONLY":
                                   statusMessage = `🔵 ${t("networkHealth.miningReady")}: ${t("networkHealth.localOnlyMode")}`;
@@ -6445,12 +6448,13 @@ function App() {
           {/* Wallet Tab */}
           {activeTab === "wallet" && (
             <div className="tab-content active">
-              {/* Phase 24: Multi-Wallet Manager */}
-              <div className="status-card">
-                <h2>💼 {t("wallet.manager")}</h2>
+              {/* Clean wallet overview */}
+              <WalletSummaryCard chainContext={chainContext} address={nodeAddress} locale={locale} />
+
+              {/* Advanced wallet operations collapsed by default */}
+              <AccordionCard title={`💼 ${t("wallet.manager")}`} defaultExpanded={false} locale={locale}>
                 <WalletManagerPanel
                   onWalletChanged={async () => {
-                    // Reload address after wallet change
                     const address = await getOrCreateNodeAddress();
                     setNodeAddress(address);
                   }}
@@ -6458,18 +6462,15 @@ function App() {
                     setError(err);
                   }}
                 />
-              </div>
+              </AccordionCard>
               
-              {/* Phase 23: Backup & Recovery */}
-              <div className="status-card">
-                <h2>🔐 {t("wallet.backup")}</h2>
+              <AccordionCard title={`🔐 ${t("wallet.backup")}`} defaultExpanded={false} locale={locale}>
                 <WalletBackupPanel
                   onExportSuccess={() => {
                     setError(t("wallet.exportSuccess"));
                     setTimeout(() => setError(""), 5000);
                   }}
                   onImportSuccess={async () => {
-                    // Reload address after import
                     const address = await getOrCreateNodeAddress();
                     setNodeAddress(address);
                     setError(t("wallet.importSuccess"));
@@ -6479,7 +6480,7 @@ function App() {
                     setError(err);
                   }}
                 />
-              </div>
+              </AccordionCard>
             </div>
           )}
 
@@ -6509,9 +6510,8 @@ function App() {
                 </div>
               )}
 
-              {/* Phase 38-E: Mainnet Mature Stage Requirements */}
-              {/* Show admission rules for mainnet, even if mining is allowed (first year mode) */}
-              {chainContext &&
+              {/* Phase 38-E: Mainnet Mature Stage Requirements (moved under Advanced toggle for cleaner UI) */}
+              {showAdvancedTabs && chainContext &&
                 chainContext.params?.networkId === "IXC_MAINNET_V1" &&
                 miningGuardResult &&
                 miningGuardResult.details &&
@@ -6541,11 +6541,7 @@ function App() {
                         : "#721c24"
                     }}>
                       {t("app.mainnetAdmissionRules")}
-                      {miningGuardResult.ok && miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50 && (
-                        <span style={{ fontSize: "0.85rem", marginLeft: "0.5rem", fontWeight: "normal" }}>
-                          ({t("mainnetAdmission.firstYearMode")})
-                        </span>
-                      )}
+                      {/* No special first-year label; constant threshold */}
                     </h3>
                     <ul style={{ marginTop: "0.5rem", paddingLeft: "0", fontSize: "0.85rem", listStyle: "none" }}>
                       {miningGuardResult.details?.independentPeerCount !== undefined &&
@@ -6570,17 +6566,9 @@ function App() {
                               </div>
                               <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#666", fontStyle: "italic", marginLeft: "1.75rem" }}>
                                 {(() => {
-                                  // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-                                  const isFirstYearMode = miningGuardResult.details?.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
-                                  if (isFirstYearMode) {
-                                    return locale === "zh"
-                                      ? `💡 第一年模式：需要至少 2 个独立节点（来自不同 IP 地址）。同一台电脑的多个标签页不算独立节点。第一年规则更宽松，便于网络启动。`
-                                      : `💡 First Year Mode: At least 2 independent peers (from different IP addresses) required. Multiple tabs on the same computer don't count. First year rules are more relaxed for easier network startup.`;
-                                  } else {
-                                    return locale === "zh"
-                                      ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
-                                      : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`;
-                                  }
+                                  return locale === "zh"
+                                    ? `💡 解释：独立节点是指来自不同 IP 地址的节点。同一台电脑的多个标签页或同一网络的节点不算独立节点。这是为了确保网络去中心化和防止单点故障。`
+                                    : `💡 Explanation: Independent peers are nodes from different IP addresses. Multiple tabs on the same computer or nodes on the same network don't count as independent. This ensures network decentralization and prevents single points of failure.`;
                                 })()}
                               </div>
                             </li>
@@ -6589,15 +6577,12 @@ function App() {
                       {miningGuardResult.details?.quorumScore !== undefined &&
                         miningGuardResult.details?.requiredQuorumScore !== undefined && (() => {
                           const passed = miningGuardResult.details.quorumScore >= miningGuardResult.details.requiredQuorumScore;
-                          // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)
-                          const isFirstYearMode = miningGuardResult.details.requiredQuorumScore !== undefined && miningGuardResult.details.requiredQuorumScore <= 50;
                           return (
                             <QuorumScoreExplanation
                               passed={passed}
                               currentScore={miningGuardResult.details.quorumScore}
                               requiredScore={miningGuardResult.details.requiredQuorumScore}
                               locale={locale}
-                              isFirstYearMode={isFirstYearMode}
                             />
                           );
                         })()}
