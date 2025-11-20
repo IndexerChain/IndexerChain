@@ -68,7 +68,8 @@ export class WarpSyncManager {
   canWarpSync(localHeight: number, networkHeight: number): boolean {
     if (!this.config.enabled) return false;
     if (networkHeight <= localHeight) return false;
-    
+    // Always allow warp sync when local node is at genesis (height 0 or no tip)
+    if (localHeight <= 0) return true;
     const heightGap = networkHeight - localHeight;
     return heightGap >= this.config.minHeightGap;
   }
