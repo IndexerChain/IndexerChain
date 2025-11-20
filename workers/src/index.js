@@ -21,6 +21,9 @@ export class SignalingRoom {
     this.state = state;
     this.env = env;
     this.peers = new Map();
+    // Phase 51: Track per-connection join time and nodeId->address mapping
+    this.peerJoinAt = new Map(); // Map<nodeId, number>
+    this.nodeAddresses = new Map(); // Map<nodeId, address>
     // Phase 33: Track IP hashes for all peers
     this.peerIPHashes = new Map(); // Map<nodeId, ipHash>
     this.bootstrapState = {
@@ -40,6 +43,203 @@ export class SignalingRoom {
       maxStoredHeight: 1024, // Maximum height to store bootstrap blocks
     };
     this.initialized = false;
+  }
+
+  // Phase 51: Helpers for signals root
+  getEpochMs() {
+    const ms = parseInt(this.env?.EPOCH_MS || "1000", 10);
+    return Number.isFinite(ms) && ms > 0 ? ms : 1000;
+  }
+
+  getEpochId(tsMs = Date.now()) {
+    return Math.floor(tsMs / this.getEpochMs());
+  }
+
+  async sha256Hex(str) {
+    const data = new TextEncoder().encode(str);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    const bytes = new Uint8Array(hash);
+    let hex = "";
+    for (let i = 0; i < bytes.length; i++) {
+      const h = bytes[i].toString(16).padStart(2, "0");
+      hex += h;
+    }
+    return hex;
+  }
+
+  async calcMerkleRoot(leaves) {
+    // leaves: array of hex strings (already hashed or raw strings)
+    // If leaves are raw strings, hash them first
+    const hashed = [];
+    for (const leaf of leaves) {
+      const isHex = typeof leaf === "string" && /^[0-9a-fA-F]+$/.test(leaf) && leaf.length === 64;
+      hashed.push(isHex ? leaf.toLowerCase() : await this.sha256Hex(String(leaf)));
+    }
+    if (hashed.length === 0) {
+      return await this.sha256Hex("");
+    }
+    let level = hashed.slice();
+    while (level.length > 1) {
+      const next = [];
+      for (let i = 0; i < level.length; i += 2) {
+        const left = level[i];
+        const right = i + 1 < level.length ? level[i + 1] : left;
+        next.push(await this.sha256Hex(left + right));
+      }
+      level = next;
+    }
+    return level[0];
+  }
+
+  async calcMerkleProof(leaves, targetIndex) {
+    // leaves: array of hex strings (already hashed)
+    // returns array of sibling hashes (hex)
+    const proof = [];
+    if (leaves.length === 0 || targetIndex < 0 || targetIndex >= leaves.length) {
+      return proof;
+    }
+    let level = leaves.slice();
+    let idx = targetIndex;
+    while (level.length > 1) {
+      const next = [];
+      for (let i = 0; i < level.length; i += 2) {
+        const left = level[i];
+        const right = i + 1 < level.length ? level[i + 1] : left;
+        next.push(await this.sha256Hex(left + right));
+        if (i === idx || i + 1 === idx) {
+          const isRight = i + 1 === idx;
+          const sibling = isRight ? left : right;
+          proof.push(sibling);
+          idx = Math.floor(i / 2);
+        }
+      }
+      level = next;
+    }
+    return proof;
+  }
+
+  /**
+   * Phase 51: Aggregate online ms for (epoch, address)
+   */
+  async addOnlineMsForAddress(epochId, address, ms) {
+    if (!address || typeof address !== "string") return;
+    const key = `signals:e:${epochId}:addr:${address}:ms`;
+    let cur = await this.state.storage.get(key);
+    const prev = typeof cur === "number" ? cur : 0;
+    await this.state.storage.put(key, prev + Math.max(0, ms));
+  }
+
+  /**
+   * Phase 51: Handle epoch signals query (root only)
+   * GET /epoch-signals?e=<epochId>
+   */
+  async handleEpochSignalsRequest(epochId) {
+    try {
+      const prefix = `signals:e:${epochId}:addr:`;
+      const list = await this.state.storage.list({ prefix });
+      const pairs = [];
+      for (const [key, value] of list) {
+        if (typeof value !== "number") continue;
+        const addr = key.slice(prefix.length).replace(/:ms$/, "");
+        const ms = value;
+        // Normalize: 60 minutes -> 100 points
+        const online = Math.max(0, Math.min(100, Math.round((ms / (60 * 60 * 1000)) * 100)));
+        const reliab = 0;
+        pairs.push({ address: addr, online, reliab });
+      }
+      // Sort by address for determinism
+      pairs.sort((a, b) => a.address.localeCompare(b.address));
+      // Build leaves "addr:online:reliab"
+      const leafStrs = pairs.map((p) => `${p.address}:${p.online}:${p.reliab}`);
+      const leafHashes = [];
+      for (const s of leafStrs) {
+        leafHashes.push(await this.sha256Hex(s));
+      }
+      const signalsRoot = await this.calcMerkleRoot(leafHashes);
+      return new Response(JSON.stringify({
+        ok: true,
+        epochId,
+        count: pairs.length,
+        signalsRoot,
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+  }
+
+  /**
+   * Phase 51: Handle epoch signals proof query
+   * GET /epoch-signals/proof?e=<epochId>&addr=<address>
+   */
+  async handleEpochSignalsProofRequest(epochId, address) {
+    try {
+      if (!address) {
+        return new Response(JSON.stringify({ ok: false, error: "Missing address" }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        });
+      }
+      const prefix = `signals:e:${epochId}:addr:`;
+      const list = await this.state.storage.list({ prefix });
+      const entries = [];
+      for (const [key, value] of list) {
+        if (typeof value !== "number") continue;
+        const addr = key.slice(prefix.length).replace(/:ms$/, "");
+        const ms = value;
+        const online = Math.max(0, Math.min(100, Math.round((ms / (60 * 60 * 1000)) * 100)));
+        const reliab = 0;
+        entries.push({ address: addr, online, reliab });
+      }
+      entries.sort((a, b) => a.address.localeCompare(b.address));
+      const leafStrs = entries.map((p) => `${p.address}:${p.online}:${p.reliab}`);
+      const leafHashes = [];
+      for (const s of leafStrs) {
+        leafHashes.push(await this.sha256Hex(s));
+      }
+      const index = entries.findIndex((e) => e.address === address);
+      if (index === -1) {
+        return new Response(JSON.stringify({ ok: false, error: "Address not found" }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        });
+      }
+      const proof = await this.calcMerkleProof(leafHashes, index);
+      const root = await this.calcMerkleRoot(leafHashes);
+      return new Response(JSON.stringify({
+        ok: true,
+        epochId,
+        address,
+        leaf: await this.sha256Hex(leafStrs[index]),
+        proof,
+        signalsRoot: root,
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
   }
 
   /**
@@ -337,6 +537,17 @@ export class SignalingRoom {
       }
     }
 
+    // Phase 51: Epoch signals endpoints (before WebSocket upgrade)
+    if (url.pathname === '/epoch-signals' && request.method === 'GET') {
+      const e = parseInt(url.searchParams.get('e') || String(this.getEpochId()), 10);
+      return await this.handleEpochSignalsRequest(Number.isFinite(e) ? e : this.getEpochId());
+    }
+    if (url.pathname === '/epoch-signals/proof' && request.method === 'GET') {
+      const e = parseInt(url.searchParams.get('e') || String(this.getEpochId()), 10);
+      const addr = url.searchParams.get('addr') || '';
+      return await this.handleEpochSignalsProofRequest(Number.isFinite(e) ? e : this.getEpochId(), addr);
+    }
+
     // Phase 48: Handle bootstrap blocks HTTP request (before WebSocket upgrade check)
     if (url.pathname === '/bootstrap-blocks' && request.method === 'GET') {
       try {
@@ -495,6 +706,8 @@ export class SignalingRoom {
         if (data.type === 'join' || data.type === 'JOIN') {
           nodeId = data.nodeId;
           this.peers.set(nodeId, server);
+          // Phase 51: Record join time
+          this.peerJoinAt.set(nodeId, Date.now());
 
           // Generate IP hash
           const clientIP = request.headers.get('CF-Connecting-IP') || 
@@ -582,6 +795,16 @@ export class SignalingRoom {
             ipHash: requestingNodeIPHash, // Phase 33: Include requesting node's IP hash
             peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all peers
           }));
+        } else if (data.type === 'ANNOUNCE_ID' && data.address && nodeId) {
+          // Phase 51: Map nodeId -> address and persist
+          const address = String(data.address);
+          this.nodeAddresses.set(nodeId, address);
+          try {
+            await this.state.storage.put(`addrByNodeId:${nodeId}`, address);
+          } catch (e) {}
+          try {
+            server.send(JSON.stringify({ type: 'ANNOUNCE_ACK', ok: true }));
+          } catch (e) {}
         } else if (data.type === 'REQUEST_BOOTSTRAP') {
           console.log(`[SignalingRoom] Received REQUEST_BOOTSTRAP from ${nodeId?.substring(0, 16)}...`);
           console.log(`[SignalingRoom] Current rootTip: height=${this.bootstrapState.latestHeight}, hasHeader=${!!this.bootstrapState.latestHeader}, hasSnapshot=${!!this.bootstrapState.latestSnapshotMeta}`);
@@ -850,11 +1073,31 @@ export class SignalingRoom {
     });
 
     // Handle connection close
-    server.addEventListener('close', () => {
+    server.addEventListener('close', async () => {
       if (nodeId) {
         this.peers.delete(nodeId);
         this.peerIPHashes.delete(nodeId); // Phase 33: Remove IP hash when peer disconnects
         console.log(`[SignalingRoom] Node ${nodeId.substring(0, 16)}... disconnected. Total peers: ${this.peers.size}`);
+        // Phase 51: Accumulate online ms for the current epoch using mapped address
+        try {
+          const joinedAt = this.peerJoinAt.get(nodeId);
+          this.peerJoinAt.delete(nodeId);
+          let sessionMs = 0;
+          if (typeof joinedAt === 'number') {
+            sessionMs = Math.max(0, Date.now() - joinedAt);
+          }
+          let address = this.nodeAddresses.get(nodeId);
+          if (!address) {
+            // Try to load from storage
+            address = await this.state.storage.get(`addrByNodeId:${nodeId}`);
+          }
+          if (address && sessionMs > 0) {
+            const epochId = this.getEpochId();
+            await this.addOnlineMsForAddress(epochId, address, sessionMs);
+          }
+        } catch (e) {
+          // ignore
+        }
 
         // Notify other peers
         for (const [id, peer] of this.peers.entries()) {
@@ -1228,6 +1471,35 @@ export default {
       });
       
       return room.fetch(internalRequest);
+    }
+
+    // ICE configuration endpoint (for browsers to fetch TURN/STUN list)
+    if (url.pathname === '/ice-config' && request.method === 'GET') {
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      };
+      // Read from environment variable ICE_SERVERS_JSON (set via CF secrets/vars)
+      // Fallback to public STUN only
+      let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+      try {
+        if (env.ICE_SERVERS_JSON) {
+          const parsed = JSON.parse(env.ICE_SERVERS_JSON);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            iceServers = parsed;
+          }
+        }
+      } catch (e) {
+        // Keep default
+      }
+      return new Response(JSON.stringify({ ok: true, iceServers }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders,
+        },
+      });
     }
 
     // Get or create the signaling room Durable Object

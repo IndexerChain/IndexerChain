@@ -19,6 +19,7 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
   const { t } = useI18n();
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const [leader, setLeader] = useState<Address | null>(null);
+  const [multiCandidate, setMultiCandidate] = useState<boolean>(false);
   // Quorum score removed from UI to keep concise
   const [leaderPreview, setLeaderPreview] = useState<Array<{ epoch: number; slot: number; leader: string | null; me: boolean }>>([]);
   const [previewCount, setPreviewCount] = useState<number>(() => {
@@ -138,6 +139,7 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
           // Fallback to current miner address to avoid empty set
           if (nodeAddress) recipients.push(nodeAddress);
         }
+        setMultiCandidate(recipients.length > 1);
         const seed = await deriveRandSeed(prevBlock.hash, epochId, slotIndex);
         const candidates = recipients.map(a => ({ address: a as Address, weight: 1 }));
         const expected = await selectLeader(epochId, slotIndex, seed, candidates);
@@ -152,8 +154,6 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
   }, [chainContext, nodeAddress, epochId, slotIndex]);
 
   const meIsLeader = leader && nodeAddress && leader === (nodeAddress as any);
-
-  // Removed quorum polling effect
 
   // Peer metrics
   const peerCount = (p2pNode && (p2pNode as any).getPeerCount) ? (p2pNode as any).getPeerCount() : 0;
@@ -170,7 +170,6 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
       return 0;
     }
   })();
-  // Removed per-channel details to keep UI clean
 
   // Leader preview for next N slots
   useEffect(() => {
@@ -223,8 +222,6 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
       cancelled = true;
     };
   }, [chainContext, nodeAddress, epochId, slotIndex, epochMs, slotMs, previewCount]);
-
-  // Reward preview removed from overview to keep it concise
 
   return (
     <div
@@ -308,7 +305,6 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
           <div style={{ fontSize: "1rem" }}>
             {isZh ? "Slot" : "Slot"}: <b>{slotIndex}</b>
           </div>
-          {/* Hide raw epoch/slot ms to reduce clutter */}
           {/* Slot progress */}
           <div style={{ marginTop: "0.5rem" }}>
             <div style={{ fontSize: "0.8rem", color: "#666", marginBottom: "0.25rem" }}>
@@ -327,7 +323,7 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
             {leader ? leader.substring(0, 12) + "..." : (isZh ? "未知" : "Unknown")}
           </div>
           <div style={{ fontSize: "0.9rem", color: meIsLeader ? "#28a745" : "#666" }}>
-            {meIsLeader ? (isZh ? "当前为领导者" : "You are leader") : (isZh ? "非领导者" : "Not leader")}
+            {meIsLeader ? (isZh ? (multiCandidate ? "当前为领导者" : "领导者") : (multiCandidate ? "You are leader" : "Leader")) : (isZh ? "非领导者" : "Not leader")}
           </div>
         </div>
       </div>
@@ -379,7 +375,7 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
                   </div>
                   <div style={{ color: it.me ? "#28a745" : "#333" }}>
                     {it.leader ? it.leader.substring(0, 12) + "..." : (isZh ? "未知" : "Unknown")}
-                    {it.me ? (isZh ? "（你）" : " (you)") : ""}
+                    {it.me && multiCandidate ? (isZh ? "（你）" : " (you)") : ""}
                   </div>
                 </div>
               ))}
@@ -432,8 +428,32 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
           </div>
         </div>
       )}
+      <AutoCatchUpOverview chainContext={chainContext} p2pNode={p2pNode} onRun={handleCatchUp} />
     </div>
   );
+}
+
+function AutoCatchUpOverview({ chainContext, p2pNode, onRun }: { chainContext: ChainContext | null; p2pNode: any; onRun: () => void }) {
+  const [lastRun, setLastRun] = useState<number>(0);
+  useEffect(() => {
+    const t = setInterval(() => {
+      try {
+        const now = Date.now();
+        const local = chainContext?.storage.getTip()?.header.height ?? 0;
+        const network = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+        const behind = Math.max(0, network - local);
+        const peerCount = typeof p2pNode?.getPeerCount === "function" ? p2pNode.getPeerCount() : 0;
+        if (behind > 0 && (peerCount || 0) === 0) {
+          if (now - lastRun > 30000) {
+            setLastRun(now);
+            onRun();
+          }
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(t);
+  }, [chainContext, p2pNode, onRun, lastRun]);
+  return null;
 }
 
 

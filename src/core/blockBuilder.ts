@@ -34,8 +34,10 @@ import {
   getIPSharingTracker,
   getOrCreateDeviceId,
 } from "./ipSharingWeight.js";
-import { isSlotLeaderModeEnabled } from "./featureFlags.js";
+import { isSlotLeaderModeEnabled, isPooledRewardsEnabled } from "./featureFlags.js";
 import { getSlotIdentity, deriveRandSeed, selectLeader } from "./slotSchedule.js";
+import { allocateRewardPool, computeEffectiveWeight } from "./rewardPoolAllocator.js";
+import { computeOnlineScore } from "./weightSignals.js";
 
 /**
  * Create coinbase transaction (mining reward)
@@ -54,6 +56,8 @@ import { getSlotIdentity, deriveRandSeed, selectLeader } from "./slotSchedule.js
  * @param ipSharingWeight Optional: IP sharing weight (0.1-1.0) for same IP multiple miners (default: 1.0)
  * @returns Coinbase transaction with all operations (miner reward + referral rewards)
  */
+type PooledCandidateInput = { address: Address; balanceUIDC?: bigint; onlineScore?: number; reliabilityScore?: number };
+
 export async function createCoinbaseTx(
   minerAddress: Address,
   blockHeight: number,
@@ -61,7 +65,9 @@ export async function createCoinbaseTx(
   fees: bigint = 0n,
   quorumScore: number = 100, // Default: standard node (1.0x)
   sessionDurationMs?: number, // Optional: if not provided, uses SessionTracker
-  ipSharingWeight: number = 1.0 // Phase 44: IP sharing weight (default: 1.0 = full reward)
+  ipSharingWeight: number = 1.0, // Phase 44: IP sharing weight (default: 1.0 = full reward)
+  pooledRecipients?: Address[], // Phase 50: When provided, perform pooled distribution (equal weights)
+  pooledCandidateInputs?: PooledCandidateInput[] // Phase 50-B: Weighted pooled distribution
 ): Promise<Tx> {
   const systemAddress: Address = "idc_system" as Address;
   
@@ -217,66 +223,188 @@ export async function createCoinbaseTx(
     };
   }
   
-  // Phase 42: Create operations for miner reward + referral rewards
+  // Build operations depending on pooled mode
   const ops: Operation[] = [];
-  
-  // Operation 1: Miner's base reward (with all multipliers)
-  const minerRewardIDC = uIDCToIDC(blockRewardUIDC);
-  if (minerRewardIDC > 0) {
-    ops.push({
-      type: "TRANSFER",
-      namespace: "",
-      key: "",
-      to: minerAddress,
-      amount: minerRewardIDC,
-      nonce: 0,
-      owner: systemAddress,
-    });
-  }
-  
-  // Operations 2+: Referral rewards
-  for (const refReward of referralRewards) {
-    if (refReward.referralReward > 0n) {
-      const refRewardIDC = uIDCToIDC(refReward.referralReward);
-      if (refRewardIDC > 0) {
+  if (Array.isArray(pooledCandidateInputs) && pooledCandidateInputs.length > 0) {
+    // Weighted pooled distribution using provided balances
+    const uniqueByAddr = new Map<string, PooledCandidateInput>();
+    for (const c of pooledCandidateInputs) {
+      if (!uniqueByAddr.has(c.address)) uniqueByAddr.set(c.address, c);
+    }
+    const plan = await allocateRewardPool(
+      totalRewardUIDC,
+      Array.from(uniqueByAddr.values()).map((c) => ({
+        address: c.address,
+        balanceUIDC: c.balanceUIDC ?? 0n,
+      }))
+    );
+    for (const r of plan.recipients) {
+      const amtIDC = uIDCToIDC(r.amountUIDC);
+      if (amtIDC > 0) {
         ops.push({
           type: "TRANSFER",
           namespace: "",
           key: "",
-          to: refReward.inviterAddress,
-          amount: refRewardIDC,
+          to: r.address,
+          amount: amtIDC,
           nonce: 0,
           owner: systemAddress,
         });
       }
     }
+    if (ops.length === 0) {
+      ops.push({
+        type: "TRANSFER",
+        namespace: "",
+        key: "",
+        to: minerAddress,
+        amount: 0,
+        nonce: 0,
+        owner: systemAddress,
+      });
+    }
+  } else if (Array.isArray(pooledRecipients) && pooledRecipients.length > 0) {
+    // Phase 50: Pooled rewards - allocate entire totalRewardUIDC across recipients
+    const uniqueRecipients = Array.from(new Set(pooledRecipients));
+    const plan = await allocateRewardPool(
+      totalRewardUIDC,
+      uniqueRecipients.map((addr) => ({ address: addr }))
+    );
+    for (const r of plan.recipients) {
+      const amtIDC = uIDCToIDC(r.amountUIDC);
+      if (amtIDC > 0) {
+        ops.push({
+          type: "TRANSFER",
+          namespace: "",
+          key: "",
+          to: r.address,
+          amount: amtIDC,
+          nonce: 0,
+          owner: systemAddress,
+        });
+      }
+    }
+    if (ops.length === 0) {
+      // Ensure at least one op exists
+      ops.push({
+        type: "TRANSFER",
+        namespace: "",
+        key: "",
+        to: minerAddress,
+        amount: 0,
+        nonce: 0,
+        owner: systemAddress,
+      });
+    }
+  } else {
+    // Legacy single-miner + referrals + fees
+    const minerRewardIDC = uIDCToIDC(blockRewardUIDC);
+    if (minerRewardIDC > 0) {
+      ops.push({
+        type: "TRANSFER",
+        namespace: "",
+        key: "",
+        to: minerAddress,
+        amount: minerRewardIDC,
+        nonce: 0,
+        owner: systemAddress,
+      });
+    }
+    for (const refReward of referralRewards) {
+      if (refReward.referralReward > 0n) {
+        const refRewardIDC = uIDCToIDC(refReward.referralReward);
+        if (refRewardIDC > 0) {
+          ops.push({
+            type: "TRANSFER",
+            namespace: "",
+            key: "",
+            to: refReward.inviterAddress,
+            amount: refRewardIDC,
+            nonce: 0,
+            owner: systemAddress,
+          });
+        }
+      }
+    }
+    const feesIDC = uIDCToIDC(fees);
+    if (feesIDC > 0) {
+      ops.push({
+        type: "TRANSFER",
+        namespace: "",
+        key: "",
+        to: minerAddress, // Fees go to miner
+        amount: feesIDC,
+        nonce: 0,
+        owner: systemAddress,
+      });
+    }
+    if (ops.length === 0) {
+      ops.push({
+        type: "TRANSFER",
+        namespace: "",
+        key: "",
+        to: minerAddress,
+        amount: 0,
+        nonce: 0,
+        owner: systemAddress,
+      });
+    }
   }
-  
-  // Operation N+1: Transaction fees (if any)
-  const feesIDC = uIDCToIDC(fees);
-  if (feesIDC > 0) {
-    ops.push({
-      type: "TRANSFER",
-      namespace: "",
-      key: "",
-      to: minerAddress, // Fees go to miner
-      amount: feesIDC,
+
+  // Phase 48-D: Embed payout metadata entries into coinbase (deterministic, non-balance affecting)
+  try {
+    // Build deterministic map for candidate weights if provided
+    const weightByAddr = new Map<string, number>();
+    if (Array.isArray(pooledCandidateInputs)) {
+      for (const c of pooledCandidateInputs) {
+        const w = computeEffectiveWeight({
+          address: c.address,
+          balanceUIDC: c.balanceUIDC ?? 0n,
+          onlineScore: c.onlineScore ?? 0,
+          reliabilityScore: c.reliabilityScore ?? 0,
+        });
+        weightByAddr.set(c.address, Math.max(0, w));
+      }
+    }
+    const entries = ops
+      .filter((op) => op.type === "TRANSFER" && op.to && typeof op.amount === "number" && op.amount > 0)
+      .map((op) => {
+        const addr = op.to as Address;
+        const amtUIDC = IDCToUIDC(op.amount as number).toString();
+        const w = weightByAddr.get(addr) ?? 1;
+        return {
+          address: addr,
+          amountUIDC: amtUIDC,
+          weight: Number.isFinite(w) && w > 0 ? w : 1,
+        };
+      })
+      // Deterministic sort by address
+      .sort((a, b) => a.address.localeCompare(b.address));
+    // Optional: attach online/reliability snapshot (only reliable for local miner; others default 0)
+    let minerOnline = 0;
+    let minerReliab = 0;
+    try {
+      minerOnline = computeOnlineScore();
+      minerOnline = Math.max(0, Math.min(100, Math.round(minerOnline)));
+      minerReliab = Math.max(0, Math.min(100, Math.round(minerReliab)));
+    } catch {}
+    const entriesWithSignals = entries.map((e) => ({
+      ...e,
+      online: e.address === minerAddress ? minerOnline : 0,
+      reliab: e.address === minerAddress ? minerReliab : 0,
+    }));
+
+    const metaOp: Operation = {
+      type: "PUT",
+      namespace: "payout",
+      key: `h:${blockHeight}`,
+      value: JSON.stringify({ v: 2, entries: entriesWithSignals }),
       nonce: 0,
       owner: systemAddress,
-    });
-  }
-  
-  // If no operations, create empty operation
-  if (ops.length === 0) {
-    ops.push({
-      type: "TRANSFER",
-      namespace: "",
-      key: "",
-      to: minerAddress,
-      amount: 0,
-      nonce: 0,
-      owner: systemAddress,
-    });
+    };
+    ops.push(metaOp);
+  } catch {
+    // Ignore metadata on error to keep backward compatibility
   }
 
   // Coinbase transaction structure
@@ -354,6 +482,74 @@ export async function buildCandidateBlock(
   }
 
   // Phase 41: Get QuorumScore for reward multiplier
+  // Phase 50: Determine pooled recipients (from previous block coinbase recipients)
+  let pooledRecipients: Address[] | undefined = undefined;
+  try {
+    if (isPooledRewardsEnabled()) {
+      const prevCoinbase = prevBlock?.txs?.[0];
+      const recipients: Address[] = [];
+      if (prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+        for (const op of prevCoinbase.ops) {
+          if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
+            if (!recipients.includes(op.to as Address)) {
+              recipients.push(op.to as Address);
+            }
+          }
+        }
+      }
+      if (!recipients.includes(minerAddress)) recipients.push(minerAddress);
+      pooledRecipients = recipients;
+    }
+  } catch {}
+
+  // Phase 50-B: Build weighted pooled candidate inputs from previous payout metadata or coinbase recipients
+  let pooledCandidateInputs: PooledCandidateInput[] | undefined = undefined;
+  try {
+    if (isPooledRewardsEnabled()) {
+      const prevCoinbase = prevBlock?.txs?.[0];
+      const metaOp = prevCoinbase?.ops?.find((op) => (op as any).type !== "TRANSFER" && (op as any).namespace === "payout" && typeof (op as any).value === "string");
+      let addrs: Address[] = [];
+      const signalByAddr = new Map<string, { online?: number; reliab?: number }>();
+      if (metaOp && typeof (metaOp as any).value === "string") {
+        try {
+          const parsed = JSON.parse((metaOp as any).value || "{}");
+          const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+          addrs = entries.map((e: any) => e.address).filter((a: any) => typeof a === "string" && a.startsWith("idc_"));
+          for (const e of entries) {
+            const a = e?.address;
+            if (typeof a === "string" && a.startsWith("idc_")) {
+              const o = typeof e?.online === "number" ? Math.max(0, Math.min(100, Math.round(e.online))) : undefined;
+              const r = typeof e?.reliab === "number" ? Math.max(0, Math.min(100, Math.round(e.reliab))) : undefined;
+              signalByAddr.set(a, { online: o, reliab: r });
+            }
+          }
+        } catch {}
+      }
+      if (addrs.length === 0 && prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+        for (const op of prevCoinbase.ops) {
+          if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
+            if (!addrs.includes(op.to as Address)) addrs.push(op.to as Address);
+          }
+        }
+      }
+      if (!addrs.includes(minerAddress)) addrs.push(minerAddress);
+      // Compute balances deterministically from currentIndexState
+      const inputs: PooledCandidateInput[] = addrs.map((a) => {
+        try {
+          const balIDC = currentIndexState.getBalance(a) || 0;
+          const balUIDC = IDCToUIDC(balIDC);
+          const sig = signalByAddr.get(a);
+          return { address: a, balanceUIDC: balUIDC, onlineScore: sig?.online, reliabilityScore: sig?.reliab };
+        } catch {
+          const sig = signalByAddr.get(a);
+          return { address: a, balanceUIDC: 0n, onlineScore: sig?.online, reliabilityScore: sig?.reliab };
+        }
+      });
+      pooledCandidateInputs = inputs;
+    }
+  } catch {}
+
+  // Phase 41: Get QuorumScore for reward multiplier
   // Try to get from QuorumManager if available
   let quorumScore = 100; // Default: standard node (1.0x multiplier)
   try {
@@ -406,7 +602,9 @@ export async function buildCandidateBlock(
     totalFeesUIDC,
     quorumScore, // Pass quorumScore for IP reputation multiplier
     undefined, // sessionDurationMs - will use SessionTracker
-    ipSharingWeight // Phase 44: Pass IP sharing weight
+    ipSharingWeight, // Phase 44: Pass IP sharing weight
+    pooledRecipients, // Phase 50: Equal recipients fallback
+    pooledCandidateInputs // Phase 50-B: Weighted candidates (preferred)
   );
 
   // Combine coinbase + pending transactions
@@ -511,11 +709,29 @@ export async function buildCandidateBlock(
       header.epochId = epochId;
       header.slotIndex = slotIndex;
       header.randSeed = randSeed;
+      // Aliases for external compatibility
+      (header as any).epoch = epochId;
+      (header as any).slot = slotIndex;
+      (header as any).randomness = randSeed;
       header.proposer = proposer;
       // payoutRoot will be set by allocator wiring in Phase B/C when used for enforcement
     }
   } catch {
     // Ignore slot metadata on failure; backward compatible
+  }
+
+  // Phase 48-D: Compute payoutRoot from coinbase TRANSFER recipients (sorted by address) and set into header
+  try {
+    const cb = coinbaseTx;
+    const leaves = cb.ops
+      .filter((op) => op.type === "TRANSFER" && op.to && typeof op.amount === "number" && op.amount > 0)
+      .map((op) => ({ addr: op.to as Address, amt: IDCToUIDC(op.amount as number).toString() }))
+      .sort((a, b) => a.addr.localeCompare(b.addr))
+      .map((x) => `${x.addr}:${x.amt}`);
+    const payoutRoot = await calcMerkleRoot(leaves);
+    (header as any).payoutRoot = payoutRoot;
+  } catch {
+    // Leave payoutRoot undefined on failure
   }
 
   // Block hash will be computed during mining

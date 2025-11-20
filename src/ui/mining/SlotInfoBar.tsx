@@ -14,6 +14,7 @@ export function SlotInfoBar({ chainContext, nodeAddress, locale }: SlotInfoBarPr
   const isZh = locale === "zh";
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const [leader, setLeader] = useState<Address | null>(null);
+  const [multiCandidate, setMultiCandidate] = useState<boolean>(false);
   const [leaderPreview, setLeaderPreview] = useState<Array<{ epoch: number; slot: number; leader: string | null; me: boolean }>>([]);
   const [previewCount, setPreviewCount] = useState<number>(() => {
     try {
@@ -56,6 +57,7 @@ export function SlotInfoBar({ chainContext, nodeAddress, locale }: SlotInfoBarPr
         if (recipients.length === 0 && nodeAddress) {
           recipients.push(nodeAddress);
         }
+        setMultiCandidate(recipients.length > 1);
         const seed = await deriveRandSeed(prevBlock.hash, epochId, slotIndex);
         const candidates = recipients.map(a => ({ address: a as Address, weight: 1 }));
         const expected = await selectLeader(epochId, slotIndex, seed, candidates);
@@ -182,7 +184,7 @@ export function SlotInfoBar({ chainContext, nodeAddress, locale }: SlotInfoBarPr
           <b>{isZh ? "领导者" : "Leader"}</b>:{" "}
           <span style={{ color: meIsLeader ? "#28a745" : "#333" }}>
             {leader ? leader.substring(0, 12) + "..." : (isZh ? "未知" : "Unknown")}
-            {meIsLeader ? (isZh ? "（你）" : " (you)") : ""}
+            {meIsLeader && multiCandidate ? (isZh ? "（你）" : " (you)") : ""}
           </span>
         </div>
       </div>
@@ -268,14 +270,39 @@ export function SlotInfoBar({ chainContext, nodeAddress, locale }: SlotInfoBarPr
                 title={`Epoch ${it.epoch} · Slot ${it.slot}`}
               >
                 S{it.slot}: {it.leader ? it.leader.substring(0, 8) + "..." : (isZh ? "未知" : "Unknown")}
-                {it.me ? (isZh ? "（你）" : " (you)") : ""}
+                {it.me && multiCandidate ? (isZh ? "（你）" : " (you)") : ""}
               </div>
             ))}
           </div>
         </div>
       )}
+      <AutoCatchUp chainContext={chainContext} onRun={handleCatchUp} />
     </div>
   );
 }
 
+function AutoCatchUp({ chainContext, onRun }: { chainContext: ChainContext | null; onRun: () => void }) {
+  const [lastRun, setLastRun] = useState<number>(0);
+  useEffect(() => {
+    const t = setInterval(() => {
+      try {
+        const now = Date.now();
+        if (!chainContext || !(chainContext as any).p2p) return;
+        const p2pNode = (chainContext as any).p2p;
+        const local = chainContext.storage.getTip()?.header.height ?? 0;
+        const network = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+        const behind = Math.max(0, network - local);
+        const peerCount = typeof p2pNode.getPeerCount === "function" ? p2pNode.getPeerCount() : 0;
+        if (behind > 0 && (peerCount || 0) === 0) {
+          if (now - lastRun > 30000) {
+            setLastRun(now);
+            onRun();
+          }
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(t);
+  }, [chainContext, onRun, lastRun]);
+  return null;
+}
 

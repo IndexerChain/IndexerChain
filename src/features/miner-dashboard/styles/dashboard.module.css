@@ -1,0 +1,103 @@
+/* --- 核心主题设置 --- */
+.root {
+    --color-primary: #4ee672;       
+    --color-secondary: #58a6ff;     
+    --color-warning: orange;        
+    --color-danger: #da3633;        
+    --color-background: #0d1117;    
+    --color-surface: #161b22;       
+    --color-border: #30363d;        
+    --color-text: #c9d1d9;          
+    --font-mono: 'Consolas', 'Courier New', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --spacing-unit: 10px;
+}
+
+.dashboardGrid {
+    display: grid;
+    grid-template-columns: 1fr 2fr; 
+    gap: 25px; /* calc(var(--spacing-unit) * 2.5) */
+}
+
+.leftPanel {
+    display: grid;
+    grid-template-columns: 1fr; 
+    gap: 25px;
+    grid-auto-rows: minmax(min-content, max-content);
+}
+
+/* V12 保持: 钱包余额区域 */
+.walletDisplayBar {
+    background-color: #161b22; /* var(--color-surface) */
+    padding: 10px; /* var(--spacing-unit) */
+    border-radius: 6px; 
+    margin-bottom: 20px; /* calc(var(--spacing-unit) * 2) */
+    font-family: 'Consolas', 'Courier New', monospace; /* var(--font-mono) */
+    font-size: 0.9em;
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center;
+    border: 1px solid #30363d; /* var(--color-border) */
+}
+
+.addressInfo, .balanceInfo {
+    display: flex;
+    align-items: center;
+}
+
+.balanceAmount {
+    font-size: 1.4em; 
+    color: orange; /* var(--color-warning) */
+    margin-left: 10px;
+}
+
+.balanceLabel {
+    color: #8b949e; 
+    font-size: 0.9em;
+}
+
+.addressBar {
+    background-color: #161b22; /* var(--color-surface) */
+    padding: 10px; /* var(--spacing-unit) */
+    border-radius: 6px; 
+    margin-bottom: 20px; /* calc(var(--spacing-unit) * 2) */
+    font-family: 'Consolas', 'Courier New', monospace; /* var(--font-mono) */
+    font-size: 0.9em;
+    display: flex; 
+    justify-content: flex-end; /* V13: 仅显示网络状态在右侧 */
+    align-items: center;
+    border: 1px solid #30363d; /* var(--color-border) */
+}
+
+.addressBar span { 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+    padding: 0 10px; /* var(--spacing-unit) */
+}
+
+/* --- 通用数据元素增强 (保持) --- */
+.dataValue { 
+    color: white; 
+    font-size: 1.2em; 
+    font-weight: bold; 
+    font-family: 'Consolas', 'Courier New', monospace; /* var(--font-mono) */
+    line-height: 1.5; 
+}
+
+.dataValueLg { 
+    color: #4ee672; /* var(--color-primary) */
+    font-size: 1.8em; 
+}
+
+.blocksCard {
+    grid-column: 2;
+}
+
+/* --- 响应式 (保持) --- */
+@media (max-width: 1200px) {
+    .dashboardGrid { grid-template-columns: 1fr; }
+    .leftPanel { grid-template-columns: 1fr; }
+    .walletDisplayBar { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .walletDisplayBar span { padding: 0; }
+    .addressBar { justify-content: flex-start; }
+}

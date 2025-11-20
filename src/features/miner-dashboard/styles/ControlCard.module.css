@@ -1,0 +1,83 @@
+.card { 
+    background-color: #161b22; /* var(--color-surface) */
+    padding: 20px; /* calc(var(--spacing-unit) * 2) */
+    border-radius: 8px; 
+    border: 1px solid #30363d; /* var(--color-border) */
+    display: flex; 
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.header {
+    font-size: 1.1em; 
+    color: #58a6ff; /* var(--color-secondary) */
+    margin-top: 0; 
+    margin-bottom: 15px; /* calc(var(--spacing-unit) * 1.5) */
+    border-bottom: 1px dashed #30363d; /* var(--color-border) */
+    padding-bottom: 10px; /* var(--spacing-unit) */
+    display: flex; 
+    justify-content: space-between;
+    align-items: center;
+}
+
+.controlCardTop { 
+    display: flex; 
+    gap: 20px; /* calc(var(--spacing-unit) * 2) */
+    align-items: center; 
+    margin-bottom: 15px; /* calc(var(--spacing-unit) * 1.5) */
+}
+
+.btn { 
+    padding: 12px 25px; 
+    border: none; 
+    border-radius: 6px; 
+    cursor: pointer; 
+    font-weight: 600; 
+    transition: all 0.2s; 
+}
+
+.btnStart { 
+    background-color: #238636; 
+    color: white; 
+}
+
+.btnDanger { 
+    background-color: #da3633; /* var(--color-danger) */
+    color: white; 
+}
+
+.btn:disabled { 
+    background-color: #30363d; 
+    cursor: not-allowed; 
+    color: #8b949e; 
+}
+
+.statusBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 0.9em;
+    font-weight: bold;
+}
+
+.statusSyncing {
+    background-color: rgba(218, 54, 51, 0.15);
+    color: #da3633;
+    border: 1px solid #da3633;
+}
+
+.statusReady {
+    background-color: rgba(35, 134, 54, 0.15);
+    color: #3fb950;
+    border: 1px solid #238636;
+}
+
+.errorAlert {
+    color: orange; /* var(--color-warning) */
+    background-color: rgba(255, 165, 0, 0.1); 
+    padding: 10px; /* var(--spacing-unit) */
+    border-radius: 4px; 
+    margin-bottom: 15px; /* calc(var(--spacing-unit) * 1.5) */
+    font-size: 0.9em; 
+}

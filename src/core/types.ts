@@ -106,6 +106,14 @@ export interface BlockHeader {
   proposer?: Address;    // Expected leader address for this slot
   payoutRoot?: string;   // Merkle root of previous epoch's payout plan
   randSeed?: string;     // Random seed driving leader selection (derived from prev block)
+  
+  // Aliases for external compatibility (deterministic synonyms)
+  // Kept optional and redundant for backward compatibility with earlier phases.
+  epoch?: number;        // alias of epochId
+  slot?: number;         // alias of slotIndex
+  randomness?: string;   // alias of randSeed
+  // Phase 51: Optional canonical signals root (previous epoch online/reliability)
+  signalsRoot?: string;  // Merkle root of previous epoch signals (if provided)
 }
 
 /**

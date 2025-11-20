@@ -127,13 +127,56 @@ export async function verifyBlock(
   if (isProposerEnforceEnabled() && prevBlock) {
     const h = block.header;
     // Require proposer metadata to be present to enforce
-    if (typeof h.epochId === "number" && typeof h.slotIndex === "number" && typeof h.proposer === "string") {
+    const epoch = (h as any).epoch ?? h.epochId;
+    const slot = (h as any).slot ?? h.slotIndex;
+    const proposer = h.proposer;
+    if (typeof epoch === "number" && typeof slot === "number" && typeof proposer === "string") {
       try {
-        const seed = await deriveRandSeed(prevBlock.hash, h.epochId, h.slotIndex);
-        // Candidates from previous block coinbase recipients (deterministic across nodes)
+        // Prefer header.randomness if provided; otherwise derive from previous hash
+        const headerSeed = (h as any).randomness ?? h.randSeed;
+        const seed = typeof headerSeed === "string" && headerSeed ? headerSeed : await deriveRandSeed(prevBlock.hash, epoch, slot);
+        // Candidates from previous block payout metadata (preferred) or coinbase recipients (fallback)
         const recipients: string[] = [];
         const prevCoinbase = prevBlock.txs?.[0];
-        if (prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+        const meta = prevCoinbase?.ops?.find((op) => (op as any).type !== "TRANSFER" && (op as any).namespace === "payout" && typeof (op as any).value === "string");
+        let weightsByAddr: Record<string, number> | null = null;
+        if (meta && typeof (meta as any).value === "string") {
+          try {
+            const parsed = JSON.parse((meta as any).value || "{}");
+            const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+            // Validate signal fields (if present) are bounded and integers
+            for (const e of entries) {
+              const o = e?.online;
+              const r = e?.reliab;
+              if (o !== undefined) {
+                if (typeof o !== "number" || o < 0 || o > 100 || !Number.isFinite(o)) {
+                  return { valid: false, error: "Invalid payout metadata: online out of range" };
+                }
+              }
+              if (r !== undefined) {
+                if (typeof r !== "number" || r < 0 || r > 100 || !Number.isFinite(r)) {
+                  return { valid: false, error: "Invalid payout metadata: reliab out of range" };
+                }
+              }
+            }
+            for (const e of entries) {
+              const addr = e?.address;
+              if (typeof addr === "string" && addr.startsWith("idc_") && !recipients.includes(addr)) {
+                recipients.push(addr);
+              }
+            }
+            // Collect weights if present
+            for (const e of entries) {
+              const addr = e?.address;
+              const w = e?.weight;
+              if (typeof addr === "string" && typeof w === "number" && w > 0) {
+                if (!weightsByAddr) weightsByAddr = {};
+                weightsByAddr[addr] = w;
+              }
+            }
+          } catch {}
+        }
+        if (recipients.length === 0 && prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
           for (const op of prevCoinbase.ops) {
             if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
               if (!recipients.includes(op.to)) recipients.push(op.to);
@@ -142,12 +185,13 @@ export async function verifyBlock(
         }
         // If no recipients found, skip enforcement (legacy blocks)
         if (recipients.length > 0) {
+          // Deterministic leader selection with equal weights for verifiability
           const candidates = recipients.map((a) => ({ address: a, weight: 1 }));
-          const expectedLeader = await selectLeader(h.epochId, h.slotIndex, seed, candidates);
-          if (!expectedLeader || expectedLeader !== h.proposer) {
+          const expectedLeader = await selectLeader(epoch, slot, seed, candidates);
+          if (!expectedLeader || expectedLeader !== proposer) {
             return {
               valid: false,
-              error: `Proposer mismatch: expected ${expectedLeader || "none"}, got ${h.proposer}`,
+              error: `Proposer mismatch: expected ${expectedLeader || "none"}, got ${proposer}`,
             };
           }
         }
@@ -155,6 +199,35 @@ export async function verifyBlock(
         // On error, do not fail verification for compatibility
       }
     }
+  }
+
+  // Phase 48-D: If header.payoutRoot present, verify against payout metadata in coinbase
+  try {
+    const pr = block.header.payoutRoot;
+    if (typeof pr === "string" && pr.length > 0 && block.txs.length > 0) {
+      const coinbaseTx = block.txs[0];
+      // Look for metadata op
+      const meta = coinbaseTx.ops.find((op) => op.type !== "TRANSFER" && (op as any).namespace === "payout" && typeof (op as any).value === "string");
+      if (meta && typeof (meta as any).value === "string") {
+        const parsed = JSON.parse((meta as any).value || "{}");
+        const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+        const leaves = entries
+          .map((e: any) => ({ addr: String(e.address || ""), amt: String(e.amountUIDC || "0") }))
+          .filter((x: any) => x.addr && x.amt)
+          .sort((a: any, b: any) => a.addr.localeCompare(b.addr))
+          .map((x: any) => `${x.addr}:${x.amt}`);
+        const computedRoot = await calcMerkleRoot(leaves);
+        if (computedRoot !== pr) {
+          return {
+            valid: false,
+            error: `payoutRoot mismatch: expected ${pr.substring(0, 16)}..., got ${computedRoot.substring(0, 16)}...`,
+          };
+        }
+      }
+      // Else: if no metadata op, skip for backward compatibility
+    }
+  } catch {
+    // Skip on parse error for compatibility
   }
 
   // Phase 7: Verify coinbase transaction (first transaction must be coinbase)

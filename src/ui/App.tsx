@@ -62,7 +62,7 @@ import {
 import type { Operation, Block, Tx, SnapshotMeta } from "../core/types.js";
 import { WalletBackupPanel } from "./WalletBackupPanel.js";
 import { WalletManagerPanel } from "./WalletManagerPanel.js";
-import { ConfigChecker } from "./ConfigChecker.js";
+// ConfigChecker moved into HomePage
 import { RuntimePanel } from "./RuntimePanel.js";
 import { PrivacyPanel } from "./privacy/PrivacyPanel.js";
 import { GlobalSentinelPanel } from "./GlobalSentinelPanel.js";
@@ -89,9 +89,12 @@ import { RewardBreakdownCard } from "./mining/RewardBreakdownCard.js";
 import { ReferralAndBoosterCard } from "./mining/ReferralAndBoosterCard.js";
 import { NetworkMiniHealthCard } from "./mining/NetworkMiniHealthCard.js";
 import { AccordionCard } from "./components/AccordionCard.js";
-import { DailyInfoBar } from "./components/DailyInfoBar.js";
+// DailyInfoBar moved into HomePage
+import { HomePage } from "./pages/HomePage.js";
 import "./index.css";
 import { WalletSummaryCard } from "./wallet/WalletSummaryCard.js";
+import { LiveBlockFeed } from "./components/LiveBlockFeed.js";
+import { MiningConsolePage } from "./pages/MiningConsolePage.js";
 
 /**
  * Main App Component
@@ -525,8 +528,8 @@ function App() {
 
   const [needsReset, setNeedsReset] = useState<boolean>(false);
 
-  // Tab navigation state
-  const [activeTab, setActiveTab] = useState<string>("overview");
+  // Tab navigation state - Default to console page
+  const [activeTab, setActiveTab] = useState<string>("console");
   const [showAdvancedTabs, setShowAdvancedTabs] = useState<boolean>(false); // Advanced tabs collapsed by default
   const [showMobileMenu, setShowMobileMenu] = useState<boolean>(false); // Mobile menu state
   
@@ -3288,6 +3291,19 @@ function App() {
       }
       logger.info(`[P2P] ✅ Connected to signal server, requesting peers...`);
       p2pNode.requestPeers();
+      
+      // Phase 51: Announce mining address to signaling server for epoch signals mapping
+      try {
+        const walletStore = getMultiWalletStore();
+        const miningWallet = walletStore.getMiningWallet?.();
+        const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+        if (minerAddr) {
+          p2pNode.sendToSignalServer("ANNOUNCE_ID", { address: minerAddr });
+          logger.debug(`[Phase 51] Announced mining address to signaling server: ${minerAddr.substring(0, 16)}...`);
+        }
+      } catch (e) {
+        logger.warn(`[Phase 51] Failed to announce address to signaling server:`, e);
+      }
 
       // Phase 45: Initialize Shadow Node with multiple URLs for mobile persistence
       try {
@@ -4893,6 +4909,29 @@ function App() {
     }
   };
 
+  // Console Page - Full Screen Override (completely separate from main app)
+  if (activeTab === "console") {
+    return (
+      <MiningConsolePage
+        chainContext={chainContext}
+        minerClient={minerClient}
+        nodeAddress={nodeAddress}
+        isMining={isMining}
+        onToggleMining={() => {
+          if (isMining) {
+            handleStopMining();
+          } else {
+            handleStartMining();
+          }
+        }}
+        p2pNode={chainContext?.p2p || null}
+        finalityManager={finalityManager}
+        localRole={localRole}
+        bootstrapComplete={bootstrapComplete}
+      />
+    );
+  }
+
   return (
     <div className="app">
       {/* Phase 42: Hard Reorg Banner */}
@@ -5036,15 +5075,7 @@ function App() {
               ×
             </button>
           </div>
-          <button
-            className={`mobile-tab-button ${activeTab === "overview" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("overview");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.overview")}
-          </button>
+          {/* Minimal mobile menu: mining + wallet */}
           <button
             className={`mobile-tab-button ${activeTab === "mining" ? "active" : ""}`}
             onClick={() => {
@@ -5064,164 +5095,21 @@ function App() {
             {t("tabs.wallet")}
           </button>
           <button
-            className={`mobile-tab-button ${activeTab === "transactions" ? "active" : ""}`}
+            className={`mobile-tab-button ${activeTab === "console" ? "active" : ""}`}
             onClick={() => {
-              setActiveTab("transactions");
+              setActiveTab("console");
               setShowMobileMenu(false);
             }}
           >
-            {t("tabs.transactions")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "network" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("network");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.network")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "storage" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("storage");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.storage")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "advanced" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("advanced");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.advanced")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "token" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("token");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.token")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "privacy" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("privacy");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.privacy")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "tools" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("tools");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.tools")}
-          </button>
-          <button
-            className={`mobile-tab-button ${activeTab === "runtime" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("runtime");
-              setShowMobileMenu(false);
-            }}
-          >
-            {t("tabs.runtime")}
+            Console
           </button>
         </div>
       </div>
 
       <main className="app-main">
-        {/* Status Banner */}
-        {chainContext && (
-          <div style={{
-            padding: "clamp(0.75rem, 2vw, 1rem)",
-            marginBottom: "1.5rem",
-            borderRadius: "8px",
-            background: isP2PConnected && nodeAddress ? "#d4edda" : "#fff3cd",
-            border: `2px solid ${isP2PConnected && nodeAddress ? "#28a745" : "#ffc107"}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: "1rem"
-          }}>
-            <div style={{ 
-              display: "flex", 
-              alignItems: "center", 
-              gap: "clamp(0.5rem, 2vw, 1rem)", 
-              flexWrap: "wrap",
-              flex: "1",
-              minWidth: 0
-            }}>
-              <span style={{ 
-                fontSize: "clamp(1.25rem, 4vw, 1.5rem)",
-                flexShrink: 0
-              }}>
-                {isP2PConnected && nodeAddress ? "✅" : "⚠️"}
-              </span>
-              <div style={{ minWidth: 0, flex: "1" }}>
-                <strong style={{ 
-                  fontSize: "clamp(0.9rem, 2.5vw, 1rem)", 
-                  display: "block", 
-                  marginBottom: "0.25rem",
-                  wordBreak: "break-word"
-                }}>
-                  {isP2PConnected && nodeAddress 
-                    ? t("banner.systemReady")
-                    : t("banner.configRequired")}
-                </strong>
-                <div style={{ 
-                  fontSize: "clamp(0.8rem, 2vw, 0.9rem)", 
-                  color: "#666",
-                  wordBreak: "break-word"
-                }}>
-                  {isP2PConnected && nodeAddress 
-                    ? t("banner.networkConnected", { count: peerCount, height })
-                    : !isP2PConnected && !nodeAddress
-                    ? t("banner.networkDisconnected")
-                    : !isP2PConnected
-                    ? t("quickStart.step1Desc")
-                    : t("banner.walletInitializing")}
-                </div>
-              </div>
-            </div>
-            {!isP2PConnected && (
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  setActiveTab("network");
-                  setShowMobileMenu(false);
-                }}
-                style={{ 
-                  padding: "clamp(0.5rem, 2vw, 0.75rem) clamp(0.75rem, 3vw, 1rem)",
-                  minHeight: "44px",
-                  whiteSpace: "nowrap",
-                  flexShrink: 0
-                }}
-              >
-                {t("banner.configNetwork")}
-              </button>
-            )}
-          </div>
-        )}
+        {/* Status Banner moved to HomePage */}
 
-        {/* Configuration Checker */}
-        {chainContext && (
-          <ConfigChecker
-            chainContext={chainContext}
-            isP2PConnected={isP2PConnected}
-            nodeAddress={nodeAddress}
-            isMining={isMining || clusterMining}
-          />
-        )}
+        {/* ConfigChecker moved to HomePage */}
 
 
         {error && (
@@ -5508,35 +5396,11 @@ function App() {
           </div>
         )}
 
-        {/* Daily Info Bar - 每日信息栏（放在余额组件下面，标签栏上面） */}
-        {chainContext && nodeAddress && (() => {
-          const tip = chainContext.storage.getTip();
-          return (
-            <DailyInfoBar
-              chainContext={chainContext}
-              nodeAddress={nodeAddress}
-              currentHeight={tip?.header?.height || 0}
-              isMining={isMining}
-              clusterMining={clusterMining}
-              currentReferrerAddress={currentReferrerAddress}
-              locale={locale}
-            />
-          );
-        })()}
+        {/* Daily Info Bar moved to HomePage */}
 
         {/* Tab Navigation */}
-        <div className="tab-container">
-          <div className="tab-nav desktop-only">
-            {/* P0-3: Core Tabs (Most Used) */}
-            <button
-              className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveTab("overview");
-              }}
-            >
-              {t("tabs.overview")}
-            </button>
+        <div className="tab-container" style={{ display: "grid", gridTemplateColumns: "240px 1fr", alignItems: "start", gap: "1rem" }}>
+          <div className="tab-nav desktop-only" style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignSelf: "start" }}>
             <button
               className={`tab-button ${activeTab === "mining" ? "active" : ""}`}
               onClick={(e) => {
@@ -5555,122 +5419,53 @@ function App() {
             >
               {t("tabs.wallet")}
             </button>
-            {/* Transactions moved to advanced to keep core clean */}
             <button
-              className={`tab-button ${activeTab === "network" ? "active" : ""}`}
+              className={`tab-button ${activeTab === "console" ? "active" : ""}`}
               onClick={(e) => {
                 e.preventDefault();
-                setActiveTab("network");
+                setActiveTab("console");
               }}
             >
-              {t("tabs.network")}
+              Console (New)
             </button>
-            
-            {/* P1-1: Advanced Tabs (Less Used) - Collapsible */}
-            <div style={{ 
-              marginLeft: "auto", 
-              display: "flex", 
-              gap: "0.5rem", 
-              alignItems: "center", 
-              paddingLeft: "clamp(0.25rem, 1vw, 0.5rem)", 
-              borderLeft: "1px solid #e0e0e0"
-            }}>
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  setShowAdvancedTabs(!showAdvancedTabs);
-                }}
-                style={{
-                  padding: "clamp(0.4rem, 1.5vw, 0.6rem) clamp(0.6rem, 2vw, 0.8rem)",
-                  fontSize: "clamp(0.75rem, 2vw, 0.8rem)",
-                  color: showAdvancedTabs ? "#667eea" : "#999",
-                  background: showAdvancedTabs ? "rgba(102, 126, 234, 0.1)" : "transparent",
-                  border: `1px solid ${showAdvancedTabs ? "#667eea" : "#ddd"}`,
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                  transition: "all 0.2s ease",
-                  fontWeight: showAdvancedTabs ? "500" : "400",
-                  minHeight: "44px",
-                  minWidth: "44px",
-                }}
-                onMouseEnter={(e) => {
-                  if (!showAdvancedTabs) {
-                    e.currentTarget.style.borderColor = "#667eea";
-                    e.currentTarget.style.color = "#667eea";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!showAdvancedTabs) {
-                    e.currentTarget.style.borderColor = "#ddd";
-                    e.currentTarget.style.color = "#999";
-                  }
-                }}
-                title={showAdvancedTabs ? t("advanced.hideAdvancedTabs") : t("advanced.showAdvancedTabs")}
-              >
-                <span style={{ marginRight: "0.3rem" }}>{showAdvancedTabs ? "▼" : "▶"}</span>
-                {t("tabs.advanced")}
-              </button>
-            </div>
-            {showAdvancedTabs && (
-              <>
-                <button
-                  className={`tab-button ${activeTab === "transactions" ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("transactions");
-                  }}
-                >
-                  {t("tabs.transactions")}
-                </button>
-                <button
-                  className={`tab-button ${activeTab === "storage" ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("storage");
-                  }}
-                >
-                  {t("tabs.storage")}
-                </button>
-                <button
-                  className={`tab-button ${activeTab === "advanced" ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("advanced");
-                  }}
-                >
-                  {t("tabs.advanced")}
-                </button>
-                <button
-                  className={`tab-button ${activeTab === "token" ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("token");
-                  }}
-                >
-                  {t("tabs.token")}
-                </button>
-                <button
-                  className={`tab-button ${activeTab === "privacy" ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("privacy");
-                  }}
-                >
-                  {t("tabs.privacy")}
-                </button>
-                <button
-                  className={`tab-button ${activeTab === "tools" ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("tools");
-                  }}
-                >
-                  {t("tabs.tools")}
-                </button>
-              </>
-            )}
           </div>
+          <div style={{ minWidth: 0 }}>
+          {/* Home Tab */}
+          {activeTab === "home" && (
+            <div className="tab-content active">
+              <HomePage
+                chainContext={chainContext}
+                p2pNode={chainContext?.p2p || null}
+                nodeAddress={nodeAddress}
+                isMining={isMining}
+                clusterMining={clusterMining}
+                currentReferrerAddress={currentReferrerAddress}
+                locale={locale}
+                onStartMining={() => {
+                  if (!isMining && !clusterMining) {
+                    handleStartMining();
+                  }
+                }}
+                onCatchUp={async () => {
+                  try {
+                    if (!chainContext) return;
+                    const p2p = (chainContext as any)?.p2p;
+                    if (!p2p) return;
+                    const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
+                    const network = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+                    const rt: any = {
+                      latestHeight: network,
+                      latestHeaderHash: (typeof window !== "undefined" && (window as any).lastRootTipHash) || "",
+                      recentHeaders: (typeof window !== "undefined" && (window as any).lastRootTipRecentHeaders) || undefined,
+                      latestSnapshotMeta: (typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta) || undefined,
+                      stateCommitment: (typeof window !== "undefined" && (window as any).lastRootTipStateCommitment) || undefined,
+                    };
+                    await handleRootTipUpdate(chainContext, p2p, rt, true);
+                  } catch {}
+                }}
+              />
+            </div>
+          )}
 
           {/* Overview Tab - P0-2: Simplified with Quick Status Dashboard */}
           {activeTab === "overview" && (
@@ -6523,9 +6318,50 @@ function App() {
           {/* Mining Tab */}
           {activeTab === "mining" && (
             <div className="tab-content active">
+              {/* Miner Console header and quick stats */}
+              <div
+                className="status-card"
+                style={{
+                  marginBottom: "1rem",
+                  background: "linear-gradient(135deg, #0d1117 0%, #161b22 100%)",
+                  color: "#c9d1d9",
+                  border: "1px solid #30363d",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                  <h2 style={{ margin: 0, color: "#58a6ff" }}>
+                    {locale === "zh" ? "IndexerChain 矿工控制台" : "IndexerChain Miner Console"}
+                  </h2>
+                  {nodeAddress && (
+                    <div style={{ fontFamily: "monospace", fontSize: "0.9rem", background: "#0d1117", border: "1px solid #30363d", padding: "0.4rem 0.6rem", borderRadius: "6px" }}>
+                      {locale === "zh" ? "地址" : "Address"}: {formatAddress(nodeAddress, 10, 10)}
+                    </div>
+                  )}
+                </div>
+                <div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "0.75rem" }}>
+                  <div>
+                    <div style={{ opacity: 0.75 }}>{t("chain.height")}</div>
+                    <div style={{ fontWeight: 700 }}>{chainContext?.storage.getTip()?.header.height ?? 0}</div>
+                  </div>
+                  <div>
+                    <div style={{ opacity: 0.75 }}>{locale === "zh" ? "网络高度" : "Network Height"}</div>
+                    <div style={{ fontWeight: 700 }}>{(typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0}</div>
+                  </div>
+                  <div>
+                    <div style={{ opacity: 0.75 }}>{locale === "zh" ? "对等节点" : "Peers"}</div>
+                    <div style={{ fontWeight: 700 }}>{(p2pNodeRef.current && (p2pNodeRef.current as any).getPeerCount) ? (p2pNodeRef.current as any).getPeerCount() : 0}</div>
+                  </div>
+                </div>
+              </div>
+              {/* Compact live block feed */}
+              {chainContext && (
+                <div style={{ marginBottom: "1rem" }}>
+                  <LiveBlockFeed chainContext={chainContext} locale={locale} />
+                </div>
+              )}
               {/* Phase 38: Mining UX & Onboarding */}
               {/* Phase 38-E: Network Stage & Cold Start Banner */}
-              {chainContext && bootstrapComplete && peerCount === 0 && (
+              {showAdvancedTabs && chainContext && bootstrapComplete && peerCount === 0 && (
                 <div
                   className="status-card"
                   style={{
@@ -6634,7 +6470,7 @@ function App() {
                 )}
 
               {/* Phase 38-E: Follower Mode Warning */}
-              {chainContext &&
+              {showAdvancedTabs && chainContext &&
                 chainContext.params?.networkId === "IXC_MAINNET_V1" &&
                 localRole === "FOLLOWER" && (
                   <div
@@ -6811,47 +6647,53 @@ function App() {
                     </h3>
                   </div>
 
-                  {/* Phase 45: Reward Breakdown Card (介绍性内容，移到下面) */}
-                  <RewardBreakdownCard
-                    chainContext={chainContext}
-                    p2pNode={p2pNodeRef.current}
-                    minerAddress={(() => {
-                      try {
-                        const walletStore = getMultiWalletStore();
-                        const miningWallet = walletStore.getMiningWallet();
-                        return miningWallet ? miningWallet.address : nodeAddress;
-                      } catch (e) {
-                        return nodeAddress;
-                      }
-                    })()}
-                    locale={locale}
-                  />
+                  {/* Phase 45: Reward Breakdown Card (advanced only) */}
+                  {showAdvancedTabs && (
+                    <RewardBreakdownCard
+                      chainContext={chainContext}
+                      p2pNode={p2pNodeRef.current}
+                      minerAddress={(() => {
+                        try {
+                          const walletStore = getMultiWalletStore();
+                          const miningWallet = walletStore.getMiningWallet();
+                          return miningWallet ? miningWallet.address : nodeAddress;
+                        } catch (e) {
+                          return nodeAddress;
+                        }
+                      })()}
+                      locale={locale}
+                    />
+                  )}
 
-                  {/* Phase 45: Referral & Booster Card (介绍性内容，移到下面) */}
-                  <ReferralAndBoosterCard
-                    minerAddress={(() => {
-                      try {
-                        const walletStore = getMultiWalletStore();
-                        const miningWallet = walletStore.getMiningWallet();
-                        return miningWallet ? miningWallet.address : nodeAddress;
-                      } catch (e) {
-                        return nodeAddress;
-                      }
-                    })()}
-                    currentHeight={tip?.header?.height || 0}
-                    locale={locale}
-                  />
+                  {/* Phase 45: Referral & Booster Card (advanced only) */}
+                  {showAdvancedTabs && (
+                    <ReferralAndBoosterCard
+                      minerAddress={(() => {
+                        try {
+                          const walletStore = getMultiWalletStore();
+                          const miningWallet = walletStore.getMiningWallet();
+                          return miningWallet ? miningWallet.address : nodeAddress;
+                        } catch (e) {
+                          return nodeAddress;
+                        }
+                      })()}
+                      currentHeight={tip?.header?.height || 0}
+                      locale={locale}
+                    />
+                  )}
 
-                  {/* Phase 45: Network Mini Health Card (介绍性内容，移到下面) */}
-                  <NetworkMiniHealthCard
-                    chainContext={chainContext}
-                    p2pNode={p2pNodeRef.current}
-                    finalityManager={finalityManager}
-                    localRole={localRole}
-                    bootstrapComplete={bootstrapComplete}
-                    nodeAddress={nodeAddress}
-                    locale={locale}
-                  />
+                  {/* Phase 45: Network Mini Health Card (advanced only) */}
+                  {showAdvancedTabs && (
+                    <NetworkMiniHealthCard
+                      chainContext={chainContext}
+                      p2pNode={p2pNodeRef.current}
+                      finalityManager={finalityManager}
+                      localRole={localRole}
+                      bootstrapComplete={bootstrapComplete}
+                      nodeAddress={nodeAddress}
+                      locale={locale}
+                    />
+                  )}
 
                   {/* Phase 38: Advanced Settings Toggle */}
                   <div style={{ marginBottom: "1rem" }}>
@@ -9088,6 +8930,7 @@ function App() {
               </div>
             </div>
           )}
+          </div>
         </div>
       </main>
     </div>

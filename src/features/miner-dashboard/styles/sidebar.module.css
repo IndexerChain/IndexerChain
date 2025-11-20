@@ -1,0 +1,116 @@
+/* Sidebar Styles */
+.appContainer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    min-height: 100vh;
+    background-color: #0d1117;
+    color: #c9d1d9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.sidebar {
+    width: 220px;
+    background-color: #161b22;
+    border-right: 1px solid #30363d;
+    padding: 20px 0;
+    flex-shrink: 0;
+}
+
+.logo {
+    font-size: 1.5em;
+    font-weight: bold;
+    color: #4ee672;
+    text-align: center;
+    margin-bottom: 30px;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.navLink {
+    display: block;
+    padding: 10px 20px;
+    margin: 10px 0;
+    color: #c9d1d9;
+    text-decoration: none;
+    transition: background-color 0.2s;
+    font-size: 0.95em;
+    cursor: pointer;
+}
+
+.navLink:hover {
+    background-color: #28303a;
+    color: white;
+    border-left: 3px solid #58a6ff;
+}
+
+.navLink.active {
+    background-color: #28303a;
+    color: #58a6ff;
+    border-left: 3px solid #58a6ff;
+}
+
+.mainContent {
+    flex-grow: 1;
+    padding: 30px;
+    overflow-y: auto;
+}
+
+.pageContent h1 {
+    font-size: 2em;
+    margin-bottom: 10px;
+    color: white;
+}
+
+/* Wallet Page Styles */
+.walletCard {
+    background-color: #161b22;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    margin-top: 20px;
+}
+
+.walletCard h2 {
+    font-size: 1.3em;
+    color: #58a6ff;
+    margin-bottom: 15px;
+}
+
+.balanceDisplay {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: orange;
+    margin: 20px 0;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.walletAddressBox {
+    background-color: #0d1117;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    display: flex;
+    align-items: center;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.9em;
+    margin-top: 10px;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .sidebar {
+        width: 100%;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid #30363d;
+    }
+    .appContainer {
+        flex-direction: column;
+    }
+}
+

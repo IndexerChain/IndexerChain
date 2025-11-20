@@ -803,8 +803,8 @@ export function MiningMainCard({
         </div>
       )}
 
-      {/* Phase 42: Referral Invite Code Input */}
-      {!currentReferrerAddress && (
+      {/* Phase 42: Referral Invite Code Input (hidden for minimal console) */}
+      {false && !currentReferrerAddress && (
         <div
           style={{
             marginTop: "1rem",
@@ -821,8 +821,8 @@ export function MiningMainCard({
           {pendingInviteAddress ? (
             <div style={{ fontSize: "0.85rem", color: "#28a745" }}>
               {isZh 
-                ? `✅ 已识别邀请地址: ${pendingInviteAddress.substring(0, 16)}...`
-                : `✅ Pending invite address: ${pendingInviteAddress.substring(0, 16)}...`}
+                ? `✅ 已识别邀请地址: ${(pendingInviteAddress || "").substring(0, 16)}...`
+                : `✅ Pending invite address: ${(pendingInviteAddress || "").substring(0, 16)}...`}
             </div>
           ) : (
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", flexDirection: isMobile ? "column" : "row" }}>

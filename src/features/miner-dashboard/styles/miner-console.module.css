@@ -1,0 +1,471 @@
+/* --- 核心主题设置 --- */
+:root {
+    --color-primary: #4ee672;       
+    --color-secondary: #58a6ff;     
+    --color-warning: orange;        
+    --color-danger: #da3633;        
+    --color-background: #0d1117;    
+    --color-surface: #161b22;       
+    --color-border: #30363d;        
+    --color-text: #c9d1d9;          
+    --font-mono: 'Consolas', 'Courier New', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --spacing-unit: 10px;
+}
+
+.appContainer {
+    font-family: var(--font-sans);
+    margin: 0;
+    padding: 0;
+    background-color: var(--color-background);
+    color: var(--color-text);
+    min-height: 100vh;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+    overflow: hidden;
+}
+
+/* --- 布局容器 --- */
+.sidebar {
+    width: 220px;
+    background-color: var(--color-surface);
+    border-right: 1px solid var(--color-border);
+    padding: calc(var(--spacing-unit) * 2) 0;
+    flex-shrink: 0;
+}
+
+.mainContent {
+    flex-grow: 1;
+    padding: calc(var(--spacing-unit) * 3);
+    overflow-y: auto;
+}
+
+/* --- 导航样式 --- */
+.logo {
+    font-size: 1.5em;
+    font-weight: bold;
+    color: var(--color-primary);
+    text-align: center;
+    margin-bottom: calc(var(--spacing-unit) * 3);
+    font-family: var(--font-mono);
+}
+
+.navLink {
+    display: block;
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 2);
+    margin: var(--spacing-unit) 0;
+    color: var(--color-text);
+    text-decoration: none;
+    transition: background-color 0.2s;
+    font-size: 0.95em;
+    cursor: pointer;
+}
+
+.navLink:hover,
+.navLink.active {
+    background-color: #28303a;
+    color: white;
+    border-left: 3px solid var(--color-secondary);
+}
+
+.navLink.active {
+    color: var(--color-secondary);
+}
+
+/* --- 主控制台样式 --- */
+.pageContent h1 {
+    font-size: 2em;
+    margin-bottom: var(--spacing-unit);
+    color: white;
+}
+
+/* V12 保持: 钱包余额区域 */
+.walletDisplayBar {
+    background-color: var(--color-surface);
+    padding: var(--spacing-unit);
+    border-radius: 6px;
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid var(--color-border);
+}
+
+.addressInfo,
+.balanceInfo {
+    display: flex;
+    align-items: center;
+}
+
+.balanceAmount {
+    font-size: 1.4em;
+    color: var(--color-warning);
+    margin-left: 10px;
+}
+
+.balanceLabel {
+    color: #8b949e;
+    font-size: 0.9em;
+}
+
+.addressBar {
+    background-color: var(--color-surface);
+    padding: var(--spacing-unit);
+    border-radius: 6px;
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    border: 1px solid var(--color-border);
+}
+
+.addressBar span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 var(--spacing-unit);
+}
+
+/* --- 核心网格布局 (Mining Dashboard) --- */
+.dashboardGrid {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: calc(var(--spacing-unit) * 2.5);
+}
+
+/* V11 保持: 左侧面板单列布局 */
+.leftPanel {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(var(--spacing-unit) * 2.5);
+    grid-auto-rows: minmax(min-content, max-content);
+}
+
+.card {
+    background-color: var(--color-surface);
+    padding: calc(var(--spacing-unit) * 2);
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+}
+
+.card h3 {
+    font-size: 1.1em;
+    color: var(--color-secondary);
+    margin-top: 0;
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+    border-bottom: 1px dashed var(--color-border);
+    padding-bottom: var(--spacing-unit);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.card h3 span {
+    color: inherit;
+}
+
+.blocksCard h3 {
+    color: var(--color-primary);
+}
+
+/* V13: Live Feed 实时按钮样式 */
+.liveToggleBtn {
+    padding: 5px 10px;
+    font-size: 0.8em;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.liveToggleLive {
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    border-color: var(--color-primary);
+}
+
+.liveTogglePaused {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--color-warning);
+}
+
+/* --- 挖矿控制卡 V11 保持 --- */
+.controlCard {
+    grid-column: 1 / 2;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.controlCardTop {
+    display: flex;
+    gap: calc(var(--spacing-unit) * 2);
+    align-items: center;
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+}
+
+.btn {
+    padding: 12px 25px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.btnStart {
+    background-color: #238636;
+    color: white;
+}
+
+.btnDanger {
+    background-color: var(--color-danger);
+    color: white;
+}
+
+.btn:disabled {
+    background-color: #30363d;
+    cursor: not-allowed;
+    color: #8b949e;
+}
+
+.miningStatusBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 0.9em;
+    font-weight: bold;
+}
+
+/* Additional status badge classes for compatibility */
+.statusError {
+    background-color: rgba(218, 54, 51, 0.15);
+    color: #da3633;
+    border: 1px solid #da3633;
+}
+
+.statusSyncing {
+    background-color: rgba(218, 54, 51, 0.15);
+    color: #da3633;
+    border: 1px solid #da3633;
+}
+
+.statusReady {
+    background-color: rgba(35, 134, 54, 0.15);
+    color: #3fb950;
+    border: 1px solid #238636;
+}
+
+.spinner {
+    margin-right: 5px;
+}
+
+.errorAlert {
+    color: var(--color-warning);
+    background-color: rgba(255, 165, 0, 0.1);
+    padding: var(--spacing-unit);
+    border-radius: 4px;
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+    font-size: 0.9em;
+}
+
+/* --- 实时区块列表 V12 稳定流修复保持 --- */
+.blocksCard {
+    grid-column: 2;
+}
+
+.liveFeedContainer {
+    height: 460px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.liveTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    margin-top: 5px;
+    min-width: 450px;
+}
+
+.liveTable th,
+.liveTable td {
+    padding: calc(var(--spacing-unit) * 0.8) 0;
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+    font-size: 0.8em;
+}
+
+.liveTable th {
+    color: #8b949e;
+    font-weight: normal;
+}
+
+.tableRow:hover {
+    background-color: rgba(78, 230, 114, 0.05);
+}
+
+/* --- 实时动画效果 --- */
+@keyframes block-flash {
+    0% {
+        background-color: transparent;
+        color: var(--color-primary);
+    }
+    50% {
+        background-color: rgba(78, 230, 114, 0.3);
+        color: white;
+    }
+    100% {
+        background-color: transparent;
+        color: var(--color-primary);
+    }
+}
+
+.flashEffect {
+    animation: block-flash 0.3s ease-out 1;
+}
+
+/* --- 通用数据元素增强 (保持) --- */
+.dataLabel {
+    color: #8b949e;
+    display: block;
+    margin-top: var(--spacing-unit);
+    font-size: 0.85em;
+    margin-bottom: 2px;
+}
+
+.dataValue {
+    color: white;
+    font-size: 1.2em;
+    font-weight: bold;
+    font-family: var(--font-mono);
+    line-height: 1.5;
+}
+
+.dataValueLg {
+    color: var(--color-primary);
+    font-size: 1.8em;
+}
+
+.smallInfo {
+    font-size: 0.8em;
+    color: #8b949e;
+    margin-top: 5px;
+}
+
+/* Slot Preview */
+.slotPreview {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.slotItem {
+    padding: 2px 6px;
+    background: #21262d;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-family: var(--font-mono);
+}
+
+.slotItemYou {
+    color: #4ee672;
+    border: 1px solid #238636;
+}
+
+/* Wallet Page */
+.walletCard {
+    background-color: var(--color-surface);
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    margin-top: 20px;
+}
+
+.walletCard h2 {
+    font-size: 1.3em;
+    color: var(--color-secondary);
+    margin-bottom: 15px;
+}
+
+.balanceDisplay {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: var(--color-warning);
+    margin: 20px 0;
+    font-family: var(--font-mono);
+}
+
+.walletAddressBox {
+    background-color: var(--color-background);
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    margin-top: 10px;
+}
+
+/* --- 响应式 (保持) --- */
+@media (max-width: 1200px) {
+    .sidebar {
+        width: 100%;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .appContainer {
+        flex-direction: column;
+    }
+
+    .dashboardGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .leftPanel {
+        grid-template-columns: 1fr;
+    }
+
+    .controlCard {
+        grid-column: 1 / 2;
+    }
+
+    .blocksCard {
+        grid-column: 1 / 2;
+    }
+
+    .mainContent {
+        padding: calc(var(--spacing-unit) * 2);
+    }
+
+    .walletDisplayBar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .walletDisplayBar span {
+        padding: 0;
+    }
+
+    .addressBar {
+        justify-content: flex-start;
+    }
+}
+

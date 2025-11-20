@@ -1,0 +1,51 @@
+.card {
+    background-color: #161b22;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+}
+
+.header {
+    font-size: 1.1em;
+    color: #58a6ff;
+    margin-top: 0;
+    margin-bottom: 15px;
+    border-bottom: 1px dashed #30363d;
+    padding-bottom: 10px;
+}
+
+.dataLabel {
+    color: #8b949e;
+    display: block;
+    margin-top: 10px;
+    font-size: 0.85em;
+    margin-bottom: 2px;
+}
+
+.dataValue {
+    color: white;
+    font-size: 1.2em;
+    font-weight: bold;
+    font-family: 'Consolas', 'Courier New', monospace;
+    line-height: 1.5;
+}
+
+.slotPreview {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.slotItem {
+    padding: 2px 6px;
+    background: #21262d;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.slotItemYou {
+    color: #4ee672;
+    border: 1px solid #238636;
+}
+

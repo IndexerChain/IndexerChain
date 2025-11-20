@@ -896,6 +896,22 @@ export class BrowserP2PNode implements P2PNode {
             if (Array.isArray(parsed)) return parsed;
           }
         } catch {}
+        // Background fetch ICE config from signaling HTTP to improve subsequent attempts
+        try {
+          const httpUrl = (this.currentBootstrapUrl || "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+          if (httpUrl && typeof fetch !== "undefined" && !(window as any).iceServersFetching) {
+            (window as any).iceServersFetching = true;
+            fetch(`${httpUrl}/ice-config`)
+              .then(r => r.ok ? r.json() : null)
+              .then(cfg => {
+                if (cfg && cfg.ok && Array.isArray(cfg.iceServers)) {
+                  (window as any).iceServers = cfg.iceServers;
+                }
+              })
+              .catch(() => {})
+              .finally(() => { try { delete (window as any).iceServersFetching; } catch {} });
+          }
+        } catch {}
         return defaults;
       })();
       const connection = new RTCPeerConnection({ iceServers });
@@ -975,6 +991,22 @@ export class BrowserP2PNode implements P2PNode {
         if (envVal) {
           const parsed = JSON.parse(envVal);
           if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+      // Background fetch ICE config from signaling HTTP to improve subsequent attempts
+      try {
+        const httpUrl = (this.currentBootstrapUrl || "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+        if (httpUrl && typeof fetch !== "undefined" && !(window as any).iceServersFetching) {
+          (window as any).iceServersFetching = true;
+          fetch(`${httpUrl}/ice-config`)
+            .then(r => r.ok ? r.json() : null)
+            .then(cfg => {
+              if (cfg && cfg.ok && Array.isArray(cfg.iceServers)) {
+                (window as any).iceServers = cfg.iceServers;
+              }
+            })
+            .catch(() => {})
+            .finally(() => { try { delete (window as any).iceServersFetching; } catch {} });
         }
       } catch {}
       return defaults;
@@ -1083,6 +1115,22 @@ export class BrowserP2PNode implements P2PNode {
           if (envVal) {
             const parsed = JSON.parse(envVal);
             if (Array.isArray(parsed)) return parsed;
+          }
+        } catch {}
+        // Background fetch ICE config from signaling HTTP to improve subsequent attempts
+        try {
+          const httpUrl = (this.currentBootstrapUrl || "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+          if (httpUrl && typeof fetch !== "undefined" && !(window as any).iceServersFetching) {
+            (window as any).iceServersFetching = true;
+            fetch(`${httpUrl}/ice-config`)
+              .then(r => r.ok ? r.json() : null)
+              .then(cfg => {
+                if (cfg && cfg.ok && Array.isArray(cfg.iceServers)) {
+                  (window as any).iceServers = cfg.iceServers;
+                }
+              })
+              .catch(() => {})
+              .finally(() => { try { delete (window as any).iceServersFetching; } catch {} });
           }
         } catch {}
         return defaults;
