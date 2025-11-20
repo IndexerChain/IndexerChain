@@ -332,12 +332,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             setTimeout(() => {
                 const local = chainContext.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || local;
-                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 1;
+                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
                 const step = 500;
-                // Start from whichever is larger: next local height or network's availableFromHeight
-                const startFrom = Math.max(local + 1, availableFrom);
-                // If network height is unknown or equal, still probe one window to kickstart sync
-                const target = Math.max(network, startFrom + step - 1);
+                // Fallback window near network tip to handle peer pruning (light node)
+                const fallbackFrom = Math.max(1, (network > 0 ? (network - step + 1) : 1));
+                // Prefer availableFromHeight if provided, otherwise probe near tip
+                const startFrom = Math.max(local + 1, availableFrom > 0 ? availableFrom : fallbackFrom);
+                // If network height未知，仍然向前探测一个窗口
+                const target = Math.max(network > 0 ? network : (startFrom + step - 1), startFrom + step - 1);
                 for (let from = startFrom; from <= target; from += step) {
                     const to = Math.min(from + step - 1, target);
                     // Broadcast range request
@@ -373,11 +375,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             try {
                 const local = chainContext.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 1;
+                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
                 if (peerCount > 0 && (network === 0 || local < network)) {
                     const step = 500;
-                    const startFrom = Math.max(local + 1, availableFrom);
-                    const target = Math.max(network, startFrom + step);
+                    const fallbackFrom = Math.max(1, (network > 0 ? (network - step + 1) : 1));
+                    const startFrom = Math.max(local + 1, availableFrom > 0 ? availableFrom : fallbackFrom);
+                    const target = Math.max(network > 0 ? network : (startFrom + step), startFrom + step);
                     for (let from = startFrom; from <= target; from += step) {
                         const to = Math.min(from + step - 1, target);
                         p2pNode.broadcast?.("REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
