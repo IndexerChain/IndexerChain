@@ -408,7 +408,6 @@ export class LocalStateCoordinator {
       // Same tip, verify state commitment
       const localStateCommitment = tip?.header.stateCommitment || "";
       if (message.stateCommitment && localStateCommitment && message.stateCommitment !== localStateCommitment) {
-        console.warn("[LocalStateSync] State commitment mismatch at same tip! Triggering resync...");
         this.triggerLocalFastSync();
       }
     }
@@ -516,11 +515,9 @@ export class LocalStateCoordinator {
       // If it's a timeout or no snapshot available, it's not a critical error
       // This is normal when there's no leader or leader doesn't have a snapshot yet
       if (errorMsg.includes("timeout") || errorMsg.includes("Snapshot request timeout") || errorMsg.includes("Failed to receive snapshot")) {
-        console.warn("[LocalStateSync] Local fast sync skipped:", errorMsg, "(this is normal if you're the only instance or leader has no snapshot)");
         this.syncInfo.syncStatus = "synced"; // Mark as synced since we'll sync via blocks instead
         this.syncInfo.error = undefined; // Clear error
       } else {
-        console.error("[LocalStateSync] Local fast sync failed:", error);
         this.syncInfo.syncStatus = "error";
         this.syncInfo.error = errorMsg;
       }
@@ -542,7 +539,6 @@ export class LocalStateCoordinator {
         this.pendingSnapshotRequests.delete(requestId);
         // Resolve with null instead of rejecting - this is not a critical error
         // It just means there's no leader available or leader doesn't have a snapshot yet
-        console.warn("[LocalStateSync] Snapshot request timeout - no leader response (this is normal if you're the only instance)");
         resolve(null);
       }, SYNC_TIMEOUT_MS);
       
@@ -572,14 +568,12 @@ export class LocalStateCoordinator {
       // Get latest snapshot
       const latestSnapshot = getLatestSnapshotMeta();
       if (!latestSnapshot) {
-        console.warn("[LocalStateSync] No snapshot available to share");
         return;
       }
       
       // Load snapshot data
       const snapshotData = await loadSnapshotByHeight(latestSnapshot.height);
       if (!snapshotData) {
-        console.warn("[LocalStateSync] Failed to load snapshot data");
         return;
       }
       
@@ -594,7 +588,6 @@ export class LocalStateCoordinator {
       
       this.broadcastChannel.postMessage(response);
     } catch (error) {
-      console.error("[LocalStateSync] Failed to handle snapshot request:", error);
     }
   }
 
@@ -689,7 +682,6 @@ export class LocalStateCoordinator {
             heightMatch: true,
           });
         } catch (error) {
-          console.error("[LocalStateSync] Consistency check callback error:", error);
         }
       });
       return isConsistent;
@@ -708,7 +700,6 @@ export class LocalStateCoordinator {
             heightMatch: true,
           });
         } catch (error) {
-          console.error("[LocalStateSync] Consistency check callback error:", error);
         }
       });
       return isConsistent;
@@ -742,7 +733,6 @@ export class LocalStateCoordinator {
           heightMatch,
         });
       } catch (error) {
-        console.error("[LocalStateSync] Consistency check callback error:", error);
       }
     });
     
@@ -751,15 +741,7 @@ export class LocalStateCoordinator {
       // If leaderEpoch is 0, it means we haven't received any state updates from leader yet,
       // which is normal during initialization or when there's no leader
       if (this.leaderEpoch > 0) {
-        console.warn("[LocalStateSync] Consistency check failed:", {
-          tipHashMatch,
-          heightMatch,
-          stateCommitmentMatch,
-          localEpoch,
-          leaderEpoch: this.leaderEpoch,
-          localTipHash: localTipHash.substring(0, 16),
-          leaderTipHash: this.leaderTipHash.substring(0, 16),
-        });
+        // State mismatch detected
       } else {
         // Leader hasn't reported state yet - this is normal, just log at debug level
         logger.debug("[LocalStateSync] Waiting for leader state update (leaderEpoch: 0)");
@@ -823,7 +805,6 @@ export class LocalStateCoordinator {
       try {
         cb(this.syncInfo);
       } catch (error) {
-        console.error("[LocalStateSync] State sync callback error:", error);
       }
     });
   }
@@ -854,7 +835,6 @@ export class LocalStateCoordinator {
       }
     } catch (error) {
       // localStorage might be full or disabled - ignore silently
-      console.debug("[LocalStateSync] Failed to save to localStorage:", error);
     }
   }
 
@@ -885,7 +865,6 @@ export class LocalStateCoordinator {
         }
       }
     } catch (error) {
-      console.debug("[LocalStateSync] Failed to load from localStorage:", error);
     }
   }
 
@@ -918,7 +897,6 @@ export class LocalStateCoordinator {
         }
       }
     } catch (error) {
-      console.debug("[LocalStateSync] Failed to handle storage event:", error);
     }
   }
 
@@ -934,7 +912,6 @@ export class LocalStateCoordinator {
         return JSON.parse(stored);
       }
     } catch (error) {
-      console.debug("[LocalStateSync] Failed to load recent headers from localStorage:", error);
     }
     return null;
   }

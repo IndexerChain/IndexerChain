@@ -64,7 +64,6 @@ export function RewardBreakdownCard({
           const quorumStatus = quorumManager.getQuorumStatus();
           quorumScore = quorumStatus.totalScore > 0 ? Math.max(quorumStatus.totalScore, 80) : 100;
         } catch (e) {
-          console.debug("[RewardBreakdownCard] QuorumManager not available");
         }
 
         // Session duration
@@ -116,7 +115,6 @@ export function RewardBreakdownCard({
             ipSharingWeight = ipSharingTracker.getSharingWeight(ipHash, deviceId);
           }
         } catch (e) {
-          console.debug("[RewardBreakdownCard] Failed to calculate IP sharing weight");
         }
 
         // Final miner reward (after IP sharing)
@@ -178,7 +176,6 @@ export function RewardBreakdownCard({
           activeBoosterDays: activeBooster.getConsecutiveDays(),
         });
       } catch (error) {
-        console.error("[RewardBreakdownCard] Failed to calculate reward:", error);
         setRewardData(null);
       }
     };

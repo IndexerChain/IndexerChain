@@ -177,7 +177,6 @@ export function MiningReadinessReasons({
         reasonItems.sort((a, b) => a.priority - b.priority);
         setReasons(reasonItems.slice(0, 3));
       } catch (error) {
-        console.error("[MiningReadinessReasons] Failed to update reasons:", error);
         setReasons([]);
       } finally {
         setLoading(false);

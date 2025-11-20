@@ -87,7 +87,6 @@ export function MiningStatusBar({
           }
         }
       } catch (error) {
-        console.error("[MiningStatusBar] Failed to check status:", error);
       }
     };
 

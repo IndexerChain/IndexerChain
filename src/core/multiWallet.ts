@@ -148,9 +148,7 @@ export class MultiWalletStore {
         this.keyPairs.set(walletId, privateKey);
 
         this.saveToStorage();
-        console.log("[Phase 24] Migrated legacy wallet to multi-wallet structure");
       } catch (error) {
-        console.warn("[Phase 24] Failed to migrate legacy wallet:", error);
       }
     }
   }
@@ -339,17 +337,14 @@ export class MultiWalletStore {
               );
               // Store in memory for future use
               this.keyPairs.set(walletId, privateKey);
-              console.log(`[MultiWallet] Loaded private key for wallet ${walletId} from legacy storage`);
             }
           } catch (error) {
-            console.warn(`[MultiWallet] Failed to load private key from legacy storage for wallet ${walletId}:`, error);
           }
         }
       }
     }
 
     if (!privateKey) {
-      console.warn(`[MultiWallet] Private key not available for wallet ${walletId}. Wallet may need to be re-imported.`);
       return null;
     }
 

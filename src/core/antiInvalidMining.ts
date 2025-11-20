@@ -82,13 +82,11 @@ export class AntiInvalidMining {
 
     // If tip hash changed, we're mining on an old block
     if (tip.hash !== this.currentMiningEpoch.tipHash) {
-      console.warn(`[Phase 31] Tip hash changed during mining. Old: ${this.currentMiningEpoch.tipHash.substring(0, 16)}..., New: ${tip.hash.substring(0, 16)}...`);
       return true;
     }
 
     // If height increased, we're mining on an old block
     if (tip.header.height > this.currentMiningEpoch.height) {
-      console.warn(`[Phase 31] Tip height increased during mining. Old: ${this.currentMiningEpoch.height}, New: ${tip.header.height}`);
       return true;
     }
 
@@ -151,7 +149,6 @@ export class AntiInvalidMining {
       // We'll validate it's correct in blockBuilder, so just check it exists
       if (!candidateBlock.header.stateCommitment) {
         // This is a warning, not an error, as state commitment might be computed later
-        console.warn("[Phase 31] Block header missing stateCommitment");
       }
     }
 
@@ -181,14 +178,12 @@ export class AntiInvalidMining {
   validateNonceRange(nonceStart: bigint, nonceEnd: bigint, delegatorSignature?: string): boolean {
     // Check 1: Nonce range must be valid
     if (nonceStart >= nonceEnd) {
-      console.error("[Phase 31] Invalid nonce range: start >= end");
       return false;
     }
 
     // Check 2: Nonce range must not be too large (prevent abuse)
     const maxRange = BigInt(Number.MAX_SAFE_INTEGER);
     if (nonceEnd - nonceStart > maxRange) {
-      console.error("[Phase 31] Nonce range too large");
       return false;
     }
 

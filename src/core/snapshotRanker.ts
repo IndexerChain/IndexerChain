@@ -180,7 +180,6 @@ export class SnapshotRanker {
         }
       } catch (error) {
         // If reputation manager not available, use default
-        console.warn("[Phase 21] Could not access peer reputation manager:", error);
       }
     }
     

@@ -43,7 +43,6 @@ export function loadAllSnapshotMeta(): SnapshotMeta[] {
     // Sort by height (ascending)
     return metas.sort((a, b) => a.height - b.height);
   } catch (error) {
-    console.error("Failed to load snapshot metadata:", error);
     return [];
   }
 }
@@ -61,7 +60,6 @@ export function saveAllSnapshotMeta(metas: SnapshotMeta[]): void {
     const sorted = metas.sort((a, b) => a.height - b.height);
     localStorage.setItem(SNAPSHOTS_META_KEY, JSON.stringify(sorted));
   } catch (error) {
-    console.error("Failed to save snapshot metadata:", error);
   }
 }
 
@@ -103,9 +101,7 @@ export async function loadSnapshotByHeight(height: number): Promise<SnapshotData
           full: true,
         };
       } catch (error) {
-        console.error(`[Phase 13] Failed to decompress snapshot at height ${height}:`, error);
         // Phase 13: Auto-repair corrupted snapshot
-        console.warn(`[Phase 13] Snapshot at height ${height} is corrupted (decompression failed), deleting...`);
         deleteSnapshotByHeight(height);
         return null;
       }
@@ -122,9 +118,7 @@ export async function loadSnapshotByHeight(height: number): Promise<SnapshotData
           full: true, // Legacy compressed snapshots are treated as full
         };
       } catch (error) {
-        console.error(`[Phase 13] Failed to decompress snapshot at height ${height}:`, error);
         // Phase 13: Auto-repair corrupted snapshot
-        console.warn(`[Phase 13] Snapshot at height ${height} is corrupted (decompression failed), deleting...`);
         deleteSnapshotByHeight(height);
         return null;
       }
@@ -136,7 +130,6 @@ export async function loadSnapshotByHeight(height: number): Promise<SnapshotData
       full: true, // Legacy snapshots are treated as full
     };
   } catch (error) {
-    console.error(`Failed to load snapshot at height ${height}:`, error);
     return null;
   }
 }
@@ -157,14 +150,12 @@ export async function reconstructStateFromSnapshots(
   // Find nearest full snapshot
   const fullSnapMeta = findNearestFullSnapshot(targetHeight);
   if (!fullSnapMeta) {
-    console.warn(`[Phase 12] No full snapshot found before height ${targetHeight}`);
     return null;
   }
 
   // Load full snapshot
   const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
   if (!fullSnap || !fullSnap.indexState) {
-    console.error(`[Phase 12] Failed to load full snapshot at height ${fullSnapMeta.height}`);
     return null;
   }
 
@@ -177,7 +168,6 @@ export async function reconstructStateFromSnapshots(
   for (const deltaMeta of deltaMetas) {
     const deltaSnap = await loadSnapshotByHeight(deltaMeta.height);
     if (!deltaSnap || !deltaSnap.delta) {
-      console.warn(`[Phase 12] Failed to load delta snapshot at height ${deltaMeta.height}`);
       continue;
     }
 
@@ -185,7 +175,6 @@ export async function reconstructStateFromSnapshots(
       // Apply delta operations to reconstruct state
       await applyDelta(deltaSnap.delta, applyOperation);
     } catch (error) {
-      console.error(`[Phase 12] Failed to apply delta at height ${deltaMeta.height}:`, error);
       return null;
     }
   }
@@ -222,7 +211,6 @@ export function loadSnapshotByHeightSync(height: number): SnapshotData | null {
     // Legacy format
     return parsed;
   } catch (error) {
-    console.error(`Failed to load snapshot at height ${height}:`, error);
     return null;
   }
 }
@@ -273,7 +261,6 @@ export async function saveSnapshot(
     try {
       compressedData = await compressSnapshot(indexStateSnapshot);
     } catch (error) {
-      console.error(`Failed to compress snapshot at height ${height}:`, error);
       throw error;
     }
 
@@ -317,7 +304,6 @@ export async function saveSnapshot(
     try {
       compressedDelta = await computeDelta(deltaOperations);
     } catch (error) {
-      console.error(`Failed to compress delta at height ${height}:`, error);
       throw error;
     }
 
@@ -341,7 +327,6 @@ export async function saveSnapshot(
       
       // Verify that stateCommitment matches stateHash
       if (stateHash !== stateCommitment) {
-        console.warn(`[Phase 15] State commitment mismatch at height ${height}: stateHash=${stateHash.substring(0, 16)}..., stateCommitment=${stateCommitment.substring(0, 16)}...`);
         // Still save, but log warning
       }
     }
@@ -358,7 +343,6 @@ export async function saveSnapshot(
       }
     }
   } catch (error) {
-    console.error(`[Phase 13] Failed to compute snapshot hash at height ${height}:`, error);
     // Don't fail snapshot creation if hash computation fails
   }
 
@@ -370,7 +354,6 @@ export async function saveSnapshot(
     } catch (error) {
       // Handle QuotaExceededError - localStorage is full
       if (error instanceof DOMException && error.name === "QuotaExceededError") {
-        console.error(`localStorage quota exceeded when saving snapshot at height ${height}! Attempting to prune old snapshots...`);
         // Try to prune old snapshots and retry
         const allMetas = loadAllSnapshotMeta();
         if (allMetas.length > 1) {
@@ -383,9 +366,7 @@ export async function saveSnapshot(
             try {
               const oldKey = `${SNAPSHOT_DATA_PREFIX}${oldMeta.height}`;
               localStorage.removeItem(oldKey);
-              console.log(`Removed old snapshot at height ${oldMeta.height} to free space`);
             } catch (removeError) {
-              console.error(`Failed to remove old snapshot at height ${oldMeta.height}:`, removeError);
             }
           }
           
@@ -396,17 +377,13 @@ export async function saveSnapshot(
           try {
             const key = `${SNAPSHOT_DATA_PREFIX}${height}`;
             localStorage.setItem(key, JSON.stringify(snapshotData));
-            console.log(`Successfully saved snapshot after pruning old snapshots`);
           } catch (retryError) {
-            console.error(`Failed to save snapshot even after pruning:`, retryError);
             throw new Error(`Failed to save snapshot: localStorage quota exceeded even after pruning`);
           }
         } else {
-          console.error(`Cannot prune snapshots: not enough snapshots to remove`);
           throw new Error(`Failed to save snapshot: localStorage quota exceeded`);
         }
       } else {
-        console.error(`Failed to save snapshot at height ${height}:`, error);
         throw error;
       }
     }
@@ -538,13 +515,11 @@ export async function recompressSnapshot(height: number): Promise<boolean> {
       };
       
       localStorage.setItem(key, JSON.stringify(newSnapshotData));
-      console.log(`[Phase 11] Recompressed snapshot at height ${height}`);
       return true;
     }
     
     return false;
   } catch (error) {
-    console.error(`Failed to recompress snapshot at height ${height}:`, error);
     return false;
   }
 }
@@ -601,7 +576,6 @@ export async function getSnapshotSizeInfo(height: number): Promise<{
     
     return null;
   } catch (error) {
-    console.error(`Failed to get snapshot size info at height ${height}:`, error);
     return null;
   }
 }

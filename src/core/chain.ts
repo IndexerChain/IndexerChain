@@ -99,10 +99,8 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     try {
       const recompressed = await recompressAllSnapshots();
       if (recompressed > 0) {
-        console.log(`[Phase 11] Auto-upgraded ${recompressed} legacy snapshot(s) to compressed format`);
       }
     } catch (error) {
-      console.warn("[Phase 11] Failed to auto-upgrade snapshots:", error);
     }
   });
 
@@ -118,9 +116,6 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
       if (snapData) {
         if (snapData.full === false && snapData.delta) {
           // Delta snapshot - need to reconstruct from full + deltas
-          console.log(
-            `[Phase 12] Latest snapshot is delta, reconstructing from full snapshot + deltas`
-          );
           
           // Find nearest full snapshot
           const fullSnapMeta = findNearestFullSnapshot(latestSnap.height);
@@ -150,12 +145,8 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
               }
               
               startHeight = latestSnap.height + 1;
-              console.log(
-                `[Phase 12] Reconstructed state from full snapshot (${fullSnapMeta.height}) + ${deltaMetas.length} delta(s), replaying from height ${startHeight}`
-              );
             }
           } else {
-            console.warn(`[Phase 12] No full snapshot found, falling back to full rebuild`);
             startHeight = 0;
           }
         } else {
@@ -169,16 +160,10 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
             currentInternalState.set(ns, newMap);
           }
           startHeight = latestSnap.height + 1;
-          console.log(
-            `[Phase 12] Using full snapshot at height ${latestSnap.height}, replaying from height ${startHeight}`
-          );
         }
       }
     } else {
       // Snapshot is invalid (block missing or hash mismatch)
-      console.warn(
-        `[Phase 12] Snapshot at height ${latestSnap.height} is invalid, clearing all snapshots`
-      );
       clearAllSnapshots();
       startHeight = 0;
     }
@@ -223,14 +208,10 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
             }
             
             startHeight = updatedSnap.height + 1;
-            console.log(
-              `[Phase 14] Using remote snapshot at height ${updatedSnap.height}, replaying from height ${startHeight}`
-            );
           }
         }
       }
     } catch (error) {
-      console.warn("[Phase 14] Remote snapshot sync failed, falling back to local initialization:", error);
       // Continue with local initialization
     }
   }
@@ -273,10 +254,6 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
           // Enhanced error handling with better error messages
           const errorMsg = error instanceof Error ? error.message : String(error);
           if (errorMsg.includes("Insufficient balance")) {
-            console.error(
-              `[Chain Init] Balance error at block ${h}: ${errorMsg}\n` +
-              `This may indicate corrupted chain state or snapshot inconsistency.`
-            );
             // Re-throw with more context
             throw new Error(
               `Chain initialization failed at block ${h}: ${errorMsg}\n` +
@@ -290,13 +267,9 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
         // Block missing - in light node mode this is expected for old blocks
         if (h < minHeight) {
           // This block was pruned, which is expected in light node mode
-          console.log(
-            `[Phase 10] Block at height ${h} was pruned (light node mode), continuing from ${minHeight}`
-          );
           continue;
         } else {
           // Block should exist but doesn't - this is an error
-          console.error(`[Phase 10] Block at height ${h} is missing unexpectedly`);
           // Try to continue with next block
           continue;
         }
@@ -305,9 +278,6 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     
     // If we're in light node mode and started from a snapshot, log it
     if (latestSnap && lightNodeWindow > 0) {
-      console.log(
-        `[Phase 10] Light node mode: Replayed blocks from ${actualStartHeight} to ${maxReplayHeight} (window: ${lightNodeWindow})`
-      );
     }
   }
 
@@ -331,18 +301,10 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
 
         const isValid = await verifySnapshotIntegrity(snapshot);
         if (!isValid) {
-          console.warn(
-            `[Phase 13] Latest snapshot at height ${latestMeta.height} failed integrity check, deleting...`
-          );
-          const fallbackHeight = await handleCorruptedSnapshot(latestMeta.height);
-          console.log(
-            `[Phase 13] Snapshot deleted. Next startup will use snapshot at height ${fallbackHeight} or replay from genesis.`
-          );
+          await handleCorruptedSnapshot(latestMeta.height);
         } else {
-          console.log(`[Phase 13] Snapshot at height ${latestMeta.height} verified successfully`);
         }
       } catch (error) {
-        console.warn("[Phase 13] Background snapshot verification failed:", error);
         // Don't throw - this is non-critical
       }
     });
@@ -456,7 +418,6 @@ export async function appendMinedBlock(
     // Block already exists - check if it's the same block
     if (existingBlock.hash === block.hash) {
       // Same block - already appended, return success
-      console.log(`[appendMinedBlock] Block ${block.header.height} already exists with same hash, skipping append`);
       return { success: true };
     } else {
       // Different block at same height - this is a fork, reject
@@ -473,7 +434,6 @@ export async function appendMinedBlock(
   // Check if tip has advanced beyond this block (race condition: another block was appended)
   if (prevBlock && prevBlock.header.height >= block.header.height) {
     // Tip has advanced - this block is stale
-    console.log(`[appendMinedBlock] Block ${block.header.height} is stale (tip is now at ${prevBlock.header.height}), skipping append`);
     return { 
       success: false, 
       error: `Block ${block.header.height} is stale (tip is now at ${prevBlock.header.height})` 
@@ -494,7 +454,6 @@ export async function appendMinedBlock(
     const currentTip = context.storage.getTip();
     if (currentTip && currentTip.header.height >= block.header.height) {
       // Tip has advanced - this block is stale
-      console.log(`[appendMinedBlock] Block ${block.header.height} is stale (tip is now at ${currentTip.header.height}), skipping append`);
       return { 
         success: false, 
         error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})` 
@@ -506,7 +465,6 @@ export async function appendMinedBlock(
     if (existingBlock) {
       if (existingBlock.hash === block.hash) {
         // Same block - already appended, return success
-        console.log(`[appendMinedBlock] Block ${block.header.height} already exists with same hash, skipping append`);
         return { success: true };
       } else {
         // Different block at same height - this is a fork, reject
@@ -584,7 +542,6 @@ export async function appendMinedBlock(
           // Clear change log after full snapshot
           context.indexState.clearChangeLog();
           context.indexState.beginRecording();
-          console.log(`[Phase 12] Full compressed snapshot created at height ${height}`);
         } else {
           // Delta snapshot
           // Get operations since last snapshot
@@ -595,19 +552,14 @@ export async function appendMinedBlock(
             // Clear change log after saving delta
             context.indexState.clearChangeLog();
             context.indexState.beginRecording();
-            console.log(
-              `[Phase 12] Delta compressed snapshot created at height ${height} (${deltaOperations.length} operations)`
-            );
           } else {
             // No changes, skip delta snapshot
-            console.log(`[Phase 12] No changes since last snapshot, skipping delta at height ${height}`);
           }
         }
         
         // Prune old snapshots
         pruneOldSnapshots(maxSnapshotCount);
       } catch (error) {
-        console.error(`[Phase 12] Failed to create snapshot at height ${height}:`, error);
         // Don't fail block append if snapshot fails
       }
     }
@@ -741,7 +693,6 @@ export async function appendMinedBlock(
       const existingBlock = context.storage.getBlockByHeight(block.header.height);
       if (existingBlock && existingBlock.hash === block.hash) {
         // Same block - already appended, return success (this is normal in cluster mining)
-        console.log(`[appendMinedBlock] Block ${block.header.height} was appended by another worker, skipping duplicate append`);
         return { success: true };
       }
       
@@ -749,7 +700,6 @@ export async function appendMinedBlock(
       const currentTip = context.storage.getTip();
       if (currentTip && currentTip.header.height > block.header.height) {
         // Tip has advanced - this block is stale
-        console.log(`[appendMinedBlock] Block ${block.header.height} is stale (tip is now at ${currentTip.header.height}), skipping append`);
         return { 
           success: false, 
           error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})` 

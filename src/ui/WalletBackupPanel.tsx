@@ -94,10 +94,7 @@ export function WalletBackupPanel({
       // Verify exported address matches current address
       const exportedAddress = await getOrCreateNodeAddress();
       if (exportedAddress !== currentAddress) {
-        console.warn("[WalletBackup] Address mismatch after export:", {
-          currentAddress,
-          exportedAddress,
-        });
+        // Address mismatch after export
       }
       
       const filename = `indexerchain-wallet-backup-${Date.now()}.idcbackup`;

@@ -293,6 +293,82 @@ export class SignalingRoom {
         );
       }
     }
+    
+    // Phase 48: Handle seeding bootstrap blocks (admin/dev only)
+    if (url.pathname === '/seed-bootstrap-blocks' && request.method === 'POST') {
+      try {
+        console.log(`[SignalingRoom] seed-bootstrap-blocks request received, path: ${url.pathname}`);
+        // Optional simple token protection
+        const adminToken = this.env?.ADMIN_TOKEN;
+        const auth = request.headers.get('authorization') || '';
+        console.log(`[SignalingRoom] Admin token check: hasToken=${!!adminToken}, auth=${auth.substring(0, 20)}...`);
+        if (adminToken && auth !== `Bearer ${adminToken}`) {
+          return new Response(JSON.stringify({ ok: false, reason: 'UNAUTHORIZED' }), {
+            status: 401,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          });
+        }
+        
+        const body = await request.json();
+        const blocks = Array.isArray(body?.blocks) ? body.blocks : [];
+        if (blocks.length === 0) {
+          return new Response(JSON.stringify({ ok: false, reason: 'NO_BLOCKS' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          });
+        }
+        
+        let stored = 0;
+        await this.loadBootstrapBlocksMeta();
+        for (const block of blocks) {
+          const height = block?.header?.height;
+          if (typeof height !== 'number') continue;
+          if (height <= 0 || height > this.bootstrapBlocksMeta.maxStoredHeight) continue;
+          const key = `block:${height}`;
+          await this.state.storage.put(key, block);
+          // Update meta
+          if (this.bootstrapBlocksMeta.availableFromHeight === 0) {
+            this.bootstrapBlocksMeta.availableFromHeight = height;
+          } else {
+            this.bootstrapBlocksMeta.availableFromHeight = Math.min(this.bootstrapBlocksMeta.availableFromHeight, height);
+          }
+          this.bootstrapBlocksMeta.availableToHeight = Math.max(this.bootstrapBlocksMeta.availableToHeight, height);
+          stored++;
+        }
+        await this.state.storage.put('bootstrapBlocksMeta', this.bootstrapBlocksMeta);
+        
+        return new Response(JSON.stringify({
+          ok: true,
+          stored,
+          availableFromHeight: this.bootstrapBlocksMeta.availableFromHeight,
+          availableToHeight: this.bootstrapBlocksMeta.availableToHeight,
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } catch (error) {
+        console.error(`[SignalingRoom] Error handling seed-bootstrap-blocks:`, error);
+        return new Response(
+          JSON.stringify({ ok: false, reason: 'INTERNAL_ERROR', error: error instanceof Error ? error.message : String(error) }),
+          {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          }
+        );
+      }
+    }
 
     // Handle WebSocket upgrade
     const upgradeHeader = request.headers.get('Upgrade');
@@ -698,6 +774,7 @@ export { ShadowSession };
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    console.log(`[Worker] Request: ${request.method} ${url.pathname}`);
 
     // CORS headers for all responses
     const corsHeaders = {
@@ -849,6 +926,43 @@ export default {
             } 
           }
         );
+      }
+    }
+    
+    // Phase 48: Admin seeding endpoint - forward to SignalingRoom (rewrite path)
+    if (url.pathname === '/admin/seed-bootstrap-blocks' && request.method === 'POST') {
+      try {
+        console.log(`[Worker] Admin seed-bootstrap-blocks request received`);
+        const roomId = env.SIGNALING_ROOM.idFromName('main');
+        const room = env.SIGNALING_ROOM.get(roomId);
+        // Read body first
+        const body = await request.clone().text();
+        // Rewrite path for DO - create new request with correct URL
+        const newUrl = new URL('/seed-bootstrap-blocks', request.url);
+        const seedRequest = new Request(newUrl.toString(), { 
+          method: 'POST',
+          headers: request.headers,
+          body: body,
+        });
+        console.log(`[Worker] Forwarding to SignalingRoom: ${seedRequest.url}, body length: ${body.length}`);
+        const response = await room.fetch(seedRequest);
+        // Ensure CORS
+        const newHeaders = new Headers(response.headers);
+        Object.entries(corsHeaders).forEach(([k, v]) => newHeaders.set(k, String(v)));
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: newHeaders,
+        });
+      } catch (error) {
+        console.error(`[Worker] Error forwarding seed-bootstrap-blocks:`, error);
+        return new Response(JSON.stringify({ ok: false, reason: 'INTERNAL_ERROR', error: error instanceof Error ? error.message : String(error) }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        });
       }
     }
 

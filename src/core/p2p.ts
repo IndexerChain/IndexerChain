@@ -179,13 +179,11 @@ export class BrowserP2PNode implements P2PNode {
         this.ws.onopen = () => {
           clearTimeout(timeout);
           const connectLog = `[P2P] ✅ Connected to signaling server: ${bootstrapUrl}`;
-          console.log(connectLog); // Force console output for debugging
           logger.info(connectLog);
           this.isConnected = true;
 
           // Send join message
           const joinLog = `[P2P] 📤 Sending JOIN message: nodeId=${this.nodeId.substring(0, 16)}...`;
-          console.log(joinLog); // Force console output for debugging
           logger.info(joinLog);
           this.sendSignalingMessage({
             type: "join",
@@ -209,7 +207,6 @@ export class BrowserP2PNode implements P2PNode {
           try {
             const message = JSON.parse(event.data);
             const msgLog = `[P2P] 📨 Received signaling message: type=${message.type}`;
-            console.log(msgLog); // Force console output for debugging
             logger.info(msgLog);
             logger.debug(`[P2P] Received signaling message:`, message.type, message);
             
@@ -547,7 +544,6 @@ export class BrowserP2PNode implements P2PNode {
       case "JOIN_ACK":
         // Phase 37: Handle JOIN_ACK with rootTip
         const joinAckLog = `[P2P] 🔔 Received JOIN_ACK: peers=${message.peers?.length || 0}, rootTip.height=${message.rootTip?.latestHeight || 0}, hasHeader=${!!message.rootTip?.latestHeader}, recentHeaders=${message.rootTip?.recentHeaders?.length || 0}`;
-        console.log(joinAckLog); // Force console output for debugging
         logger.info(joinAckLog);
         logger.debug(`[P2P] Received JOIN_ACK:`, {
           peerCount: message.peers?.length || 0,
@@ -609,12 +605,10 @@ export class BrowserP2PNode implements P2PNode {
         // Handle rootTip - forward to bootstrap sync manager
         if (message.rootTip) {
           const rootTipLog = `[P2P] 📦 JOIN_ACK contains rootTip: height=${message.rootTip.latestHeight}, hasHeader=${!!message.rootTip.latestHeader}, recentHeaders=${message.rootTip.recentHeaders?.length || 0}`;
-          console.log(rootTipLog); // Force console output for debugging
           logger.info(rootTipLog);
           
           if (message.rootTip.latestHeight > 0) {
             const validHeightLog = `[P2P] ✅ RootTip has valid height, forwarding to bootstrap handlers`;
-            console.log(validHeightLog); // Force console output for debugging
             logger.info(validHeightLog);
           }
           

@@ -79,7 +79,6 @@ export function NetworkHealthPanel({
           }
         }
       } catch (error) {
-        console.error("[NetworkHealthPanel] Failed to get readiness info:", error);
       } finally {
         setLoading(false);
       }

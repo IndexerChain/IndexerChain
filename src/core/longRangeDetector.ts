@@ -61,15 +61,13 @@ export class LongRangeDetector {
     
     // Check every 5 minutes
     this.checkInterval = setInterval(() => {
-      this.performCheckpointCheck().catch(err => {
-        console.error("[Phase 31] Checkpoint check failed:", err);
+      this.performCheckpointCheck().catch(_err => {
       });
     }, 5 * 60 * 1000);
     
     // Initial check after 10 seconds
     setTimeout(() => {
-      this.performCheckpointCheck().catch(err => {
-        console.error("[Phase 31] Initial checkpoint check failed:", err);
+      this.performCheckpointCheck().catch(_err => {
       });
     }, 10000);
   }
@@ -152,13 +150,11 @@ export class LongRangeDetector {
     // Get local checkpoint state commitment
     const checkpointBlock = this.chainContext.storage.getBlockByHeight(checkpointHeight);
     if (!checkpointBlock) {
-      console.warn(`[Phase 31] Local checkpoint block at height ${checkpointHeight} not found`);
       return;
     }
 
     const localStateCommitment = checkpointBlock.header.stateCommitment;
     if (!localStateCommitment) {
-      console.warn(`[Phase 31] Local checkpoint block at height ${checkpointHeight} has no stateCommitment`);
       return;
     }
 
@@ -218,13 +214,6 @@ export class LongRangeDetector {
     }
 
     // Divergence detected!
-    console.warn(`[Phase 31] Divergence detected at checkpoint height ${checkpointHeight}:`, {
-      localStateCommitment: localStateCommitment.substring(0, 16) + "...",
-      majorityStateCommitment: majorityStateCommitment.substring(0, 16) + "...",
-      majorityCount,
-      totalResponses: responses.length,
-    });
-
     const result: DivergenceResult = {
       diverged: true,
       localHeight: checkpointHeight,

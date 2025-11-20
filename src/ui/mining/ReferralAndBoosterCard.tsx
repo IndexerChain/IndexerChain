@@ -111,7 +111,6 @@ export function ReferralAndBoosterCard({
           isActiveToday,
         });
       } catch (error) {
-        console.error("[ReferralAndBoosterCard] Failed to update data:", error);
       }
     };
 
@@ -246,7 +245,6 @@ export function ReferralAndBoosterCard({
                             isActiveToday: true,
                           });
                         } catch (error) {
-                          console.error("[ReferralAndBoosterCard] Failed to check in:", error);
                         } finally {
                           setIsCheckingIn(false);
                         }

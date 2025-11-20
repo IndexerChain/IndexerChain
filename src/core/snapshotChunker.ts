@@ -148,7 +148,6 @@ export class SnapshotAssembler {
     // Verify checksum
     const computedChecksum = computeChunkChecksum(chunk.data);
     if (computedChecksum !== chunk.checksum) {
-      console.warn(`[Phase 20] Chunk ${chunk.chunkIndex} checksum mismatch`);
       return false;
     }
     

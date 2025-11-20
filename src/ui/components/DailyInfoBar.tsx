@@ -82,7 +82,6 @@ export function DailyInfoBar({
         const code = generateReferralCode(nodeAddress as Address);
         setInviteCode(code);
       } catch (error) {
-        console.error("[DailyInfoBar] Failed to update data:", error);
       }
     };
 
@@ -108,7 +107,6 @@ export function DailyInfoBar({
         isActiveToday: true,
       });
     } catch (error) {
-      console.error("[DailyInfoBar] Failed to check in:", error);
     } finally {
       setIsCheckingIn(false);
     }
@@ -123,7 +121,6 @@ export function DailyInfoBar({
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
     } catch (error) {
-      console.error("[DailyInfoBar] Failed to copy invite code:", error);
     }
   };
 

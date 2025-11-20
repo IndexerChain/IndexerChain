@@ -114,13 +114,11 @@ export async function verifySnapshotIntegrity(
       
       const fullSnapMeta = findNearestFullSnapshot(snapshot.meta.height);
       if (!fullSnapMeta) {
-        console.warn(`[SnapshotVerify] Failed to find full snapshot for delta at height ${snapshot.meta.height}`);
         return false;
       }
       
       const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
       if (!fullSnap || !fullSnap.indexState) {
-        console.warn(`[SnapshotVerify] Failed to load full snapshot at height ${fullSnapMeta.height}`);
         return false;
       }
       
@@ -141,7 +139,6 @@ export async function verifySnapshotIntegrity(
     } else {
       // Full snapshot - use indexState directly
       if (!snapshot.indexState) {
-        console.warn(`[SnapshotVerify] Missing indexState in snapshot at height ${snapshot.meta.height}`);
         return false;
       }
       fullStateSnapshot = snapshot.indexState;
@@ -169,7 +166,6 @@ export async function verifySnapshotIntegrity(
     
     return isValid;
   } catch (error) {
-    console.error(`[SnapshotVerify] Error verifying snapshot at height ${snapshot.meta.height}:`, error);
     return false;
   }
 }
@@ -198,7 +194,6 @@ export async function verifySnapshotByHeight(height: number): Promise<boolean> {
  * @returns Height of nearest valid snapshot, or 0 if none found
  */
 export async function handleCorruptedSnapshot(height: number): Promise<number> {
-  console.warn(`[SnapshotVerify] Snapshot at height ${height} is corrupted, deleting...`);
   
   // Delete the corrupted snapshot
   await deleteSnapshotByHeight(height);
@@ -249,15 +244,12 @@ export async function verifyOneSnapshotInBackground(): Promise<boolean> {
   try {
     const isValid = await verifySnapshotIntegrity(snapshot);
     if (isValid) {
-      console.log(`[Phase 13] Background verification: Snapshot at height ${targetMeta.height} is valid`);
       return true;
     } else {
-      console.warn(`[Phase 13] Background verification: Snapshot at height ${targetMeta.height} is corrupted`);
       await handleCorruptedSnapshot(targetMeta.height);
       return false;
     }
   } catch (error) {
-    console.error(`[Phase 13] Background verification error for snapshot at height ${targetMeta.height}:`, error);
     return false;
   }
 }

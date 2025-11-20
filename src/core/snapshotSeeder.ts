@@ -164,7 +164,6 @@ export class SnapshotSeeder {
     const allMetas = loadAllSnapshotMeta();
     const meta = allMetas.find(m => m.height === height);
     if (!meta) {
-      console.warn(`[Phase 20] No metadata found for snapshot ${height}`);
       return;
     }
     

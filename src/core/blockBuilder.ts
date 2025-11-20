@@ -348,7 +348,6 @@ export async function buildCandidateBlock(
       : 100; // Default if no quorum data
   } catch (e) {
     // QuorumManager not available, use default
-    console.debug("[Phase 41] QuorumManager not available, using default quorumScore:", quorumScore);
   }
 
   // Phase 44: Get IP sharing weight
@@ -375,7 +374,6 @@ export async function buildCandidateBlock(
       ipSharingWeight = ipSharingTracker.getSharingWeight(ipHash, deviceId);
     }
   } catch (e) {
-    console.debug("[Phase 44] Failed to calculate IP sharing weight, using default:", e);
     // Continue with default weight (1.0)
   }
 
@@ -449,7 +447,6 @@ export async function buildCandidateBlock(
   } catch (error) {
     // Production: Only log errors in development
     if (process.env.NODE_ENV === 'development') {
-      console.error(`[Phase 15] Failed to compute stateCommitment:`, error);
     }
     // Continue without stateCommitment for backward compatibility
   }

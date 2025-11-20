@@ -53,7 +53,6 @@ function get(t: Translations, path: string): string {
   for (const part of parts) {
     value = value?.[part];
     if (value === undefined) {
-      console.warn(`Translation key not found: ${path}`);
       return path;
     }
   }

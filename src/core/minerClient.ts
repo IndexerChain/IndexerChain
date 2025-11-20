@@ -176,7 +176,6 @@ export class MinerClient {
       this.worker.onerror = (error) => {
         // Production: Only log errors in development
         if (process.env.NODE_ENV === 'development') {
-          console.error("[MinerClient] Worker error:", error);
         }
         // Notify stopped handlers with error reason
         this.isMining = false;
@@ -200,7 +199,6 @@ export class MinerClient {
     } catch (error) {
       // Production: Only log errors in development
       if (process.env.NODE_ENV === 'development') {
-        console.error("Failed to create miner worker:", error);
       }
       // Don't throw - allow retry later
       this.worker = null;
@@ -247,7 +245,6 @@ export class MinerClient {
           } catch (error) {
             // Production: Only log errors in development
             if (process.env.NODE_ENV === 'development') {
-              console.error("[MinerClient] Error in progress handler:", error);
             }
           }
         });

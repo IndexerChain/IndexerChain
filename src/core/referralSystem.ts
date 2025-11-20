@@ -425,7 +425,6 @@ export function getReferralSystem(): ReferralSystem {
           // const data = JSON.parse(stored);
           // TODO: Implement referral restoration from localStorage
         } catch (e) {
-          console.warn("[ReferralSystem] Failed to load referrals from localStorage:", e);
         }
       }
     }

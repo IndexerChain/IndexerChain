@@ -139,7 +139,6 @@ export function MiningMainCard({
       
       setTooltip(reasons.length > 0 ? reasons.join("; ") : "");
     } catch (error) {
-      console.error("[MiningMainCard] Failed to check mining readiness:", error);
       setMiningGuardResult({
         ok: false,
         reason: isZh ? "检查挖矿状态时出错" : "Error checking mining status",

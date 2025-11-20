@@ -129,7 +129,6 @@ export async function verifyFinalityVote(
       dataArray
     );
   } catch (error) {
-    console.warn("[Phase 22] Finality vote verification failed:", error);
     return false;
   }
 }

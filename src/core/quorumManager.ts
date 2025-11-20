@@ -930,7 +930,6 @@ export class QuorumManager {
         return JSON.parse(stored);
       }
     } catch (e) {
-      console.warn("[QuorumManager] Failed to load IP hashes:", e);
     }
     
     return {};
@@ -947,7 +946,6 @@ export class QuorumManager {
     try {
       localStorage.setItem(this.IP_HASH_KEY, JSON.stringify(ipHashes));
     } catch (e) {
-      console.warn("[QuorumManager] Failed to save IP hashes:", e);
     }
   }
 

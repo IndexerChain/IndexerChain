@@ -147,7 +147,6 @@ function App() {
     try {
       return new MinerClient();
     } catch (error) {
-      console.error("Failed to create miner client:", error);
       // Return a client instance anyway - it will retry on first use
       return new MinerClient();
     }
@@ -194,7 +193,6 @@ function App() {
     try {
       return new RuntimeManager();
     } catch (error) {
-      console.error("Failed to create runtime manager:", error);
       return null;
     }
   });
@@ -613,7 +611,6 @@ function App() {
           setCurrentReferrerAddress(savedReferrer);
         }
       } catch (error) {
-        console.error("[App] Failed to check invite code:", error);
       }
     };
     
@@ -653,7 +650,6 @@ function App() {
         // The persisted state is already loaded into state variables, so they will trigger
         // the appropriate useEffects to restore mining
       } catch (error) {
-        console.error("Failed to initialize chain:", error);
         const errorMsg = error instanceof Error ? error.message : String(error);
         
         // Always show reset button for initialization errors
@@ -929,11 +925,9 @@ function App() {
       // Connect immediately (small delay to ensure state is updated)
       setTimeout(() => {
         const autoConnectLog = `[Auto-Connect] 🚀 Attempting automatic connection to ${urlToUse}...`;
-        console.log(autoConnectLog); // Force console output for debugging
         logger.info(autoConnectLog);
         handleConnectP2P().catch((error) => {
           const errorLog = `[Auto-Connect] ❌ Auto-connect failed: ${error}`;
-          console.error(errorLog); // Force console output for debugging
           logger.error(errorLog, error);
         });
       }, 300); // Reduced delay for faster connection
@@ -1153,8 +1147,7 @@ function App() {
             () => {
               logger.debug("[Phase 36] State repair completed successfully");
             },
-            (error) => {
-              console.error("[Phase 36] State repair failed:", error);
+            (_error) => {
             }
           );
         }
@@ -1478,7 +1471,6 @@ function App() {
       } else if (result.success && result.appended === 0) {
         // Even if no blocks were appended, update UI to reflect current state
         // Suppress this log - it's normal when blocks already exist
-        // console.log(`[Sync] No new blocks appended (may already have them), but updating UI. Current height: ${newHeight}`);
         setChainContext({ ...chainContext }); // Trigger re-render
         
         // Calculate max received height for this case too (with safety checks)
@@ -1971,7 +1963,6 @@ function App() {
     let lastKnownNetworkHeight = -1; // Track network height for auto-sync
     p2p.onMessage("GLOBAL_VIEW_RESPONSE", async (payload: any, sender: string) => {
       // Suppress frequent GLOBAL_VIEW_RESPONSE logs - only log if height changes significantly
-      // console.log(`[Sync] Received GLOBAL_VIEW_RESPONSE from ${sender.substring(0, 16)}...`, payload);
       
       if (globalSentinel) {
         globalSentinel.onGlobalViewResponse(sender, payload);
@@ -2091,8 +2082,7 @@ function App() {
                       }).then(() => {
                         // Removed debug log: [Sync] Snapshot downloaded
                         // Snapshot will be applied automatically by the downloader
-                      }).catch((error) => {
-                        console.error(`[Sync] ❌ Failed to download snapshot:`, error);
+                      }).catch((_error) => {
                       });
                     }
                   }
@@ -2179,11 +2169,9 @@ function App() {
                     const errorMsg = locale === "zh" 
                       ? `⚠️ 无法同步：本地高度 ${localHeight}，对等节点只能从高度 ${payload.availableFromHeight} 提供区块（差距 ${gap} 个）。\n\n对等节点没有快照，无法填补缺失的区块。\n\n解决方案：\n1. 等待有快照的对等节点连接\n2. 或者重置链数据重新开始（在 Advanced 标签页）\n\n提示：如果 Cloudflare Worker 有快照，系统会自动尝试下载。`
                       : `⚠️ Cannot sync: Local height ${localHeight}, peer can only provide from height ${payload.availableFromHeight} (gap: ${gap} blocks).\n\nPeer has no snapshots to fill the gap.\n\nSolutions:\n1. Wait for peers with snapshots to connect\n2. Or reset chain data to start fresh (in Advanced tab)\n\nNote: If Cloudflare Worker has a snapshot, the system will automatically attempt to download it.`;
-                    console.error(`[Sync] ${errorMsg}`);
                     setError(errorMsg);
                   }
                 } catch (error) {
-                  console.error(`[Sync] Error requesting snapshot:`, error);
                 }
               }, 100);
             }
@@ -2280,7 +2268,6 @@ function App() {
           }
         
         // Suppress frequent sync status logs - only log when height changes significantly
-        // console.log(`[Sync] Network height: ${networkHeight}, Local height: ${localHeight}, Behind by: ${behindBy}`);
         
         // Update sync status (always update if we have a valid network height)
         setSyncStatus(prev => {
@@ -2368,12 +2355,10 @@ function App() {
           }
         } else if (networkHeight === localHeight) {
           // Only log when fully synced (important milestone)
-          // console.log(`[Sync] ✅ Already synced to network height ${networkHeight}`);
           setSyncStatus(prev => ({ ...prev, isSyncing: false, behindBy: 0, progress: 100 }));
         } else if (localHeight > networkHeight) {
           // We're ahead of the network (shouldn't happen, but log it)
           // Suppress this log as it's not critical
-          // console.log(`[Sync] ⚠️ Local height (${localHeight}) is ahead of network height (${networkHeight})`);
         }
       }
     });
@@ -2752,10 +2737,8 @@ function App() {
             }
           }
         } else {
-          console.error(`[Phase 32] Bootstrap sync failed:`, result.error);
         }
       } catch (error) {
-        console.error(`[Phase 32] Error processing bootstrap response:`, error);
       }
     });
 
@@ -2949,7 +2932,6 @@ function App() {
               setBootstrapComplete(true);
             }
           } catch (fallbackError) {
-            console.error(`[Phase 46] Fallback bootstrap sync also failed:`, fallbackError);
           }
         }
       }
@@ -3524,7 +3506,6 @@ function App() {
         const { LongRangeDetector } = await import("../core/longRangeDetector.js");
         const detector = new LongRangeDetector(updatedContext, p2pNode);
         detector.setOnDivergenceDetected(async (result) => {
-          console.error("[Phase 31] Long-range divergence detected:", result);
           // Auto-repair: download snapshot from checkpoint height
           try {
             // Try to download snapshot at checkpoint height via GSN
@@ -3546,7 +3527,6 @@ function App() {
                 : `⚠️ Long-range fork detected, recommend resetting chain and syncing to height ${result.majorityHeight}`);
             }
           } catch (e) {
-            console.error("[Phase 31] Failed to repair divergence:", e);
             setError(locale === "zh" 
               ? `⚠️ 检测到长程分叉，建议重置链并同步到高度 ${result.majorityHeight}` 
               : `⚠️ Long-range fork detected, recommend resetting chain and syncing to height ${result.majorityHeight}`);
@@ -3679,7 +3659,6 @@ function App() {
             }));
             logger.debug(`[Phase 32] Sent REQUEST_BOOTSTRAP via WebSocket directly`);
           } else {
-            console.error(`[Phase 32] Cannot send REQUEST_BOOTSTRAP: WebSocket not available or not open`);
           }
         }
         
@@ -4024,7 +4003,6 @@ function App() {
           setTimeout(() => setSuccessMessage(""), 5000);
         }
       } catch (error) {
-        console.error("[App] Failed to register referral:", error);
         // Don't block mining if referral registration fails
       }
     }
@@ -4656,7 +4634,6 @@ function App() {
       setError(err instanceof Error ? err.message : "Failed to start mining");
       // Production: Only log errors in development
       if (process.env.NODE_ENV === 'development') {
-        console.error("Failed to start mining:", err);
       }
     }
   };
@@ -6768,7 +6745,6 @@ function App() {
                           );
                         }
                       } catch (error) {
-                        console.error("[App] Failed to parse invite code:", error);
                         setError(
                           locale === "zh"
                             ? "❌ 处理邀请码时出错，请重试"

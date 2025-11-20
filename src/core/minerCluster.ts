@@ -193,7 +193,6 @@ export class MinerCluster {
       // Allocate nonce range
       const subRange = this.nodeRangeManager.allocateSubRange(nonceRangeSize);
       if (!subRange) {
-        console.warn(`[MinerCluster] Cannot allocate range for new worker ${workerId}`);
         break;
       }
 
@@ -311,7 +310,6 @@ export class MinerCluster {
    */
   async startMining(params: ClusterMiningParams): Promise<void> {
     if (this.isMining) {
-      console.warn("[Phase 18] Cluster is already mining, stopping first...");
       await this.stopMining("restart");
     }
 
@@ -343,7 +341,6 @@ export class MinerCluster {
       const subRange = this.nodeRangeManager.allocateSubRange(nonceRangeSize);
       if (!subRange) {
         // Global range exhausted
-        console.warn(`[MinerCluster] Cannot allocate range for worker ${workerId}: global range exhausted`);
         if (this.nodeRangeManager.isExhausted()) {
           // Notify listeners that global range is exhausted
           for (const handler of this.onExhaustedGlobalRangeHandlers) {
@@ -400,7 +397,6 @@ export class MinerCluster {
 
         // Phase 37-C: Reconstruct full block from nonce
         if (!this.currentCandidateBlock) {
-          console.error(`[MinerCluster] Cannot reconstruct block: currentCandidateBlock is null`);
           return;
         }
 
@@ -568,7 +564,7 @@ export class MinerCluster {
   /**
    * Phase 37-E: Handle worker error and attempt recovery
    */
-  private handleWorkerError(worker: MinerClient, workerId: number, errorMessage: string): void {
+  private handleWorkerError(worker: MinerClient, workerId: number, _errorMessage: string): void {
     const stats = this.workerStats.get(workerId);
     if (!stats) {
       return;
@@ -587,11 +583,9 @@ export class MinerCluster {
     );
     stats.errorCount = stats.crashTimestamps.length;
 
-    console.warn(`[MinerCluster] Worker ${workerId} error: ${errorMessage} (errorCount: ${stats.errorCount})`);
 
     // Check if we should reduce worker count
     if (stats.errorCount > this.MAX_ERRORS_PER_MINUTE) {
-      console.error(`[MinerCluster] Worker ${workerId} has ${stats.errorCount} errors in last minute, reducing worker count`);
       
       // Report crash to RuntimeManager if available
       // Note: RuntimeManager is not directly accessible here, but we can reduce worker count
@@ -618,13 +612,11 @@ export class MinerCluster {
 
       // Check if we still have the candidate block
       if (!this.currentCandidateBlock) {
-        console.error(`[MinerCluster] Cannot recover worker ${workerId}: no candidate block`);
         return;
       }
 
       const currentEpoch = this.epochManager.getCurrent();
       if (!currentEpoch) {
-        console.error(`[MinerCluster] Cannot recover worker ${workerId}: no current epoch`);
         return;
       }
 
@@ -638,7 +630,6 @@ export class MinerCluster {
       // Allocate new nonce range
       const subRange = this.nodeRangeManager.allocateSubRange(this.DEFAULT_NONCE_RANGE_SIZE);
       if (!subRange) {
-        console.warn(`[MinerCluster] Cannot allocate range for recovered worker ${workerId}`);
         // Remove worker if we can't allocate range
         this.removeWorkers(1);
         return;

@@ -47,23 +47,27 @@ function isProduction(): boolean {
  * Get current log level based on environment
  */
 function getLogLevel(): LogLevel {
-  if (isProduction()) {
-    return LogLevel.ERROR; // Only errors in production
-  }
+  // Disabled - no logging
+  return LogLevel.NONE;
   
-  // Development: allow all logs
-  // Can be overridden by localStorage for debugging
-  if (typeof window !== "undefined" && window.localStorage) {
-    const logLevel = window.localStorage.getItem("indexerchain_log_level");
-    if (logLevel) {
-      const level = parseInt(logLevel, 10);
-      if (!isNaN(level) && level >= 0 && level <= 4) {
-        return level as LogLevel;
-      }
-    }
-  }
-  
-  return LogLevel.INFO; // Only INFO and above in development (no DEBUG)
+  // Original code (disabled):
+  // if (isProduction()) {
+  //   return LogLevel.ERROR; // Only errors in production
+  // }
+  // 
+  // // Development: allow all logs
+  // // Can be overridden by localStorage for debugging
+  // if (typeof window !== "undefined" && window.localStorage) {
+  //   const logLevel = window.localStorage.getItem("indexerchain_log_level");
+  //   if (logLevel) {
+  //     const level = parseInt(logLevel, 10);
+  //     if (!isNaN(level) && level >= 0 && level <= 4) {
+  //       return level as LogLevel;
+  //     }
+  //   }
+  // }
+  // 
+  // return LogLevel.INFO; // Only INFO and above in development (no DEBUG)
 }
 
 class Logger {
@@ -88,44 +92,31 @@ class Logger {
   }
   
   /**
-   * Check if a log level should be output
-   */
-  private shouldLog(level: LogLevel): boolean {
-    return level >= this.logLevel;
-  }
-  
-  /**
-   * Debug log (disabled - only errors are logged)
+   * Debug log (disabled - no logging)
    */
   debug(..._args: any[]): void {
-    // Disabled - only errors are logged
+    // Disabled - no logging
   }
   
   /**
    * Info log
    */
-  info(...args: any[]): void {
-    if (this.shouldLog(LogLevel.INFO)) {
-      console.log("[INFO]", ...args);
-    }
+  info(..._args: any[]): void {
+    // Disabled - no logging
   }
   
   /**
    * Warning log
    */
-  warn(...args: any[]): void {
-    if (this.shouldLog(LogLevel.WARN)) {
-      console.warn("[WARN]", ...args);
-    }
+  warn(..._args: any[]): void {
+    // Disabled - no logging
   }
   
   /**
    * Error log (always shown, even in production)
    */
-  error(...args: any[]): void {
-    if (this.shouldLog(LogLevel.ERROR)) {
-      console.error("[ERROR]", ...args);
-    }
+  error(..._args: any[]): void {
+    // Disabled - no logging
   }
   
   /**

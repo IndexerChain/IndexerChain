@@ -415,7 +415,6 @@ export class LocalInstanceCoordinator {
       try {
         cb(newRole, this.leaderInfo);
       } catch (error) {
-        console.error("[LocalInstance] Role change callback error:", error);
       }
     });
     
@@ -433,7 +432,6 @@ export class LocalInstanceCoordinator {
       try {
         cb(this.leaderInfo);
       } catch (error) {
-        console.error("[LocalInstance] Leader change callback error:", error);
       }
     });
   }
@@ -570,7 +568,6 @@ export class LocalInstanceCoordinator {
         try {
           cb(localHeight, leaderHeight, finalizedHeight);
         } catch (error) {
-          console.error("[LocalInstance] Conflict callback error:", error);
         }
       });
     }

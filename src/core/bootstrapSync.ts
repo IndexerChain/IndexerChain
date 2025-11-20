@@ -141,7 +141,6 @@ export class BootstrapSyncManager {
               continue;
             } else if (gap > 100) {
               // If gap is very large and we're not at genesis, we're likely too far behind or on a different fork
-              console.warn(`[Phase 38] Header chain broken at height ${header.height} (gap: ${gap} blocks). Local chain may be on a different fork or too far behind. Consider resetting chain.`);
               // Still allow sync to proceed from available headers
               // Update currentTip to the first available header to continue syncing
               currentTip = {
@@ -151,7 +150,6 @@ export class BootstrapSyncManager {
               } as any;
               continue;
             } else {
-              console.warn(`[Phase 38] Header chain broken at height ${header.height}, stopping fast sync`);
               break;
             }
           }
@@ -173,7 +171,6 @@ export class BootstrapSyncManager {
               transactions: [], // Empty for now, will be filled when block body is received
             } as any;
           } catch (error) {
-            console.warn(`[Phase 38] Failed to cache header at height ${header.height}:`, error);
             break;
           }
         }
@@ -193,7 +190,6 @@ export class BootstrapSyncManager {
           }
         }
       } catch (error) {
-        console.error(`[Phase 38] Error during fast sync:`, error);
         // Don't fail bootstrap - continue with normal sync
         actions.push(`Fast sync failed: ${error instanceof Error ? error.message : "Unknown error"}`);
       }
@@ -212,7 +208,6 @@ export class BootstrapSyncManager {
           (window as any).lastRootTipSnapshotMeta = response.latestSnapshotMeta;
         }
       } else {
-        console.warn(`[Phase 38] Large height difference (${heightDiff}), but Worker has no snapshot meta`);
         actions.push(`Snapshot sync needed but Worker has no snapshot (height diff: ${heightDiff})`);
       }
     }
@@ -249,12 +244,10 @@ export class BootstrapSyncManager {
                   // Don't break - allow sync from available headers
                 } else if (gap > 100) {
                   // If gap is very large and we're not at genesis, the chain is likely on a different fork or we're too far behind
-                  console.warn(`[Phase 32] Recent header at height ${header.height} doesn't connect to local tip (gap: ${gap} blocks). Local chain may be on a different fork or too far behind. Consider resetting chain.`);
                   // Still allow sync to proceed from the available headers, but mark as potentially invalid
                   validChain = false;
                   // Don't break - allow sync from available headers
                 } else {
-                  console.warn(`[Phase 32] Recent header at height ${header.height} doesn't connect to local tip`);
                   validChain = false;
                   break;
                 }
@@ -265,7 +258,6 @@ export class BootstrapSyncManager {
               if (prevHeader) {
                 const prevHeaderHash = await import("./crypto.js").then(m => m.hashBlockHeader(prevHeader));
                 if (header.prevHash !== prevHeaderHash) {
-                  console.warn(`[Phase 32] Header chain broken at height ${header.height}`);
                   validChain = false;
                   break;
                 }
@@ -323,7 +315,6 @@ export class BootstrapSyncManager {
     // Verify header chain continuity
     if (localTip && header.prevHash !== localTip.hash) {
       // Chain discontinuity - we need to sync from snapshot or request missing blocks
-      console.warn(`[Phase 32] Chain discontinuity detected at height ${header.height}`);
       return { 
         success: false, 
         error: "Chain discontinuity, need to sync from snapshot or request missing blocks" 

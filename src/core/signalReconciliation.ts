@@ -68,15 +68,13 @@ export class SignalReconciliation {
     
     // Reconcile every 30 seconds
     this.reconciliationInterval = setInterval(() => {
-      this.performReconciliation().catch(err => {
-        console.error("[Phase 31] Reconciliation failed:", err);
+      this.performReconciliation().catch(_err => {
       });
     }, 30000);
     
     // Initial reconciliation after 10 seconds
     setTimeout(() => {
-      this.performReconciliation().catch(err => {
-        console.error("[Phase 31] Initial reconciliation failed:", err);
+      this.performReconciliation().catch(_err => {
       });
     }, 10000);
   }
@@ -135,7 +133,6 @@ export class SignalReconciliation {
 
       // Log reconciliation result
       if (!result.consistent) {
-        console.warn("[Phase 31] Reconciliation inconsistency:", result);
       } else {
         logger.debug("[Phase 31] Reconciliation consistent");
       }
@@ -146,11 +143,9 @@ export class SignalReconciliation {
         logger.debug("[Phase 31] Following root node (consistent with P2P majority)");
       } else if (result.action === "FOLLOW_P2P_MAJORITY") {
         // P2P majority differs from root, follow majority
-        console.warn("[Phase 31] Following P2P majority (root differs)");
       }
 
     } catch (error) {
-      console.error("[Phase 31] Failed to reconcile with root:", error);
     }
   }
 
@@ -181,7 +176,6 @@ export class SignalReconciliation {
         timestamp: data.timestamp,
       };
     } catch (error) {
-      console.error("[Phase 31] Failed to fetch root tip summary:", error);
       return null;
     }
     */

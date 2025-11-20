@@ -59,22 +59,19 @@ export class HeightConsensusManager {
     
     // Broadcast height vote every 30 seconds
     this.voteInterval = setInterval(() => {
-      this.broadcastHeightVote().catch(err => {
-        console.error("[Phase 31] Failed to broadcast height vote:", err);
+      this.broadcastHeightVote().catch(_err => {
       });
     }, 30000);
     
     // Initial vote after 5 seconds
     setTimeout(() => {
-      this.broadcastHeightVote().catch(err => {
-        console.error("[Phase 31] Failed to broadcast initial height vote:", err);
+      this.broadcastHeightVote().catch(_err => {
       });
     }, 5000);
     
     // Check consensus every 10 seconds
     setInterval(() => {
-      this.checkConsensus().catch(err => {
-        console.error("[Phase 31] Failed to check consensus:", err);
+      this.checkConsensus().catch(_err => {
       });
     }, 10000);
   }

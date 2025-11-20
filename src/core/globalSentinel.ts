@@ -44,7 +44,6 @@ export class GlobalStateSentinel {
   start(): void {
     if (this.isRunning) return;
     if (!this.p2pNode) {
-      console.warn("[GlobalSentinel] Cannot start: P2P node not available");
       return;
     }
 

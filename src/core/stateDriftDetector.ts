@@ -151,13 +151,11 @@ export class StateDriftDetector {
       
       if (isTrueMajority) {
         if (shouldLog) {
-          console.warn(`[Phase 36] Critical state drift detected:`, this.lastDriftCheck);
           this.lastDriftLogTime = now;
         }
       } else {
         // For insufficient peers, use debug level and only log once per minute
         if (shouldLog) {
-          console.debug(`[Phase 36] State drift detected (insufficient peers for majority):`, this.lastDriftCheck);
           this.lastDriftLogTime = now;
         }
       }
@@ -186,7 +184,6 @@ export class StateDriftDetector {
         // Only log once per minute
         const now = Date.now();
         if (now - this.lastDriftLogTime > this.DRIFT_LOG_COOLDOWN_MS) {
-          console.warn(`[Phase 36] State drift from locked state:`, this.lastDriftCheck);
           this.lastDriftLogTime = now;
         }
         return this.lastDriftCheck;

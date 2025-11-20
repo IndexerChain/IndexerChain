@@ -31,7 +31,6 @@ export class Mempool {
     // Phase 5: Verify signature
     const isValid = await verifyTxSignature(tx);
     if (!isValid) {
-      console.warn("Transaction signature verification failed:", tx.txId);
       return false; // Invalid signature
     }
 

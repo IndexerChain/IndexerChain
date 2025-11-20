@@ -127,7 +127,6 @@ export class StateCommitGossip {
             };
             peer.dataChannel.send(JSON.stringify(message));
           } catch (error) {
-            console.error(`[StateCommitGossip] Failed to send to peer ${peer.id}:`, error);
           }
         }
       }

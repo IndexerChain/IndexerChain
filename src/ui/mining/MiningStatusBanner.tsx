@@ -208,7 +208,6 @@ export function MiningStatusBanner({
           reason,
         });
       } catch (error) {
-        console.error("[MiningStatusBanner] Failed to update status:", error);
         setStatus({
           state: "BLOCKED",
           icon: "⛔",

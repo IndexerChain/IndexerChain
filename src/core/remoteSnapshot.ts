@@ -51,7 +51,6 @@ export async function fetchRemoteSnapshotList(
     });
 
     if (!response.ok) {
-      console.warn(`[Phase 14] Failed to fetch remote snapshot list from ${url}: ${response.status} ${response.statusText}`);
       return [];
     }
 
@@ -65,10 +64,8 @@ export async function fetchRemoteSnapshotList(
       meta.createdAt
     );
 
-    console.log(`[Phase 14] Fetched ${validMetas.length} remote snapshots from ${source.baseUrl}`);
     return validMetas;
   } catch (error) {
-    console.error(`[Phase 14] Error fetching remote snapshot list from ${source.baseUrl}:`, error);
     return [];
   }
 }
@@ -97,7 +94,6 @@ export async function fetchRemoteSnapshotData(
     });
 
     if (!response.ok) {
-      console.warn(`[Phase 14] Failed to fetch remote snapshot ${id} from ${url}: ${response.status} ${response.statusText}`);
       return null;
     }
 
@@ -105,14 +101,11 @@ export async function fetchRemoteSnapshotData(
     
     // Basic validation
     if (!snapshotData.meta || snapshotData.meta.id !== id) {
-      console.error(`[Phase 14] Invalid snapshot data from remote: ID mismatch`);
       return null;
     }
 
-    console.log(`[Phase 14] Fetched remote snapshot ${id} from ${source.baseUrl}`);
     return snapshotData;
   } catch (error) {
-    console.error(`[Phase 14] Error fetching remote snapshot ${id} from ${source.baseUrl}:`, error);
     return null;
   }
 }
@@ -157,7 +150,6 @@ export function chooseBestRemoteSnapshot(
   });
 
   if (validCandidates.length === 0) {
-    console.log(`[Phase 14] No valid remote snapshots found (min height: ${minHeight})`);
     return null;
   }
 
@@ -175,7 +167,6 @@ export function chooseBestRemoteSnapshot(
   });
 
   const best = sorted[0];
-  console.log(`[Phase 14] Selected remote snapshot: height=${best.height}, id=${best.id}, hasStateHash=${!!best.stateHash}`);
   return best;
 }
 
@@ -202,14 +193,12 @@ export async function verifyAndSaveRemoteSnapshot(
     // Phase 15: Also verify stateCommitment
     const block = storage.getBlockByHeight(meta.height);
     if (block && block.hash !== meta.blockHash) {
-      console.error(`[Phase 14] Remote snapshot blockHash mismatch at height ${meta.height}`);
       return false;
     }
 
     // Phase 15: Verify stateCommitment matches block (if block available)
     if (block && block.header.stateCommitment) {
       if (meta.stateCommitment && meta.stateCommitment !== block.header.stateCommitment) {
-        console.error(`[Phase 15] Remote snapshot stateCommitment mismatch at height ${meta.height}`);
         return false;
       }
       // If snapshot doesn't have stateCommitment, set it from block
@@ -227,33 +216,28 @@ export async function verifyAndSaveRemoteSnapshot(
           const computedHash = await computeSnapshotStateHash(decompressed);
           
           if (computedHash !== meta.stateHash) {
-            console.error(`[Phase 14] Remote snapshot stateHash mismatch at height ${meta.height}`);
             return false;
           }
 
           // Phase 15: Verify stateCommitment matches stateHash
           if (meta.stateCommitment && computedHash !== meta.stateCommitment) {
-            console.error(`[Phase 15] Remote snapshot stateCommitment mismatch with stateHash at height ${meta.height}`);
             return false;
           }
 
           // Hash matches, save the decompressed state
           snapshotData.indexState = decompressed;
         } catch (error) {
-          console.error(`[Phase 14] Failed to decompress remote snapshot:`, error);
           return false;
         }
       } else if (snapshotData.full === false && snapshotData.delta) {
         // For delta snapshots, need to reconstruct full state first
         // This is more complex, for now we'll skip hash verification for delta snapshots
         // or reconstruct them
-        console.warn(`[Phase 14] Delta snapshot hash verification not fully implemented, skipping`);
       }
 
       // Use existing verification function
       const isValid = await verifySnapshotIntegrity(snapshotData);
       if (!isValid) {
-        console.error(`[Phase 14] Remote snapshot integrity check failed at height ${meta.height}`);
         return false;
       }
     }
@@ -270,7 +254,6 @@ export async function verifyAndSaveRemoteSnapshot(
         undefined,
         true
       );
-      console.log(`[Phase 14] Saved remote snapshot to local storage at height ${meta.height}`);
       return true;
     } else if (snapshotData.compressed && snapshotData.data) {
       // For compressed-only data (without indexState), save directly to localStorage
@@ -285,14 +268,12 @@ export async function verifyAndSaveRemoteSnapshot(
         filtered.push(meta);
         saveAllSnapshotMeta(filtered);
         
-        console.log(`[Phase 14] Saved remote snapshot (compressed) to local storage at height ${meta.height}`);
         return true;
       }
     }
 
     return false;
   } catch (error) {
-    console.error(`[Phase 14] Error verifying and saving remote snapshot:`, error);
     return false;
   }
 }
@@ -318,7 +299,6 @@ export async function syncFromRemoteSnapshot(
     return null;
   }
 
-  console.log(`[Phase 14] Attempting to sync from remote snapshot sources...`);
 
   // Create sources from endpoints
   const sources: RemoteSnapshotSource[] = params.remoteSnapshotEndpoints.map((url, index) => ({
@@ -332,40 +312,33 @@ export async function syncFromRemoteSnapshot(
       // Fetch snapshot list
       const metas = await fetchRemoteSnapshotList(source);
       if (metas.length === 0) {
-        console.log(`[Phase 14] No snapshots available from ${source.baseUrl}`);
         continue;
       }
 
       // Choose best snapshot
       const bestMeta = chooseBestRemoteSnapshot(metas, params);
       if (!bestMeta) {
-        console.log(`[Phase 14] No suitable snapshot found from ${source.baseUrl}`);
         continue;
       }
 
       // Fetch snapshot data
       const snapshotData = await fetchRemoteSnapshotData(source, bestMeta.id);
       if (!snapshotData) {
-        console.warn(`[Phase 14] Failed to fetch snapshot data for ${bestMeta.id}`);
         continue;
       }
 
       // Verify and save
       const success = await verifyAndSaveRemoteSnapshot(snapshotData, storage);
       if (success) {
-        console.log(`[Phase 14] Successfully synced remote snapshot from ${source.baseUrl} at height ${bestMeta.height}`);
         return bestMeta;
       } else {
-        console.warn(`[Phase 14] Failed to verify/save remote snapshot from ${source.baseUrl}`);
         continue;
       }
     } catch (error) {
-      console.error(`[Phase 14] Error syncing from ${source.baseUrl}:`, error);
       continue;
     }
   }
 
-  console.warn(`[Phase 14] Failed to sync from any remote snapshot source`);
   return null;
 }
 

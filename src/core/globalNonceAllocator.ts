@@ -108,7 +108,6 @@ export class GlobalNonceAllocator {
         rangeSize = (rangeSize * BigInt(Math.floor(reputationMultiplier * 100))) / 100n;
       } catch (error) {
         // If reputation manager not available, use default
-        console.warn("[Phase 21] Could not access peer reputation manager:", error);
       }
     }
     
@@ -139,7 +138,6 @@ export class GlobalNonceAllocator {
     // Get node capability
     const capability = this.nodeCapabilities.get(nodeId);
     if (!capability) {
-      console.warn(`[Phase 19] No capability info for node ${nodeId}, using defaults`);
       // Use default capability
       this.updateNodeCapability({
         nodeId,
@@ -194,7 +192,6 @@ export class GlobalNonceAllocator {
     this.allocatedRanges.set(existingKey, range);
     this.globalPointer = end;
     
-    console.log(`[Phase 19] Allocated range [${start}, ${end}) to node ${nodeId} worker ${workerId}`);
     
     return range;
   }
@@ -220,7 +217,6 @@ export class GlobalNonceAllocator {
   releaseRange(nodeId: string, workerId: number): void {
     const key = `${nodeId}_${workerId}`;
     this.allocatedRanges.delete(key);
-    console.log(`[Phase 19] Released range for node ${nodeId} worker ${workerId}`);
   }
 
   /**
@@ -241,7 +237,6 @@ export class GlobalNonceAllocator {
     }
     
     if (expired.length > 0) {
-      console.log(`[Phase 19] Cleaned up ${expired.length} expired ranges`);
     }
   }
 
@@ -251,7 +246,6 @@ export class GlobalNonceAllocator {
   reset(): void {
     this.globalPointer = 0n;
     this.allocatedRanges.clear();
-    console.log(`[Phase 19] Reset global nonce allocator`);
   }
 
   /**
@@ -315,7 +309,6 @@ export class GlobalNonceAllocator {
     }
     
     if (stale.length > 0) {
-      console.log(`[Phase 19] Cleaned up ${stale.length} stale nodes`);
     }
   }
 }

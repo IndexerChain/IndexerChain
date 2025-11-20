@@ -278,29 +278,7 @@ export async function verifyBlock(
         const finalSnapshot = dryRunState.toSnapshot();
         const computedCommitment = await computeSnapshotStateHash(finalSnapshot);
         
-        // Debug: Log verification details
-        if (process.env.NODE_ENV === "development") {
-          console.log(`[Phase 15] State commitment verification:`, {
-            height: block.header.height,
-            expected: block.header.stateCommitment.substring(0, 16) + "...",
-            computed: computedCommitment.substring(0, 16) + "...",
-            totalMinted: dryRunState.getTotalMinted().toString(),
-            txCount: block.txs.length,
-            match: computedCommitment === block.header.stateCommitment,
-          });
-        }
-        
         if (computedCommitment !== block.header.stateCommitment) {
-          // Additional debug info for mismatch
-          console.error(`[Phase 15] State commitment mismatch details:`, {
-            height: block.header.height,
-            expected: block.header.stateCommitment,
-            computed: computedCommitment,
-            expectedSnapshot: JSON.stringify(finalSnapshot).substring(0, 200),
-            totalMinted: dryRunState.getTotalMinted().toString(),
-            balances: dryRunState.get("balances", Object.keys(finalSnapshot.data?.balances || {})[0] || ""),
-          });
-          
           return {
             valid: false,
             error: `State commitment mismatch: expected ${block.header.stateCommitment.substring(0, 16)}..., got ${computedCommitment.substring(0, 16)}...`,

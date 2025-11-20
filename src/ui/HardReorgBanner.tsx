@@ -171,7 +171,6 @@ export function recordReorgToHistory(entry: ReorgHistoryEntry): void {
     
     localStorage.setItem(REORG_HISTORY_KEY, JSON.stringify(history));
   } catch (error) {
-    console.error("[HardReorgBanner] Failed to record reorg to history:", error);
   }
 }
 
@@ -180,7 +179,6 @@ export function getReorgHistory(): ReorgHistoryEntry[] {
     const existing = localStorage.getItem(REORG_HISTORY_KEY);
     return existing ? JSON.parse(existing) : [];
   } catch (error) {
-    console.error("[HardReorgBanner] Failed to get reorg history:", error);
     return [];
   }
 }

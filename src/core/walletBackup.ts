@@ -47,14 +47,7 @@ export async function exportWallet(password: string): Promise<string> {
   
   // Verify address before export (for debugging)
   const { getNodeAddressFromPublicKey } = await import("./keys.js");
-  const calculatedAddress = await getNodeAddressFromPublicKey(keyPair.publicKey);
-  console.log("[WalletBackup] Exporting wallet - calculated address:", calculatedAddress);
-  console.log("[WalletBackup] Public key JWK (for address calculation):", JSON.stringify({
-    kty: keyPair.publicKey.kty,
-    crv: keyPair.publicKey.crv,
-    x: keyPair.publicKey.x,
-    y: keyPair.publicKey.y,
-  }));
+  await getNodeAddressFromPublicKey(keyPair.publicKey);
   
   // Export private key as JWK
   const privateKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
@@ -225,14 +218,7 @@ export async function importWallet(password: string, backupData: string): Promis
     
     // Verify address calculation (for debugging)
     const { getNodeAddressFromPublicKey } = await import("./keys.js");
-    const calculatedAddress = await getNodeAddressFromPublicKey(publicKeyJwk);
-    console.log("[WalletBackup] Imported wallet address:", calculatedAddress);
-    console.log("[WalletBackup] Public key JWK (for address calculation):", JSON.stringify({
-      kty: publicKeyJwk.kty,
-      crv: publicKeyJwk.crv,
-      x: publicKeyJwk.x,
-      y: publicKeyJwk.y,
-    }));
+    await getNodeAddressFromPublicKey(publicKeyJwk);
     
     // Store keys in localStorage
     if (typeof localStorage !== "undefined") {

@@ -436,7 +436,6 @@ export class PeerReputationManager {
         score.lastSeenAt = item.lastSeenAt;
       }
     } catch (error) {
-      console.warn("[Phase 21] Failed to load peer scores from persistence:", error);
     }
   }
 
@@ -455,7 +454,6 @@ export class PeerReputationManager {
 
       localStorage.setItem("indexerchain_peer_scores_v1", JSON.stringify(data));
     } catch (error) {
-      console.warn("[Phase 21] Failed to save peer scores to persistence:", error);
     }
   }
 }

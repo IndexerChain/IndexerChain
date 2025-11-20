@@ -81,7 +81,6 @@ export class StateRepairManager {
     onFailed?: (error: string) => void
   ): Promise<void> {
     if (this.repairStatus.repairing) {
-      console.warn("[Phase 36] Repair already in progress");
       return;
     }
 
@@ -94,7 +93,6 @@ export class StateRepairManager {
 
     // Check if we've had too many consecutive failures
     if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
-      console.error(`[Phase 36] Too many consecutive repair failures (${this.consecutiveFailures}), skipping repair`);
       if (onFailed) {
         onFailed("Too many consecutive repair failures, please check your network connection and try resetting chain data");
       }
@@ -106,13 +104,11 @@ export class StateRepairManager {
     const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
     if (commits.length < 2) {
       // Not enough peers - this is not critical, just skip repair
-      console.debug(`[Phase 36] Not enough peers to determine majority (${commits.length} peers), skipping repair`);
       return;
     }
     
     // Only attempt repair if severity is critical (not just warning)
     if (driftResult.severity !== "critical") {
-      console.debug(`[Phase 36] Drift severity is ${driftResult.severity}, skipping repair`);
       return;
     }
 
@@ -126,7 +122,6 @@ export class StateRepairManager {
     };
     this.lastRepairAttempt = now;
 
-    console.log(`[Phase 36] Starting state repair:`, driftResult);
 
     try {
       // Step 1: Pause mining (already handled by MiningGuard)
@@ -156,20 +151,17 @@ export class StateRepairManager {
           const browserP2p = this.p2pNode as BrowserP2PNode;
           const peerCount = browserP2p.getPeerCount();
           if (peerCount > 0) {
-            console.log(`[Phase 36] Verification failed, waiting for blocks from peers to arrive...`);
             // Wait 5 seconds for blocks to arrive
             await this.delay(5000);
             
             // Re-verify after waiting
             const reVerified = await this.verifyStateAlignment(driftResult);
             if (reVerified) {
-              console.log(`[Phase 36] Verification passed after waiting for blocks`);
             } else {
               // Still failed - but if we don't have enough peers, accept it
               const gossip = getStateCommitGossip();
               const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
               if (commits.length < 2) {
-                console.debug(`[Phase 36] Verification failed but insufficient peers (${commits.length}), accepting repair as partial success`);
                 // Don't throw error - accept partial success
                 return;
               }
@@ -177,7 +169,6 @@ export class StateRepairManager {
             }
           } else {
             // No peers - can't fix, but don't fail
-            console.debug(`[Phase 36] Verification failed but no peers available, accepting repair as partial success`);
             return;
           }
         } else {
@@ -185,7 +176,6 @@ export class StateRepairManager {
           const gossip = getStateCommitGossip();
           const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
           if (commits.length < 2) {
-            console.debug(`[Phase 36] Verification failed but insufficient peers (${commits.length}), accepting repair as partial success`);
             return;
           }
           throw new Error("State verification failed after repair");
@@ -197,7 +187,6 @@ export class StateRepairManager {
       this.repairStatus.progress = 100;
       this.repairStatus.completedAt = Date.now();
 
-      console.log(`[Phase 36] State repair completed successfully`);
 
       // Reset consecutive failures on success
       this.consecutiveFailures = 0;
@@ -207,7 +196,6 @@ export class StateRepairManager {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error(`[Phase 36] State repair failed:`, errorMessage);
 
       // Increment consecutive failures
       this.consecutiveFailures++;
@@ -244,7 +232,6 @@ export class StateRepairManager {
     const localSnapshot = findNearestFullSnapshot(targetHeight);
     if (localSnapshot && localSnapshot.height >= targetHeight - 100) {
       // We have a recent snapshot, use it
-      console.log(`[Phase 36] Using local snapshot at height ${localSnapshot.height}`);
       return;
     }
 
@@ -255,13 +242,11 @@ export class StateRepairManager {
     if (commits.length === 0) {
       // No peers available, but we might have a local snapshot
       if (localSnapshot) {
-        console.log(`[Phase 36] No peers available, using local snapshot at height ${localSnapshot.height}`);
         return;
       }
       throw new Error(`No peers available and no local snapshot for height ${targetHeight}`);
     }
 
-    console.log(`[Phase 36] Requesting snapshot for height ${targetHeight} from ${commits.length} peer(s)`);
 
     // Try to request snapshot metadata from peers
     if (this.p2pNode && 'broadcast' in this.p2pNode) {
@@ -284,17 +269,14 @@ export class StateRepairManager {
     }
 
     const targetHeight = driftResult.majorityHeight;
-    console.log(`[Phase 36] Rebuilding state to match majority at height ${targetHeight}`);
 
     // Find the nearest full snapshot
     const fullSnapMeta = findNearestFullSnapshot(targetHeight);
     if (!fullSnapMeta) {
       // No snapshot available - try to rebuild from blocks
-      console.warn(`[Phase 36] No snapshot found at or before height ${targetHeight}, attempting to rebuild from blocks`);
       return this.rebuildStateFromBlocks(targetHeight);
     }
 
-    console.log(`[Phase 36] Found snapshot at height ${fullSnapMeta.height}, rebuilding state...`);
 
     // Load the full snapshot
     const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
@@ -344,13 +326,11 @@ export class StateRepairManager {
     // Sort blocks by height
     blocksToReplay.sort((a, b) => a.header.height - b.header.height);
 
-    console.log(`[Phase 36] Replaying ${blocksToReplay.length} blocks from height ${fullSnapMeta.height + 1} to ${targetHeight}`);
 
     for (const block of blocksToReplay) {
       this.chainContext.indexState.applyBlock(block);
     }
 
-    console.log(`[Phase 36] State rebuilt from snapshot (height ${fullSnapMeta.height}) + ${blocksToReplay.length} blocks`);
 
     // After rebuilding, verify that the tip's state commitment matches what we expect
     // If it doesn't, the blocks themselves might have wrong state commitments
@@ -359,10 +339,8 @@ export class StateRepairManager {
       const computedStateCommitment = await this.computeCurrentStateCommitment();
       if (computedStateCommitment && driftResult.majorityStateCommitment) {
         if (computedStateCommitment !== driftResult.majorityStateCommitment) {
-          console.warn(`[Phase 36] Rebuilt state commitment (${computedStateCommitment.substring(0, 16)}...) doesn't match majority (${driftResult.majorityStateCommitment.substring(0, 16)}...). Blocks may have incorrect state commitments.`);
           // This is a warning, not an error - we'll let verification handle it
         } else {
-          console.log(`[Phase 36] Rebuilt state commitment matches majority`);
         }
       }
     }
@@ -383,7 +361,6 @@ export class StateRepairManager {
 
     // Check height matches
     if (tip.header.height !== driftResult.majorityHeight) {
-      console.warn(`[Phase 36] Height mismatch after repair: ${tip.header.height} != ${driftResult.majorityHeight}`);
       return false;
     }
 
@@ -397,24 +374,20 @@ export class StateRepairManager {
       if (computedStateCommitment && computedStateCommitment === driftResult.majorityStateCommitment) {
         // The computed state matches majority, but block header has wrong state commitment
         // This is acceptable - the state is correct, just the block header is wrong
-        console.log(`[Phase 36] State is correct (computed matches majority), but block header has wrong state commitment`);
         return true;
       }
       
       // State commitment doesn't match - blocks may be incorrect or we're on a fork
-      console.warn(`[Phase 36] State commitment mismatch after repair: local=${localStateCommitment.substring(0, 16)}..., majority=${driftResult.majorityStateCommitment.substring(0, 16)}..., computed=${computedStateCommitment?.substring(0, 16) || 'N/A'}...`);
       
       // If computed state matches local block header, it means our blocks are consistent but wrong
       // This suggests we're on a fork or have incorrect blocks
       if (computedStateCommitment && computedStateCommitment === localStateCommitment) {
-        console.warn(`[Phase 36] Local blocks are consistent but don't match majority - possible fork or incorrect blocks`);
         
         // If we have peers, try to request correct blocks
         if (this.p2pNode && 'broadcast' in this.p2pNode) {
           const browserP2p = this.p2pNode as BrowserP2PNode;
           const peerCount = browserP2p.getPeerCount();
           if (peerCount > 0) {
-            console.log(`[Phase 36] Requesting blocks from peers to get correct chain`);
             // Request a wider range to ensure we get the correct chain
             // Request from a point before the mismatch to catch any fork
             const requestFromHeight = Math.max(0, tip.header.height - 100);
@@ -436,14 +409,12 @@ export class StateRepairManager {
         const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
         if (commits.length < 2) {
           // Not enough peers - can't verify, so accept current state
-          console.debug(`[Phase 36] Insufficient peers (${commits.length}) to verify state commitment, accepting current state`);
           return true;
         }
         
         // Have peers but state doesn't match - this suggests we're on a fork
         // Don't fail immediately - return false so repair can wait for blocks to arrive
         // The repair process will wait 5 seconds and re-verify
-        console.warn(`[Phase 36] State doesn't match majority with ${commits.length} peers - waiting for correct blocks from peers`);
         return false;
       }
       
@@ -452,7 +423,6 @@ export class StateRepairManager {
       const gossip = getStateCommitGossip();
       const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
       if (commits.length < 2) {
-        console.debug(`[Phase 36] Insufficient peers (${commits.length}) to verify state commitment, accepting current state`);
         return true;
       }
       
@@ -466,7 +436,6 @@ export class StateRepairManager {
 
     if (!matchesLock && lockManager.hasValidLock()) {
       // Lock mismatch is not critical if state commitment matches
-      console.debug(`[Phase 36] State does not match locked state after repair (non-critical)`);
     }
 
     // Re-check drift (but be more lenient)
@@ -479,11 +448,9 @@ export class StateRepairManager {
       const gossip = getStateCommitGossip();
       const commits = gossip.getStateCommitsForHeight(driftResult.majorityHeight);
       if (commits.length >= 2) {
-        console.warn(`[Phase 36] Critical drift still present after repair (with ${commits.length} peers)`);
         return false;
       } else {
         // Not enough peers - don't fail verification
-        console.debug(`[Phase 36] Drift still present but insufficient peers (${commits.length}) for reliable verification`);
         return true;
       }
     }
@@ -499,7 +466,6 @@ export class StateRepairManager {
       throw new Error("Chain context not available");
     }
 
-    console.log(`[Phase 36] Rebuilding state from blocks (no snapshot available)`);
 
     // Get all blocks up to target height
     const allBlocks = this.chainContext.storage.getAllBlocks();
@@ -512,7 +478,6 @@ export class StateRepairManager {
     // Sort blocks by height
     blocksToReplay.sort((a, b) => a.header.height - b.header.height);
 
-    console.log(`[Phase 36] Replaying ${blocksToReplay.length} blocks from height 0 to ${targetHeight}`);
 
     // Clear current state and rebuild from blocks
     this.chainContext.indexState.rebuildFromBlocks(blocksToReplay);
@@ -532,7 +497,6 @@ export class StateRepairManager {
       }
     }
 
-    console.log(`[Phase 36] State rebuilt from ${blocksToReplay.length} blocks`);
   }
 
   /**
@@ -562,7 +526,6 @@ export class StateRepairManager {
       const snapshot = this.chainContext.indexState.toSnapshot();
       return await computeSnapshotStateHash(snapshot);
     } catch (error) {
-      console.error(`[Phase 36] Failed to compute state commitment:`, error);
       return null;
     }
   }

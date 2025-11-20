@@ -68,7 +68,6 @@ export function NetworkMiniHealthCard({
           requiredQuorumScore = quorumStatus.requiredScore;
           independentPeerCount = quorumStatus.independentPeerCount;
         } catch (e) {
-          console.debug("[NetworkMiniHealthCard] QuorumManager not available");
         }
 
         // Get Finality status
@@ -113,7 +112,6 @@ export function NetworkMiniHealthCard({
           networkStage: guardResult.details?.networkStage,
         });
       } catch (error) {
-        console.error("[NetworkMiniHealthCard] Failed to update health:", error);
         setHealthData(null);
       }
     };

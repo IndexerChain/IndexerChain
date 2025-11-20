@@ -35,7 +35,6 @@ export async function createGenesisBlock(
     const emptySnapshot = emptyState.toSnapshot();
     stateCommitment = await computeSnapshotStateHash(emptySnapshot);
   } catch (error) {
-    console.error(`[Phase 15] Failed to compute genesis stateCommitment:`, error);
     // Continue without stateCommitment for backward compatibility
   }
 

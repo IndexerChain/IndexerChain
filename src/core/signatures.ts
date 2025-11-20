@@ -103,7 +103,6 @@ export async function verifyTxSignature(tx: Tx): Promise<boolean> {
       data.buffer as ArrayBuffer
     );
   } catch (error) {
-    console.error("Signature verification error:", error);
     return false;
   }
 }

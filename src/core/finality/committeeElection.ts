@@ -46,7 +46,6 @@ export function electCommittee(
   );
   
   if (eligiblePeers.length === 0) {
-    console.warn("[Phase 22] No eligible peers for committee election");
     return [];
   }
   
@@ -106,10 +105,6 @@ export function electCommittee(
       break;
     }
   }
-  
-  console.log(
-    `[Phase 22] Elected committee of ${selected.length} members for round based on block ${blockHash.substring(0, 16)}...`
-  );
   
   return selected;
 }

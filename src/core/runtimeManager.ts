@@ -256,7 +256,6 @@ export class WakeLockManager {
       }
       return true;
     } catch (error) {
-      console.error("[WakeLock] Failed to request wake lock:", error);
       return false;
     }
   }
@@ -324,8 +323,7 @@ export class RuntimeManager {
 
     // Handle multi-tab conflicts
     if (this.config.enableMultiTabDetection) {
-      this.multiTabDetector.onConflict((otherTabs) => {
-        console.warn("[RuntimeManager] Multi-tab conflict detected:", otherTabs);
+      this.multiTabDetector.onConflict((_otherTabs) => {
         // Emit event or callback
       });
     }
@@ -375,7 +373,6 @@ export class RuntimeManager {
    * Phase 40: Enter low power mode (reduce mining but keep connections)
    */
   enterLowPowerMode(): void {
-    console.debug("[RuntimeManager] Entering low power mode - connections will remain active");
     // Connections remain active, only mining is reduced
   }
   
@@ -383,7 +380,6 @@ export class RuntimeManager {
    * Phase 40: Exit low power mode
    */
   exitLowPowerMode(): void {
-    console.debug("[RuntimeManager] Exiting low power mode - restoring full operation");
     // Full operation restored
   }
 
@@ -426,7 +422,6 @@ export class RuntimeManager {
         if (typeof window !== "undefined") {
           (window as any)[lastWarningKey] = now;
         }
-        console.warn("[RuntimeManager] Safety issues detected:", issues);
       }
       
       // Phase 37-D: Notify listeners to reduce profile if needed
@@ -445,7 +440,6 @@ export class RuntimeManager {
       try {
         callback(profile);
       } catch (error) {
-        console.error("[RuntimeManager] Error in runtime change callback:", error);
       }
     }
   }

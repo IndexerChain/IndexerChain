@@ -136,7 +136,6 @@ export class DelegatorManager {
       const { getGlobalPeerReputationManager } = await import("./peerReputation.js");
       const reputationManager = getGlobalPeerReputationManager(this.params);
       if (reputationManager.isBanned(nodeId)) {
-        console.log(`[Phase 21] Rejecting range request from banned peer: ${nodeId.substring(0, 16)}...`);
         return;
       }
     }
@@ -156,7 +155,6 @@ export class DelegatorManager {
         workerId,
         range,
       });
-      console.log(`[Phase 19] Delegator allocated range to ${nodeId} worker ${workerId}`);
     }
   }
 
@@ -264,7 +262,6 @@ export class DelegatorManager {
       });
     }
     
-    console.log(`[Phase 19] Node ${this.nodeId} became delegator for block ${blockHeight}`);
     
     // Notify handlers
     for (const handler of this.onDelegatorChangeHandlers) {
@@ -281,7 +278,6 @@ export class DelegatorManager {
     this.state.isDelegator = false;
     this.stopHeartbeat();
     
-    console.log(`[Phase 19] Node ${this.nodeId} stopped being delegator`);
     
     // Notify handlers
     for (const handler of this.onDelegatorChangeHandlers) {
@@ -327,7 +323,6 @@ export class DelegatorManager {
         // Check if delegator is still alive
         if (this.state.lastHeartbeat && Date.now() - this.state.lastHeartbeat > this.DELEGATOR_TIMEOUT_MS) {
           // Delegator timed out, try to become delegator
-          console.log(`[Phase 19] Delegator ${this.state.delegatorNodeId} timed out, attempting to become delegator`);
           this.attemptBecomeDelegator(this.state.blockHeight);
         }
       }

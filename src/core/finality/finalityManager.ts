@@ -92,10 +92,9 @@ export class FinalityManager {
     });
     
     // Handle REQUEST_FINALITY messages
-    this.p2pNode.onMessage("REQUEST_FINALITY", async (request: { blockHash: string; blockHeight: number }) => {
+    this.p2pNode.onMessage("REQUEST_FINALITY", async (_request: { blockHash: string; blockHeight: number }) => {
       // If we have a certificate for this block, send it
       // This will be handled when we store certificates
-      console.log(`[Phase 22] Received finality request for block ${request.blockHash.substring(0, 16)}...`);
     });
   }
   
@@ -128,7 +127,6 @@ export class FinalityManager {
         score: m.score,
       }));
       this.state.currentRound = committeeRound;
-      console.log(`[Phase 22] Committee re-elected for round ${committeeRound}`);
     }
     
     // Check if this node is in the committee
@@ -146,7 +144,6 @@ export class FinalityManager {
       
       // Broadcast vote
       this.p2pNode.broadcast("FINALITY_VOTE", vote);
-      console.log(`[Phase 22] Broadcasted finality vote for block ${blockHash.substring(0, 16)}...`);
       
       // Also add to our own pending votes
       this.addVote(vote);
@@ -236,7 +233,6 @@ export class FinalityManager {
       // Broadcast certificate
       if (this.p2pNode) {
         this.p2pNode.broadcast("FINALITY_CERT", certificate);
-        console.log(`[Phase 22] Block ${blockHash.substring(0, 16)}... finalized with ${certificate.actualSignatures}/${threshold} votes`);
       }
       
       // Notify callbacks
@@ -273,7 +269,6 @@ export class FinalityManager {
       callback(cert.blockHash, cert);
     }
     
-    console.log(`[Phase 22] Received finality certificate for block ${cert.blockHash.substring(0, 16)}...`);
   }
   
   /**

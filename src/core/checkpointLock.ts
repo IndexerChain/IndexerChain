@@ -167,7 +167,6 @@ export class CheckpointLock {
     const threshold = Math.ceil(committeeSize * (this.chainContext.params.finalityThreshold || 0.67));
     
     if (signatures.length < threshold) {
-      console.warn(`[Phase 31] Not enough signatures to finalize checkpoint: ${signatures.length} < ${threshold}`);
       return false;
     }
 

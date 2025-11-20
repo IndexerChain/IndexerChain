@@ -272,7 +272,6 @@ async function miningLoop(): Promise<void> {
     // Phase 37-A: Send ERROR event with epoch ID
     // Production: Only log errors in development
     if (process.env.NODE_ENV === 'development') {
-      console.error("[Worker] Mining loop error:", error);
     }
     self.postMessage({
       type: "ERROR",
@@ -320,7 +319,6 @@ self.addEventListener("message", async (event: MessageEvent<MinerWorkerCommand>)
     miningLoop().catch((error) => {
       // Production: Only log errors in development
       if (process.env.NODE_ENV === 'development') {
-        console.error("[Worker] Mining loop promise rejected:", error);
       }
       self.postMessage({
         type: "STOPPED",

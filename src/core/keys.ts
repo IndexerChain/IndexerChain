@@ -57,7 +57,6 @@ export async function getOrCreateNodeKeyPair(): Promise<KeyPair> {
           privateKey,
         };
       } catch (error) {
-        console.warn("Failed to load keys from storage, generating new ones:", error);
         // Fall through to generate new keys
       }
     }

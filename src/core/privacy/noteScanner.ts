@@ -82,7 +82,6 @@ export async function scanBlocksForNotes(
               }
             }
           } catch (error) {
-            console.warn(`[NoteScanner] Failed to check stealth address:`, error);
             // Continue scanning other transactions
           }
         }

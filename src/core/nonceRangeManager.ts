@@ -38,7 +38,6 @@ export class NodeNonceRangeManager {
   setGlobalRange(range: NonceRange | null): void {
     this.currentRange = range;
     this.cursor = range ? range.start : 0n;
-    console.log(`[NodeNonceRangeManager] Set global range: ${range ? `${range.start}..${range.end}` : 'local-only (unbounded)'}`);
   }
 
   /**

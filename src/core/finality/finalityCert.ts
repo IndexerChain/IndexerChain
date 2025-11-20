@@ -88,7 +88,6 @@ export async function verifyFinalityCertificate(
   const committeeAddresses = new Set(committeeMembers.map((m) => m.address));
   for (const sig of certificate.signatures) {
     if (!committeeAddresses.has(sig.signer)) {
-      console.warn(`[Phase 22] Signer ${sig.signer} is not in committee`);
       return false;
     }
   }
@@ -97,7 +96,6 @@ export async function verifyFinalityCertificate(
   for (const sig of certificate.signatures) {
     const publicKey = await getPublicKey(sig.signer);
     if (!publicKey) {
-      console.warn(`[Phase 22] Cannot get public key for ${sig.signer}`);
       return false;
     }
     
@@ -111,7 +109,6 @@ export async function verifyFinalityCertificate(
     
     const isValid = await verifyFinalityVote(vote, publicKey);
     if (!isValid) {
-      console.warn(`[Phase 22] Invalid signature from ${sig.signer}`);
       return false;
     }
   }
