@@ -13,6 +13,7 @@ import { IndexState } from "./indexState.js";
 import { computeSnapshotStateHash } from "./snapshotVerify.js";
 import {
   getBlockRewardRaw,
+  getCappedBlockReward,
   uIDCToIDC,
   estimateTxFee,
   IDCToUIDC,
@@ -126,6 +127,24 @@ export async function createCoinbaseTx(
     totalReferralRewardsUIDC += refReward.referralReward;
   }
   
+  // Phase 44/46: Enforce emission schedule cap at block level (before adding fees)
+  // Budget for this block from emission schedule (excludes fees)
+  const emissionBudgetUIDC = getCappedBlockReward(blockHeight, totalMinted);
+  const combinedRewardsUIDC = blockRewardUIDC + totalReferralRewardsUIDC;
+  if (combinedRewardsUIDC > emissionBudgetUIDC) {
+    // Scale miner reward and each referral reward proportionally to fit the budget
+    // Keep ratio between miner and referrals while never exceeding emission schedule
+    const scale = emissionBudgetUIDC === 0n ? 0n : (emissionBudgetUIDC * 1_000_000n) / combinedRewardsUIDC; // 6-decimal fixed scale
+    const scaleApply = (value: bigint) => (value * scale) / 1_000_000n;
+    blockRewardUIDC = scaleApply(blockRewardUIDC);
+    let adjustedReferralTotal = 0n;
+    for (const refReward of referralRewards) {
+      refReward.referralReward = scaleApply(refReward.referralReward);
+      adjustedReferralTotal += refReward.referralReward;
+    }
+    totalReferralRewardsUIDC = adjustedReferralTotal;
+  }
+
   // Calculate remaining supply to ensure we don't exceed max supply
   const remaining = IDC_MAX_SUPPLY - totalMinted;
   
