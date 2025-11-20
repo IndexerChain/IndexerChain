@@ -244,8 +244,10 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             });
         } catch {}
 
-        // Proactively query network view on mount
+        // Proactively query network view on mount (to peers and signal server)
         try { p2p.broadcast?.("GLOBAL_VIEW_REQUEST", {}); } catch {}
+        try { p2p.sendToSignalServer?.("GLOBAL_VIEW_REQUEST", {}); } catch {}
+        try { p2p.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 500, wantSnapshotMeta: false }); } catch {}
         // Expose for debugging in console
         try { (window as any).p2p = p2p; (window as any).chainContext = ctx; } catch {}
 
@@ -391,8 +393,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     }
                     // Also ask for bootstrap occasionally
                     p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {});
-                    p2pNode.broadcast?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: startFrom + step });
-                    p2pNode.broadcast?.("GLOBAL_VIEW_REQUEST", {});
+                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 500 });
+                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: startFrom + step });
+                    p2pNode.sendToSignalServer?.("GLOBAL_VIEW_REQUEST", {});
                 }
             } catch {}
         }, 2000);
