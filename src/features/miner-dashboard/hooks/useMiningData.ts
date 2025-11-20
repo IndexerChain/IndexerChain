@@ -6,7 +6,7 @@ import { computeOnlineScore, computeReliabilityScore, getBalanceUIDC } from '../
 import { getBlockRewardRaw, uIDCToIDC } from '../../../core/idcEmission';
 import { MiningGuard } from '../../../core/miningGuard';
 import { getSlotIdentity } from '../../../core/slotSchedule';
-import type { Block } from '../../../core/types';
+// Block type not used after switching to live-only feed
 
 interface UseMiningDataProps {
     chainContext: ChainContext | null;
@@ -180,34 +180,10 @@ export const useMiningData = ({
             return { label: isSelf ? `${short} (You)` : short, isSelf };
         };
 
-        // Initialize with recent blocks
-        const initializeBlocks = () => {
-            const allBlocks = chainContext.storage.getAllBlocks();
-            const recentBlocks = allBlocks.slice(-20).reverse(); // Last 20 blocks, newest first
-            
-            const blockData: BlockData[] = recentBlocks.map((block: Block) => {
-                const prevBlock = chainContext.storage.getBlockByHeight(block.header.height - 1);
-                const rawDelta = prevBlock ? Math.abs(block.header.timestamp - prevBlock.header.timestamp) : 0;
-                const blockTimeMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000; // Heuristic: seconds→ms
-                const leaderInfo = deriveLeader(block);
-                
-                return {
-                    height: block.header.height,
-                    hash: block.hash.substring(0, 10) + '...',
-                    leader: leaderInfo.label,
-                    time: blockTimeMs > 0 ? `${blockTimeMs.toFixed(0)}ms` : '--',
-                    recipients: block.txs.length,
-                    isSelf: leaderInfo.isSelf
-                };
-            });
-            
-            setBlocks(blockData);
-            if (recentBlocks.length > 0) {
-                lastHeightRef.current = recentBlocks[0].header.height;
-            }
-        };
-
-        initializeBlocks();
+        // Live-only mode: don't preload old blocks on refresh
+        // Start from current tip height and wait for new incoming blocks
+        lastHeightRef.current = chainContext.storage.getTip()?.header.height || 0;
+        setBlocks([]);
 
         // Listen to NEW_BLOCK_HEADER messages for real-time updates (ensure continuity)
         const handleNewBlock = async (compactHeader: any, _sender: string) => {
@@ -215,41 +191,22 @@ export const useMiningData = ({
 
             try {
                 const targetHeight = compactHeader.height;
-                let fromHeight = Math.max(1, lastHeightRef.current + 1);
-                if (fromHeight > targetHeight) fromHeight = targetHeight;
-                const appended: BlockData[] = [];
-                for (let h = fromHeight; h <= targetHeight; h++) {
-                    const b = chainContext.storage.getBlockByHeight(h);
-                    if (!b) continue;
-                    const prev = chainContext.storage.getBlockByHeight(h - 1);
-                    const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
-                    const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
-                    const leaderInfo = deriveLeader(b);
-                    appended.push({
-                        height: b.header.height,
-                        hash: b.hash.substring(0, 10) + '...',
-                        leader: leaderInfo.label,
-                        time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
-                        recipients: b.txs.length,
-                        isSelf: leaderInfo.isSelf,
-                    });
-                }
-                if (appended.length > 0) {
-                    setBlocks(prev => {
-                        const merged = [...appended.reverse(), ...prev]; // newest first, keep list contiguous
-                        // De-dup by height and keep top 50
-                        const seen = new Set<number>();
-                        const unique: BlockData[] = [];
-                        for (const it of merged) {
-                            if (!seen.has(it.height)) {
-                                seen.add(it.height);
-                                unique.push(it);
-                            }
-                            if (unique.length >= 50) break;
-                        }
-                        return unique;
-                    });
-                }
+                if (targetHeight <= lastHeightRef.current) return;
+                const b = chainContext.storage.getBlockByHeight(targetHeight);
+                if (!b) return;
+                const prev = chainContext.storage.getBlockByHeight(targetHeight - 1);
+                const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
+                const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
+                const leaderInfo = deriveLeader(b);
+                const row: BlockData = {
+                    height: b.header.height,
+                    hash: b.hash.substring(0, 10) + '...',
+                    leader: leaderInfo.label,
+                    time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
+                    recipients: b.txs.length,
+                    isSelf: leaderInfo.isSelf,
+                };
+                setBlocks(prev => [row, ...prev].slice(0, 50));
 
                 // Update sync rate
                 const now = Date.now();
@@ -276,11 +233,12 @@ export const useMiningData = ({
         // Register message handlers
         if (p2pNode.onMessage) {
             p2pNode.onMessage('NEW_BLOCK_HEADER', handleNewBlock);
-            // Direct NEW_BLOCK payloads - update UI immediately
+            // Direct NEW_BLOCK payloads - update UI immediately (latest only)
             p2pNode.onMessage('NEW_BLOCK', (blockPayload: any) => {
                 if (!isLiveFeedActive || !blockPayload) return;
                 try {
                     const b = blockPayload as any;
+                    if ((b?.header?.height || 0) <= lastHeightRef.current) return;
                     const prev = chainContext.storage.getBlockByHeight((b?.header?.height || 0) - 1);
                     const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
                     const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
@@ -293,58 +251,32 @@ export const useMiningData = ({
                         recipients: Array.isArray(b.txs) ? b.txs.length : 0,
                         isSelf: leaderInfo.isSelf,
                     };
-                    setBlocks(prev => {
-                        const merged = [row, ...prev];
-                        const seen = new Set<number>();
-                        const unique: BlockData[] = [];
-                        for (const it of merged) {
-                            if (!seen.has(it.height)) {
-                                seen.add(it.height);
-                                unique.push(it);
-                            }
-                            if (unique.length >= 50) break;
-                        }
-                        return unique;
-                    });
+                    setBlocks(prev => [row, ...prev].slice(0, 50));
                     lastHeightRef.current = Math.max(lastHeightRef.current, row.height);
                 } catch {}
             });
-            // Batched BLOCKS payloads - append sequentially
+            // Batched BLOCKS payloads - append latest only (ignore historical on refresh)
             p2pNode.onMessage('BLOCKS', (payload: any) => {
                 if (!isLiveFeedActive || !payload?.blocks) return;
                 try {
                     const list: any[] = Array.isArray(payload.blocks) ? payload.blocks : [];
-                    const appended: BlockData[] = [];
-                    for (const b of list) {
-                        const prev = chainContext.storage.getBlockByHeight((b?.header?.height || 0) - 1);
-                        const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
-                        const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
-                        const leaderInfo = deriveLeader(b);
-                        appended.push({
-                            height: b.header.height,
-                            hash: String(b.hash || '').substring(0, 10) + '...',
-                            leader: leaderInfo.label,
-                            time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
-                            recipients: Array.isArray(b.txs) ? b.txs.length : 0,
-                            isSelf: leaderInfo.isSelf,
-                        });
-                    }
-                    if (appended.length > 0) {
-                        setBlocks(prev => {
-                            const merged = [...appended.reverse(), ...prev];
-                            const seen = new Set<number>();
-                            const unique: BlockData[] = [];
-                            for (const it of merged) {
-                                if (!seen.has(it.height)) {
-                                    seen.add(it.height);
-                                    unique.push(it);
-                                }
-                                if (unique.length >= 50) break;
-                            }
-                            return unique;
-                        });
-                        lastHeightRef.current = Math.max(lastHeightRef.current, ...appended.map(a => a.height));
-                    }
+                    if (list.length === 0) return;
+                    const latest = list[list.length - 1];
+                    if ((latest?.header?.height || 0) <= lastHeightRef.current) return;
+                    const prev = chainContext.storage.getBlockByHeight((latest?.header?.height || 0) - 1);
+                    const rawDelta = prev ? Math.abs(latest.header.timestamp - prev.header.timestamp) : 0;
+                    const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
+                    const leaderInfo = deriveLeader(latest);
+                    const row: BlockData = {
+                        height: latest.header.height,
+                        hash: String(latest.hash || '').substring(0, 10) + '...',
+                        leader: leaderInfo.label,
+                        time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
+                        recipients: Array.isArray(latest.txs) ? latest.txs.length : 0,
+                        isSelf: leaderInfo.isSelf,
+                    };
+                    setBlocks(prev => [row, ...prev].slice(0, 50));
+                    lastHeightRef.current = Math.max(lastHeightRef.current, row.height);
                 } catch {}
             });
         }

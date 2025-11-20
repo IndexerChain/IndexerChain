@@ -162,6 +162,10 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     const prev = (window as any).lastRootTipHeight || 0;
                     (window as any).lastRootTipHeight = Math.max(prev, h);
                 }
+                const avail = Number(data?.availableFromHeight || 0);
+                if (Number.isFinite(avail) && avail >= 0) {
+                    (window as any).lastAvailableFromHeight = avail;
+                }
             } catch {}
         };
 
@@ -231,7 +235,28 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return 'Synced';
     };
 
-    const displayMining = isMining || (autoMining && (miningGuardResult?.ok ?? false));
+    // Smooth visual state for mining button to avoid flicker during auto restarts
+    const [displayMining, setDisplayMining] = useState<boolean>(false);
+    const lastOkTsRef = useRef<number>(0);
+    useEffect(() => {
+        const now = Date.now();
+        if (isMining) {
+            setDisplayMining(true);
+            lastOkTsRef.current = now;
+            return;
+        }
+        const guardOk = !!(autoMining && (miningGuardResult?.ok ?? false) && peerCount > 0 && localHeight >= networkHeight);
+        if (guardOk) {
+            setDisplayMining(true);
+            lastOkTsRef.current = now;
+        } else {
+            // only turn off after a grace period to avoid UI flicker
+            const graceMs = 3000;
+            if (now - lastOkTsRef.current > graceMs) {
+                setDisplayMining(false);
+            }
+        }
+    }, [isMining, autoMining, miningGuardResult?.ok, peerCount, localHeight, networkHeight]);
 
     const getStatusBadgeText = () => {
         if (displayMining) return '✅ Active Mining';
@@ -261,10 +286,13 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             setTimeout(() => {
                 const local = chainContext.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || local;
+                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 1;
                 const step = 500;
-                // If network height is unknown or equal, still probe next window to kickstart sync
-                const target = Math.max(network, local + step);
-                for (let from = local + 1; from <= target; from += step) {
+                // Start from whichever is larger: next local height or network's availableFromHeight
+                const startFrom = Math.max(local + 1, availableFrom);
+                // If network height is unknown or equal, still probe one window to kickstart sync
+                const target = Math.max(network, startFrom + step - 1);
+                for (let from = startFrom; from <= target; from += step) {
                     const to = Math.min(from + step - 1, target);
                     // Broadcast range request
                     try {
