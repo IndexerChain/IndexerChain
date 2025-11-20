@@ -126,11 +126,18 @@ export function SlotInfoBar({ chainContext, nodeAddress, locale }: SlotInfoBarPr
       setSyncMsg((isZh ? "同步中..." : "Syncing...") + ` (${local} → ${network})`);
       try {
         const { handleRootTipUpdate } = await import("../../core/unifiedSyncManager.js");
+        const rt: any = {
+          latestHeight: network,
+          latestHeaderHash: (typeof window !== "undefined" && (window as any).lastRootTipHash) || "",
+          recentHeaders: (typeof window !== "undefined" && (window as any).lastRootTipRecentHeaders) || undefined,
+          latestSnapshotMeta: (typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta) || undefined,
+          stateCommitment: (typeof window !== "undefined" && (window as any).lastRootTipStateCommitment) || undefined,
+        };
         const result = await handleRootTipUpdate(
           chainContext,
           p2pNode,
-          { latestHeight: network, latestHeaderHash: "" } as any,
-          false,
+          rt,
+          true,
           (msg: string) => setSyncMsg((isZh ? "同步中：" : "Syncing: ") + msg)
         );
         if (result.success) {

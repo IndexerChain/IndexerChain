@@ -616,6 +616,42 @@ function App() {
     checkInviteCode();
   }, []);
 
+  // Phase 42: Auto-bind referral immediately when detected (no need to wait until mining)
+  const autoReferralBindAttemptedRef = useRef(false);
+  useEffect(() => {
+    const tryAutoBind = async () => {
+      try {
+        if (!pendingInviteAddress) return;
+        if (currentReferrerAddress) return;
+        if (!nodeAddress) return;
+        if (autoReferralBindAttemptedRef.current) return;
+        autoReferralBindAttemptedRef.current = true;
+
+        const [{ getReferralSystem }, { getOrCreateDeviceId }] = await Promise.all([
+          import("../core/referralSystem.js"),
+          import("../core/ipSharingWeight.js"),
+        ]);
+        const referralSystem = getReferralSystem();
+        const deviceId = getOrCreateDeviceId();
+        const ipHash = null; // Shadow Node can set this later
+        const ok = referralSystem.registerReferral(
+          pendingInviteAddress as any,
+          (nodeAddress as any),
+          deviceId,
+          ipHash || undefined
+        );
+        if (ok) {
+          setCurrentReferrerAddress(pendingInviteAddress);
+          setPendingInviteAddress(null);
+          localStorage.setItem("indexerchain_referrer_address", pendingInviteAddress);
+        }
+      } catch {
+        // Do not block app flow if auto-binding fails
+      }
+    };
+    tryAutoBind();
+  }, [pendingInviteAddress, currentReferrerAddress, nodeAddress]);
+
   // Initialize chain on mount
   useEffect(() => {
     const initialize = async () => {
@@ -6673,30 +6709,66 @@ function App() {
                     currentReferrerAddress={currentReferrerAddress}
                     onInviteCodeSubmit={async (code: string) => {
                       try {
-                        const { parseReferralCode } = await import("../core/referralSystem.js");
+                        const { parseReferralCode, getReferralSystem } = await import("../core/referralSystem.js");
+                        const { getOrCreateDeviceId } = await import("../core/ipSharingWeight.js");
+                        const walletStore = getMultiWalletStore();
+                        const miningWallet = walletStore.getMiningWallet();
+                        const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+                        const deviceId = getOrCreateDeviceId();
+                        const ipHash = null; // Shadow Node can set this later
+                        
                         let inviteAddress: string | null = null;
-                        
-                        // Try to parse as referral code (base64 encoded address)
                         inviteAddress = parseReferralCode(code);
-                        
-                        // If not a code, try direct address format
                         if (!inviteAddress && code.startsWith("idc_")) {
                           inviteAddress = code;
                         }
                         
-                        if (inviteAddress) {
-                          setPendingInviteAddress(inviteAddress);
+                        if (!inviteAddress) {
+                          setError(
+                            locale === "zh"
+                              ? "❌ 无效的邀请码格式，请检查后重试"
+                              : "❌ Invalid invite code format, please check and try again"
+                          );
+                          return;
+                        }
+                        
+                        // If already bound to same address, just confirm success
+                        const existing = localStorage.getItem("indexerchain_referrer_address");
+                        if (existing && existing === inviteAddress) {
+                          setCurrentReferrerAddress(inviteAddress);
+                          setPendingInviteAddress(null);
                           setSuccessMessage(
                             locale === "zh"
-                              ? `✅ 邀请地址已保存，将在开始挖矿时自动绑定`
-                              : `✅ Invite address saved, will bind automatically when mining starts`
+                              ? `✅ 已绑定邀请地址: ${inviteAddress.substring(0, 16)}...`
+                              : `✅ Referral address bound: ${inviteAddress.substring(0, 16)}...`
+                          );
+                          setTimeout(() => setSuccessMessage(""), 5000);
+                          return;
+                        }
+                        
+                        // Register immediately
+                        const referralSystem = getReferralSystem();
+                        const ok = referralSystem.registerReferral(
+                          inviteAddress as any,
+                          minerAddr as any,
+                          deviceId,
+                          ipHash || undefined
+                        );
+                        if (ok) {
+                          setCurrentReferrerAddress(inviteAddress);
+                          setPendingInviteAddress(null);
+                          localStorage.setItem("indexerchain_referrer_address", inviteAddress);
+                          setSuccessMessage(
+                            locale === "zh"
+                              ? `✅ 已绑定邀请地址: ${inviteAddress.substring(0, 16)}...`
+                              : `✅ Referral address bound: ${inviteAddress.substring(0, 16)}...`
                           );
                           setTimeout(() => setSuccessMessage(""), 5000);
                         } else {
                           setError(
                             locale === "zh"
-                              ? "❌ 无效的邀请码格式，请检查后重试"
-                              : "❌ Invalid invite code format, please check and try again"
+                              ? "❌ 绑定失败：已存在邀请关系或不符合规则"
+                              : "❌ Binding failed: already has a referrer or not allowed"
                           );
                         }
                       } catch (error) {

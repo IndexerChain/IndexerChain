@@ -64,6 +64,13 @@ export function MiningMainCard({
   const { t } = useI18n();
 
   const isZh = locale === "zh";
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+  useEffect(() => {
+    const update = () => setIsMobile(typeof window !== "undefined" && window.innerWidth <= 640);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
 
   // Check mining readiness
   const checkMiningReadiness = async () => {
@@ -265,14 +272,18 @@ export function MiningMainCard({
       setSyncMsgMine((isZh ? "同步中..." : "Syncing...") + ` (${local} → ${network})`);
       try {
         const { handleRootTipUpdate } = await import("../../core/unifiedSyncManager.js");
+        const rt: any = {
+          latestHeight: network,
+          latestHeaderHash: (typeof window !== "undefined" && (window as any).lastRootTipHash) || "",
+          recentHeaders: (typeof window !== "undefined" && (window as any).lastRootTipRecentHeaders) || undefined,
+          latestSnapshotMeta: (typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta) || undefined,
+          stateCommitment: (typeof window !== "undefined" && (window as any).lastRootTipStateCommitment) || undefined,
+        };
         const result = await handleRootTipUpdate(
           chainContext,
           p2pNode as any,
-          {
-            latestHeight: network,
-            latestHeaderHash: "",
-          } as any,
-          false,
+          rt,
+          true,
           (msg: string) => setSyncMsgMine((isZh ? "同步中：" : "Syncing: ") + msg)
         );
         if (result.success) {
@@ -493,12 +504,13 @@ export function MiningMainCard({
           </div>
         )}
         
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", flexDirection: isMobile ? "column" : "row" }}>
           <button
             onClick={handleButtonClick}
             disabled={autoMining && !isMining && !clusterMining} // Disable if auto-mining is enabled and not currently mining
             style={{
-              flex: 1,
+              flex: isMobile ? "0 0 auto" : 1,
+              width: isMobile ? "100%" : undefined,
               padding: "1rem 2rem",
               fontSize: "1.1rem",
               fontWeight: "bold",
@@ -555,6 +567,9 @@ export function MiningMainCard({
                 borderRadius: "8px",
                 background: "#fff",
                 cursor: "pointer",
+                flex: "0 0 auto",
+                width: isMobile ? "100%" : "auto",
+                justifyContent: isMobile ? "space-between" : "flex-start",
               }}
               title={t("miningMain.autoMineTitle")}
             >
@@ -614,7 +629,7 @@ export function MiningMainCard({
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", alignItems: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.75rem", alignItems: "center" }}>
             <div>
               <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("miningMain.baseRewardIDC")}</div>
               <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
@@ -800,29 +815,30 @@ export function MiningMainCard({
           }}
         >
           <div style={{ fontSize: "0.9rem", fontWeight: "bold", marginBottom: "0.75rem", color: "#667eea" }}>
-            {isZh ? "🎯 邀请码绑定" : "🎯 Referral Code"}
+            {t("mining.referralCodeBinding")}
           </div>
           
           {pendingInviteAddress ? (
             <div style={{ fontSize: "0.85rem", color: "#28a745" }}>
               {isZh 
-                ? `✅ 待绑定邀请地址: ${pendingInviteAddress.substring(0, 16)}... (挖矿时自动绑定)`
-                : `✅ Pending invite address: ${pendingInviteAddress.substring(0, 16)}... (will bind when mining starts)`}
+                ? `✅ 已识别邀请地址: ${pendingInviteAddress.substring(0, 16)}...`
+                : `✅ Pending invite address: ${pendingInviteAddress.substring(0, 16)}...`}
             </div>
           ) : (
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", flexDirection: isMobile ? "column" : "row" }}>
               <input
                 type="text"
                 value={inviteCodeInput}
                 onChange={(e) => setInviteCodeInput(e.target.value)}
-                placeholder={isZh ? "输入邀请码或邀请地址" : "Enter invite code or address"}
+                placeholder={t("mining.enterInviteCodeOrAddress")}
                 style={{
-                  flex: 1,
+                  flex: isMobile ? "0 0 auto" : 1,
                   padding: "0.6rem",
                   fontSize: "0.85rem",
                   border: "1px solid #ddd",
                   borderRadius: "4px",
                   fontFamily: "monospace",
+                  width: isMobile ? "100%" : undefined,
                 }}
               />
               <button
@@ -842,9 +858,10 @@ export function MiningMainCard({
                   borderRadius: "4px",
                   cursor: inviteCodeInput.trim() ? "pointer" : "not-allowed",
                   whiteSpace: "nowrap",
+                  width: isMobile ? "100%" : "auto",
                 }}
               >
-                {isZh ? "绑定" : "Bind"}
+                {t("common.confirm")}
               </button>
             </div>
           )}
@@ -871,7 +888,7 @@ export function MiningMainCard({
           }}
         >
           <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
-            {isZh ? "✅ 已绑定邀请地址" : "✅ Referral Address Bound"}
+            {t("mining.referralAddressBound")}
           </div>
           <div style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
             {currentReferrerAddress.substring(0, 20)}...

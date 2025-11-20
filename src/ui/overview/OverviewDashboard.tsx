@@ -4,6 +4,7 @@ import type { P2PNode } from "../../core/p2p.js";
 import { getEpochMs, getSlotTimeMs } from "../../core/featureFlags.js";
 import { getSlotIdentity, deriveRandSeed, selectLeader } from "../../core/slotSchedule.js";
 import type { Address } from "../../core/types.js";
+import { useI18n } from "../../i18n/useI18n.js";
 // Keep overview concise; detailed reward/weight appears on Mining page
 
 interface OverviewDashboardProps {
@@ -15,6 +16,7 @@ interface OverviewDashboardProps {
 
 export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }: OverviewDashboardProps) {
   const isZh = locale === "zh";
+  const { t } = useI18n();
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const [leader, setLeader] = useState<Address | null>(null);
   // Quorum score removed from UI to keep concise
@@ -40,10 +42,10 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
   const networkHeight = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
   const behindBy = Math.max(0, networkHeight - localHeight);
   const syncLabel = (() => {
-    if (networkHeight <= 0) return isZh ? "等待网络" : "Waiting";
-    if (behindBy <= 1) return isZh ? "已同步" : "Synced";
-    if (behindBy <= 50) return isZh ? "追赶中" : "Catching up";
-    return isZh ? "未同步" : "Out of sync";
+    if (networkHeight <= 0) return t("miningMain.waiting");
+    if (behindBy <= 1) return t("miningMain.synced");
+    if (behindBy <= 50) return t("miningMain.catchingUp");
+    return t("miningMain.outOfSync");
   })();
   const syncColor = behindBy <= 1 ? "#28a745" : behindBy <= 50 ? "#ffc107" : "#dc3545";
 
@@ -69,15 +71,19 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
       // Try UnifiedSyncManager first
       try {
         const { handleRootTipUpdate } = await import("../../core/unifiedSyncManager.js");
+        const rt: any = {
+          latestHeight: network,
+          latestHeaderHash: (typeof window !== "undefined" && (window as any).lastRootTipHash) || "",
+          recentHeaders: (typeof window !== "undefined" && (window as any).lastRootTipRecentHeaders) || undefined,
+          latestSnapshotMeta: (typeof window !== "undefined" && (window as any).lastRootTipSnapshotMeta) || undefined,
+          stateCommitment: (typeof window !== "undefined" && (window as any).lastRootTipStateCommitment) || undefined,
+        };
         const result = await handleRootTipUpdate(
           chainContext,
           p2pNode as any,
-          {
-            latestHeight: network,
-            latestHeaderHash: "",
-          } as any,
-          false,
-          (msg) => setSyncMsg((isZh ? "同步中：" : "Syncing: ") + msg)
+          rt,
+          true,
+          (msg: string) => setSyncMsg((isZh ? "同步中：" : "Syncing: ") + msg)
         );
         if (result.success) {
           setSyncMsg(isZh ? "✅ 同步完成" : "✅ Synced");
@@ -231,14 +237,14 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
         padding: "1rem",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-        <div style={{ fontWeight: "bold", fontSize: "1.2rem" }}>{isZh ? "概览" : "Overview"}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: "bold", fontSize: "1.2rem" }}>{t("tabs.overview")}</div>
         <div style={{ fontSize: "0.85rem", color: "#666" }}>
           {isZh ? "单领导微槽 + 池化分红" : "Single-leader slots + pooled rewards"}
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
         {/* Chain summary */}
         <div style={{ background: "#f8f9fa", padding: "0.75rem", borderRadius: "6px" }}>
           <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.25rem" }}>{isZh ? "链状态" : "Chain"}</div>
@@ -281,9 +287,9 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
                 color: "#17a2b8",
                 cursor: "pointer",
               }}
-              title={isZh ? "使用统一同步管理器优先追赶，否则请求区块" : "Use UnifiedSyncManager or request blocks"}
+              title={t("miningMain.catchUpTitle")}
             >
-              {isZh ? "一键追赶" : "Catch up"}
+              {t("miningMain.catchUp")}
             </button>
             {syncMsg && (
               <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.35rem" }}>
@@ -327,7 +333,7 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
       </div>
 
       {/* Compact control bar */}
-      <div style={{ marginTop: "0.75rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ marginTop: "0.75rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap" }}>
         <div style={{ fontWeight: "bold" }}>
           {isZh ? "领导者预览" : "Leader Preview"}
         </div>
@@ -356,7 +362,7 @@ export function OverviewDashboard({ chainContext, p2pNode, nodeAddress, locale }
           {leaderPreview.length === 0 ? (
             <div style={{ fontSize: "0.9rem", color: "#666" }}>{isZh ? "暂无数据" : "No data"}</div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.5rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.5rem" }}>
               {leaderPreview.map((it, idx) => (
                 <div
                   key={`${it.epoch}-${it.slot}-${idx}`}
