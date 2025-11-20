@@ -116,7 +116,8 @@ export interface MiningGuardResult {
  * Phase 39: Network stage constants
  */
 const FINALITY_WARMUP_HEIGHT = 50; // Height threshold for warmup phase
-const FINALITY_WARMUP_MAX_HEIGHT = 500; // Maximum height to tolerate finalizedHeight === 0
+// Increase tolerance so dev/single-node environments are not blocked early
+const FINALITY_WARMUP_MAX_HEIGHT = 500000; // Maximum height to tolerate finalizedHeight === 0 (dev-friendly)
 
 /**
  * Mining Guard

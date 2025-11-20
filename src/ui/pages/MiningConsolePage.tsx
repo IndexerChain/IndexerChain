@@ -259,10 +259,11 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             setTimeout(() => {
                 const local = chainContext.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || local;
-                if (network <= local) return;
                 const step = 500;
-                for (let from = local + 1; from <= network; from += step) {
-                    const to = Math.min(from + step - 1, network);
+                // If network height is unknown or equal, still probe next window to kickstart sync
+                const target = Math.max(network, local + step);
+                for (let from = local + 1; from <= target; from += step) {
+                    const to = Math.min(from + step - 1, target);
                     // Broadcast range request
                     try {
                         p2pNode.broadcast("REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
@@ -280,6 +281,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         }
                     } catch {}
                 }
+                // Bootstrap protocol as fallback
+                try { p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {}); } catch {}
             }, 300);
         } catch {
             // no-op
