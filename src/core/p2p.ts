@@ -875,9 +875,30 @@ export class BrowserP2PNode implements P2PNode {
     if (peerId < this.nodeId) {
       logger.debug(`[P2P] Peer ${peerId.substring(0, 16)}... has smaller nodeId, waiting for their offer instead of creating one`);
       // Create connection but don't create offer - wait for the other side
-      const connection = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
+      const iceServers = (() => {
+        const defaults = [{ urls: "stun:stun.l.google.com:19302" }];
+        if (typeof window !== "undefined" && (window as any).iceServers && Array.isArray((window as any).iceServers)) {
+          return (window as any).iceServers;
+        }
+        if (typeof localStorage !== "undefined") {
+          try {
+            const raw = localStorage.getItem("indexerchain_ice_servers");
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) return parsed;
+            }
+          } catch {}
+        }
+        try {
+          const envVal = (import.meta as any)?.env?.VITE_ICE_SERVERS;
+          if (envVal) {
+            const parsed = JSON.parse(envVal);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch {}
+        return defaults;
+      })();
+      const connection = new RTCPeerConnection({ iceServers });
 
       const peerInfo: PeerInfo = {
         id: peerId,
@@ -935,9 +956,30 @@ export class BrowserP2PNode implements P2PNode {
     }
 
     logger.debug(`[P2P] Creating WebRTC connection to ${peerId.substring(0, 16)}...`);
-    const connection = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    const iceServers2 = (() => {
+      const defaults = [{ urls: "stun:stun.l.google.com:19302" }];
+      if (typeof window !== "undefined" && (window as any).iceServers && Array.isArray((window as any).iceServers)) {
+        return (window as any).iceServers;
+      }
+      if (typeof localStorage !== "undefined") {
+        try {
+          const raw = localStorage.getItem("indexerchain_ice_servers");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch {}
+      }
+      try {
+        const envVal = (import.meta as any)?.env?.VITE_ICE_SERVERS;
+        if (envVal) {
+          const parsed = JSON.parse(envVal);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+      return defaults;
+    })();
+    const connection = new RTCPeerConnection({ iceServers: iceServers2 });
 
     const peerInfo: PeerInfo = {
       id: peerId,
@@ -1022,9 +1064,30 @@ export class BrowserP2PNode implements P2PNode {
     let peerInfo = this.peers.get(from);
 
     if (!peerInfo) {
-      const connection = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
+      const iceServers3 = (() => {
+        const defaults = [{ urls: "stun:stun.l.google.com:19302" }];
+        if (typeof window !== "undefined" && (window as any).iceServers && Array.isArray((window as any).iceServers)) {
+          return (window as any).iceServers;
+        }
+        if (typeof localStorage !== "undefined") {
+          try {
+            const raw = localStorage.getItem("indexerchain_ice_servers");
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) return parsed;
+            }
+          } catch {}
+        }
+        try {
+          const envVal = (import.meta as any)?.env?.VITE_ICE_SERVERS;
+          if (envVal) {
+            const parsed = JSON.parse(envVal);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch {}
+        return defaults;
+      })();
+      const connection = new RTCPeerConnection({ iceServers: iceServers3 });
 
       peerInfo = {
         id: from,
