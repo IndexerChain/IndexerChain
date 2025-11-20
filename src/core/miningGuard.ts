@@ -710,15 +710,30 @@ export class MiningGuard {
       }
     }
 
-    // Check 5: Synchronization status
-    // Note: We don't block mining just because height is 0
-    // The real sync check should compare local height with network height from peers
-    // For now, we'll allow mining and let the sync happen naturally
-    
-    // Get network height from peers (if available via global sentinel)
-    // For now, we'll use a simpler check: if we have peers and recent blocks
-    // In a real implementation, you'd query the global sentinel for network height
-    // Note: Sync drift check is handled by GlobalStateSentinel, so we don't need to check it here
+    // Check 5: Synchronization status (STRICT)
+    // Enforce: must be fully synced to the latest known network height before mining
+    {
+      const localHeightStrict = chainContext.storage.getTip()?.header.height ?? 0;
+      let networkHeightStrict = 0;
+      if (typeof window !== "undefined") {
+        try {
+          networkHeightStrict = (window as any).lastRootTipHeight || 0;
+        } catch {}
+      }
+      if (networkHeightStrict > 0 && localHeightStrict < networkHeightStrict) {
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "NOT_SYNCED",
+          reason: `Must sync to latest height before mining (local: ${localHeightStrict}, network: ${networkHeightStrict}, behind: ${networkHeightStrict - localHeightStrict})`,
+          details: {
+            localHeight: localHeightStrict,
+            networkHeight: networkHeightStrict,
+            peerCount,
+          },
+        };
+      }
+    }
     
     // Check 6: Finality status (if finality is enabled)
     // Phase 39: Finality Initialization Mode
