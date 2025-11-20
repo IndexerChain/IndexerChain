@@ -5676,25 +5676,7 @@ function App() {
                 </>
               )}
 
-              {/* P0-2: Quick Status Dashboard */}
-              {chainContext && (
-                <QuickStatusDashboard
-                  chainContext={chainContext}
-                  p2pNode={chainContext?.p2p || null}
-                  isP2PConnected={isP2PConnected}
-                  peerCount={peerCount}
-                  nodeAddress={nodeAddress}
-                  isMining={isMining}
-                  clusterMining={clusterMining}
-                  miningGuardResult={miningGuardResult}
-                  localRole={localCoordinator.getRole()}
-                  height={height}
-                  locale={locale}
-                  onQuickAction={(action) => {
-                    setActiveTab(action);
-                  }}
-                />
-              )}
+              {/* Quick Status Dashboard removed to reduce duplication with MiningStatusBanner */}
 
               {/* Phase 30: Global Consistency Sentinel Panel - Collapsed by default */}
               {chainContext && chainContext.params.globalSentinelEnabled !== false && (
@@ -6638,43 +6620,9 @@ function App() {
                   </div>
                 )}
 
-              {/* Phase 45: Mining Status Bar */}
+              {/* Mining Main Card - Top-level control (deduplicated, MiningStatusBar removed) */}
               {chainContext && (
                 <>
-                  <MiningStatusBar
-                    chainContext={chainContext}
-                    p2pNode={p2pNodeRef.current}
-                    finalityManager={finalityManager}
-                    localRole={localRole}
-                    bootstrapComplete={bootstrapComplete}
-                    nodeAddress={nodeAddress}
-                    miningWalletAddress={(() => {
-                      try {
-                        const walletStore = getMultiWalletStore();
-                        const miningWallet = walletStore.getMiningWallet();
-                        return miningWallet ? miningWallet.address : null;
-                      } catch (e) {
-                        return null;
-                      }
-                    })()}
-                    isMining={isMining}
-                    clusterMining={clusterMining}
-                    shadowNodeClient={shadowNodeRef.current}
-                    deviceId={(() => {
-                      try {
-                        return getOrCreateDeviceId();
-                      } catch (e) {
-                        return null;
-                      }
-                    })()}
-                    onShowDetails={() => {
-                      setActiveTab("network");
-                      // Could also open NetworkHealthPanel directly
-                    }}
-                    locale={locale}
-                  />
-
-                  {/* Mining Main Card - Top-level control (操作控件放在上面) */}
                   <MiningMainCard
                     chainContext={chainContext}
                     p2pNode={p2pNodeRef.current}

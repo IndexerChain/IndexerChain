@@ -734,6 +734,26 @@ export class MiningGuard {
         };
       }
     }
+
+    // Check 5.1: Require at least one open data channel (ensures block propagation before mining)
+    if (p2pNode) {
+      const openChannels =
+        Array.from(p2pNode.peers?.values() || []).filter(
+          (p: any) => p.connected && p.dataChannel && p.dataChannel.readyState === "open"
+        ).length;
+      // If there are known peers but zero open channels, block mining
+      if (peerCount > 0 && openChannels === 0) {
+        return {
+          ok: false,
+          mode: "BLOCKED",
+          code: "NOT_SYNCED",
+          reason: "No data channels open to peers. Wait for a P2P data channel to open before mining.",
+          details: {
+            peerCount,
+          },
+        };
+      }
+    }
     
     // Check 6: Finality status (if finality is enabled)
     // Phase 39: Finality Initialization Mode

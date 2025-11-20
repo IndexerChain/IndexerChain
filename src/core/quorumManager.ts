@@ -592,7 +592,33 @@ export class QuorumManager {
       peerIPHashes.add(localIPHash);
     }
     
-    const independentPeerCount = peerIPHashes.size;
+    let independentPeerCount = peerIPHashes.size;
+    
+    // Phase 45: Fallback for missing IP hashes in early phases
+    // If some peers don't yet have ipHash propagated from the signal server,
+    // conservatively treat distinct peerIds as independent to avoid false "1 peer" in first-year startup.
+    if (independentPeerCount < 2 && peers.length > 0) {
+      const entitySet = new Set<string>();
+      // Add local as an entity (prefer ipHash)
+      if (localIPHash) {
+        entitySet.add(`ip:${localIPHash}`);
+      } else {
+        entitySet.add(`local:${this.p2pNode.nodeId}`);
+      }
+      // Add peers as entities (prefer ipHash; fallback to peerId)
+      for (const peer of peers) {
+        const ipHash = (peer as any).ipHash as string | undefined;
+        if (ipHash && ipHash.length > 0) {
+          entitySet.add(`ip:${ipHash}`);
+        } else {
+          entitySet.add(`peer:${peer.id}`);
+        }
+      }
+      const fallbackIndependent = entitySet.size;
+      if (fallbackIndependent > independentPeerCount) {
+        independentPeerCount = fallbackIndependent;
+      }
+    }
     
     // Phase 38: Genesis Quorum Mode - special handling for height 0
     const isGenesis = this.isGenesisPhase();
