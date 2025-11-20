@@ -563,22 +563,27 @@ export class MiningGuard {
         miningMode = "SAFE";
         logger.debug(`[Phase 35/36] Mainnet admission ready: Stage ${admissionStatus.stage}, Score ${admissionStatus.quorumScore} >= ${admissionStatus.requiredQuorumScore}, Independent peers ${admissionStatus.independentPeers} >= ${admissionStatus.requiredIndependentPeers}, State lock OK`);
       } else {
-        // BLOCKED: Mainnet admission rules not satisfied
-        // Phase 39: Use requiredIndependentPeers for mainnet admission error message
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "INSUFFICIENT_PEERS",
-          reason: `Mainnet admission not ready (${admissionStatus.stage} stage): Quorum score ${admissionStatus.quorumScore} < ${admissionStatus.requiredQuorumScore} or independent peers ${admissionStatus.independentPeers} < ${admissionStatus.requiredIndependentPeers}. ${admissionStatus.reasons.join("; ")}`,
-          details: {
-            peerCount,
-            requiredPeers: admissionStatus.requiredIndependentPeers, // Phase 39: Use requiredIndependentPeers for mainnet
-            requiredIndependentPeers: admissionStatus.requiredIndependentPeers,
-            quorumScore: admissionStatus.quorumScore,
-            requiredQuorumScore: admissionStatus.requiredQuorumScore,
-            independentPeerCount: admissionStatus.independentPeers,
-          },
-        };
+        // Dev-friendly override: if at least 1 independent IP is present, allow GUARDED mining immediately
+        if (admissionStatus.independentPeers >= 1) {
+          miningMode = "GUARDED";
+        } else {
+          // BLOCKED: Mainnet admission rules not satisfied
+          // Phase 39: Use requiredIndependentPeers for mainnet admission error message
+          return {
+            ok: false,
+            mode: "BLOCKED",
+            code: "INSUFFICIENT_PEERS",
+            reason: `Mainnet admission not ready (${admissionStatus.stage} stage): Quorum score ${admissionStatus.quorumScore} < ${admissionStatus.requiredQuorumScore} or independent peers ${admissionStatus.independentPeers} < ${admissionStatus.requiredIndependentPeers}. ${admissionStatus.reasons.join("; ")}`,
+            details: {
+              peerCount,
+              requiredPeers: admissionStatus.requiredIndependentPeers, // Phase 39: Use requiredIndependentPeers for mainnet
+              requiredIndependentPeers: admissionStatus.requiredIndependentPeers,
+              quorumScore: admissionStatus.quorumScore,
+              requiredQuorumScore: admissionStatus.requiredQuorumScore,
+              independentPeerCount: admissionStatus.independentPeers,
+            },
+          };
+        }
       }
     } else if (peerCount >= minPeersRequired && !isMainnetNetwork) {
       // Level 1: SAFE Mining - Dev/testnet with enough peers

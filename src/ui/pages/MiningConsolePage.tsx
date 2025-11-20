@@ -201,6 +201,25 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         try { p2p.onMessage?.("NEW_BLOCK_HEADER", onNewBlockHeader); } catch {}
         try { p2p.onMessage?.("NEW_BLOCK", onNewBlock); } catch {}
         try { p2p.onMessage?.("BLOCKS", onBlocks); } catch {}
+        // Handle BOOTSTRAP_RESPONSE to quickly raise local height from 0
+        try { 
+            p2p.onMessage?.("BOOTSTRAP_RESPONSE", async (payload: any) => {
+                try {
+                    // Update hints
+                    if (typeof window !== "undefined" && payload?.latestHeight > 0) {
+                        (window as any).lastRootTipHeight = payload.latestHeight;
+                        (window as any).lastRootTipHash = payload.latestHeaderHash || "";
+                        if (payload.availableFromHeight) {
+                            (window as any).lastAvailableFromHeight = payload.availableFromHeight;
+                        }
+                    }
+                    // Apply bootstrap data using BootstrapSyncManager
+                    const { BootstrapSyncManager } = await import("../../core/bootstrapSync.js");
+                    const mgr = new BootstrapSyncManager(ctx);
+                    await mgr.processBootstrapResponse(payload);
+                } catch {}
+            }); 
+        } catch {}
 
         // Proactively query network view on mount
         try { p2p.broadcast?.("GLOBAL_VIEW_REQUEST", {}); } catch {}
