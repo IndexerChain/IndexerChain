@@ -114,6 +114,67 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
     }, [peerCount, localHeight, networkHeight, props.chainContext, props.p2pNode]);
 
+    // Minimal P2P wiring for Console-only mode (ensure sync works even when App side-effects are not mounted)
+    useEffect(() => {
+        const ctx = props.chainContext as any;
+        const p2p = props.p2pNode as any;
+        if (!ctx || !p2p) return;
+
+        // GLOBAL_VIEW_RESPONSE → update network height hint
+        const onGlobalViewResponse = (data: any) => {
+            try {
+                const h = Number(data?.height || 0);
+                if (Number.isFinite(h) && h >= 0) {
+                    const prev = (window as any).lastRootTipHeight || 0;
+                    (window as any).lastRootTipHeight = Math.max(prev, h);
+                }
+            } catch {}
+        };
+
+        // NEW_BLOCK_HEADER → header-first relay handling
+        const onNewBlockHeader = async (compactHeader: any, sender: string) => {
+            try {
+                const { handleReceivedBlockHeader } = await import("../../core/sync.js");
+                await handleReceivedBlockHeader(compactHeader, ctx, p2p, sender);
+            } catch {}
+        };
+
+        // NEW_BLOCK → append full block
+        const onNewBlock = async (block: any, sender: string) => {
+            try {
+                const { handleReceivedBlock } = await import("../../core/sync.js");
+                await handleReceivedBlock(block, ctx, p2p, sender);
+            } catch {}
+        };
+
+        // BLOCKS (batch) → append each
+        const onBlocks = async (payload: any, sender: string) => {
+            try {
+                const { handleReceivedBlock } = await import("../../core/sync.js");
+                const list: any[] = Array.isArray(payload?.blocks) ? payload.blocks : [];
+                for (const b of list) {
+                    await handleReceivedBlock(b, ctx, p2p, sender);
+                }
+            } catch {}
+        };
+
+        // Register listeners (offMessage may not exist; ignore cleanup if absent)
+        try { p2p.onMessage?.("GLOBAL_VIEW_RESPONSE", onGlobalViewResponse); } catch {}
+        try { p2p.onMessage?.("NEW_BLOCK_HEADER", onNewBlockHeader); } catch {}
+        try { p2p.onMessage?.("NEW_BLOCK", onNewBlock); } catch {}
+        try { p2p.onMessage?.("BLOCKS", onBlocks); } catch {}
+
+        // Proactively query network view on mount
+        try { p2p.broadcast?.("GLOBAL_VIEW_REQUEST", {}); } catch {}
+
+        return () => {
+            try { p2p.offMessage?.("GLOBAL_VIEW_RESPONSE", onGlobalViewResponse); } catch {}
+            try { p2p.offMessage?.("NEW_BLOCK_HEADER", onNewBlockHeader); } catch {}
+            try { p2p.offMessage?.("NEW_BLOCK", onNewBlock); } catch {}
+            try { p2p.offMessage?.("BLOCKS", onBlocks); } catch {}
+        };
+    }, [props.chainContext, props.p2pNode]);
+
     const copyAddress = () => {
         if (props.nodeAddress) {
             navigator.clipboard.writeText(props.nodeAddress);
