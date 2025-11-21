@@ -7,6 +7,8 @@ interface MobileMinerPageProps {
   isMining: boolean;
   onToggleMining: () => void;
   p2pNode: any;
+  finalityManager?: any;
+  localRole?: string;
 }
 
 export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
@@ -19,6 +21,13 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     return true;
   });
   const [balanceVerified, setBalanceVerified] = useState<number | null>(null);
+  const [lastProofHeight, setLastProofHeight] = useState<number>(0);
+  const [verifying, setVerifying] = useState<boolean>(false);
+  const [signalConnected, setSignalConnected] = useState<boolean>(false);
+  const [displayMining, setDisplayMining] = useState<boolean>(false);
+  const [bubble, setBubble] = useState<{ text: string; visible: boolean }>({ text: '', visible: false });
+  const [guardReason, setGuardReason] = useState<string>('');
+  const [miningGuardOk, setMiningGuardOk] = useState<boolean>(true);
   const address = props.nodeAddress || '';
   const shortAddr = useMemo(() => address ? `${address.slice(0, 10)}...${address.slice(-6)}` : '' , [address]);
 
@@ -46,6 +55,34 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     }
   }, [autoMining, props.isMining, props.chainContext]);
 
+  // Keep button visual consistent
+  useEffect(() => {
+    setDisplayMining(props.isMining || autoMining);
+  }, [props.isMining, autoMining]);
+
+  // Mining guard polling (reasons when cannot mine)
+  useEffect(() => {
+    let timer: any;
+    const tick = async () => {
+      try {
+        const { MiningGuard } = await import('../../core/miningGuard.js');
+        const res = await MiningGuard.canMineNow(
+          props.chainContext,
+          props.p2pNode,
+          props.finalityManager,
+          ((props.localRole as ('LEADER' | 'FOLLOWER' | undefined)) ?? 'LEADER'),
+          props.nodeAddress || undefined,
+          true
+        );
+        setMiningGuardOk(!!res?.ok);
+        setGuardReason(res?.ok ? '' : (res?.reason || 'Mining guard blocked.'));
+      } catch {}
+    };
+    tick();
+    timer = setInterval(tick, 2000);
+    return () => clearInterval(timer);
+  }, [props.chainContext, props.p2pNode, props.finalityManager, props.localRole, props.nodeAddress]);
+
   // Light node: poll stateRoot + balance proof and verify locally
   useEffect(() => {
     const p2p = props.p2pNode;
@@ -65,11 +102,15 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
         const root = String(msg.root || latestRoot || '');
         const address = String(msg.address || props.nodeAddress);
         const valueStr = String(msg.value || '0');
+        const h = Number(msg.height || 0) || 0;
+        setVerifying(true);
         const ok = root && await verifyBalanceProof(root, address, valueStr, msg.proof);
         if (ok) {
           const val = Number(valueStr);
           if (Number.isFinite(val)) setBalanceVerified(val);
+          if (h > 0) setLastProofHeight(h);
         }
+        setVerifying(false);
       } catch {}
     };
     try { p2p.onMessage?.('STATE_ROOT' as any, onRoot); cleanup.push(['STATE_ROOT', onRoot]); } catch {}
@@ -79,6 +120,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
       try {
         const tip = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
         const target = Math.max(1, Number(tip) || 1);
+        setSignalConnected(!!p2p?.ws && p2p.ws.readyState === 1);
         p2p.sendToSignalServer?.('REQUEST_STATE_ROOT', { targetHeight: target });
         p2p.sendToSignalServer?.('REQUEST_BALANCE_PROOF', { address: props.nodeAddress, targetHeight: target });
       } catch {}
@@ -143,14 +185,81 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
 
   const displayBalance = (balanceVerified ?? (props.chainContext?.indexState?.getBalance?.(address) || 0));
 
+  const copyAddr = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+    } catch {}
+  };
+
+  // Estimate reward for bubble info
+  const estimatePerBlockReward = async (): Promise<number> => {
+    try {
+      const ctx = props.chainContext;
+      if (!ctx) return 0;
+      const currentHeight = ctx.storage.getTip()?.header.height || 0;
+      const mod = await import('../../core/idcEmission.js');
+      const raw = mod.getBlockRewardRaw(currentHeight + 1);
+      const toIDC = mod.uIDCToIDC(raw);
+      return toIDC;
+    } catch {
+      return 0;
+    }
+  };
+
+  const showBubble = (text: string) => {
+    setBubble({ text, visible: true });
+    setTimeout(() => setBubble({ text: '', visible: false }), 1200);
+  };
+
+  const handleStartStop = async () => {
+    // Auto-mining mode: normal toggle
+    if (autoMining) {
+      props.onToggleMining();
+      return;
+    }
+    // Single-shot mine with feedback when not auto-mining
+    if (!miningGuardOk) {
+      showBubble(`⚠️ ${guardReason || 'Cannot mine now'}`);
+      return;
+    }
+    // Show estimated reward bubble immediately
+    const est = await estimatePerBlockReward();
+    if (est > 0) showBubble(`+${est.toFixed(2)} IDC`);
+    // Start mining briefly and stop (do not flip visual button)
+    try {
+      props.onToggleMining(); // start
+      setTimeout(() => {
+        try { props.onToggleMining(); } catch {}
+      }, 1600);
+    } catch {}
+  };
+
   return (
     <div style={{ background: '#0d1117', color: '#c9d1d9', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', padding: '16px', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontWeight: 700 }}>IndexerChain Mobile Miner</div>
-        <div style={{ fontSize: '12px', color: '#8b949e' }}>{shortAddr}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ fontSize: '12px', color: '#8b949e' }}>{shortAddr}</div>
+          <button onClick={copyAddr} style={{ background: 'none', border: '1px solid #30363d', color: '#58a6ff', borderRadius: 6, padding: '2px 6px', fontSize: 12 }}>复制</button>
+        </div>
       </div>
 
-      <div style={{ marginTop: 24, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 16 }}>
+      <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+        <div style={{ flex: 1, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 10 }}>
+          <div style={{ fontSize: 11, color: '#8b949e' }}>Signal</div>
+          <div style={{ marginTop: 4, fontSize: 13 }}>
+            {signalConnected ? 'Connected' : 'Connecting...'}
+          </div>
+        </div>
+        <div style={{ flex: 1, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 10 }}>
+          <div style={{ fontSize: 11, color: '#8b949e' }}>Proof</div>
+          <div style={{ marginTop: 4, fontSize: 13 }}>
+            {verifying ? 'Verifying...' : (lastProofHeight > 0 ? `Verified @ ${lastProofHeight.toLocaleString()}` : '—')}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 16 }}>
         <div style={{ fontSize: 12, color: '#8b949e' }}>Current Balance (IDC)</div>
         <div style={{ fontSize: 28, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>{displayBalance.toFixed(2)}</div>
       </div>
@@ -160,14 +269,14 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
         <input type="checkbox" checked={autoMining} onChange={(e) => setAutoMining(e.target.checked)} />
       </div>
 
-      <div style={{ marginTop: 24, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ marginTop: 24, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <button
-          onClick={props.onToggleMining}
+          onClick={handleStartStop}
           style={{
             width: '100%',
             maxWidth: 480,
             padding: '18px 16px',
-            background: props.isMining ? '#da3633' : '#238636',
+            background: displayMining ? '#da3633' : '#238636',
             color: '#fff',
             border: 'none',
             borderRadius: 14,
@@ -175,9 +284,15 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
             fontWeight: 700
           }}
         >
-          {props.isMining ? '停止挖矿 (Stop)' : '启动挖矿 (Start)'}
+          {displayMining ? '停止挖矿 (Stop)' : '启动挖矿 (Start)'}
         </button>
+        {bubble.visible && (
+          <div style={{ position: 'absolute', bottom: '70%', fontSize: 20, color: '#4ee672', fontWeight: 700, animation: 'rise 1.2s ease-out' }}>
+            {bubble.text}
+          </div>
+        )}
       </div>
+      <style>{`@keyframes rise{0%{transform:translateY(0);opacity:0}30%{opacity:1}100%{transform:translateY(-30px);opacity:0}}`}</style>
     </div>
   );
 };

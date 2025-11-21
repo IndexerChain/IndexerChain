@@ -799,9 +799,18 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 Local Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar">{localHeight.toLocaleString()}</span> | 
                                 Network Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar">{networkHeight.toLocaleString()}</span> | 
                                 Peers: <span className={styles.dataValue} id="peer-count-bar">{peerCount}</span>
+                                {nodeMode === 'light' ? <span style={{ marginLeft: 10, color: '#8b949e' }}>| Mode: Light (Header+Proof)</span> : null}
                             </span>
                         </div>
 
+                        {nodeMode === 'light' && (
+                            <div className={styles.card} style={{ background: '#0f1520', borderColor: '#30363d' }}>
+                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Light Node (Header+Proof)</div>
+                                <div style={{ color: '#8b949e', fontSize: 13 }}>
+                                    轻节点不存储本地区块，仅通过区块头与余额证明展示余额；当你开始挖矿时，会自动拉取并应用最新快照以具备世界状态。
+                                </div>
+                            </div>
+                        )}
                         {/* Dashboard Grid */}
                         <div className={styles.dashboardGrid}>
                             {/* Left Panel */}
@@ -825,6 +834,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 />
 
                                 {/* Slot Card */}
+                                {nodeMode !== 'light' && (
                                 <div className={`${styles.card} ${styles.slotCard}`}>
                                     <h3>Slot 领导者轮换 (50ms Slot)</h3>
                                     
@@ -850,8 +860,10 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         ))}
                                     </div>
                                 </div>
+                                )}
 
                                 {/* Weight Card */}
+                                {nodeMode !== 'light' && (
                                 <div className={`${styles.card} ${styles.weightCard}`}>
                                     <h3>奖励预估与权重 (Pooled Rewards)</h3>
                                     
@@ -870,9 +882,11 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         <span className={styles.dataValue} style={{ fontSize: '1em', color: '#4ee672' }}>{onlineScore}%</span>
                                     </p>
                                 </div>
+                                )}
                             </div>
 
                             {/* Right Panel - Blocks Card */}
+                            {nodeMode !== 'light' && (
                             <div className={`${styles.card} ${styles.blocksCard}`}>
                                 <h3>
                                     <span>实时区块列表 (Live Block Feed)</span>
@@ -920,6 +934,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     </table>
                                 </div>
                             </div>
+                            )}
                         </div>
                     </div>
                 )}
