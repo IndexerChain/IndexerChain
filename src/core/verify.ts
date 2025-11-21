@@ -210,13 +210,10 @@ export async function verifyBlock(
       const meta = coinbaseTx.ops.find((op) => op.type !== "TRANSFER" && (op as any).namespace === "payout" && typeof (op as any).value === "string");
       if (meta && typeof (meta as any).value === "string") {
         const parsed = JSON.parse((meta as any).value || "{}");
-        const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-        const leaves = entries
-          .map((e: any) => ({ addr: String(e.address || ""), amt: String(e.amountUIDC || "0") }))
-          .filter((x: any) => x.addr && x.amt)
-          .sort((a: any, b: any) => a.addr.localeCompare(b.addr))
-          .map((x: any) => `${x.addr}:${x.amt}`);
-        const computedRoot = await calcMerkleRoot(leaves);
+        const rawEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+        const { computePayoutRoot } = await import("./pool/payout.js");
+        const entries = rawEntries.map((e: any) => ({ address: String(e.address || ""), amountUIDC: String(e.amountUIDC || "0") }));
+        const computedRoot = await computePayoutRoot(entries);
         if (computedRoot !== pr) {
           return {
             valid: false,

@@ -221,13 +221,42 @@ export const useMiningData = ({
                 const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
                 const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
                 const leaderInfo = deriveLeader(b);
-                const row: BlockData = {
+                const slotVal = (() => {
+                    try {
+                        const t = Number(b.header.timestamp || 0);
+                        const sec = Number(chainContext.params?.targetBlockTime || 10);
+                        return sec > 0 ? Math.floor(t / sec) : 0;
+                    } catch { return 0; }
+                })();
+                    // compute coinbase-derived pool reward (sum of TRANSFER amounts)
+                    let poolRewardIDC = 0;
+                    try {
+                        const coinbase = b?.txs?.[0];
+                        if (coinbase && coinbase.ownerAddress === 'idc_system' && Array.isArray(coinbase.ops)) {
+                            for (const op of coinbase.ops) {
+                                if (op.type === 'TRANSFER' && typeof op.amount === 'number') {
+                                    poolRewardIDC += op.amount;
+                                }
+                            }
+                        }
+                    } catch {}
+                    const zkRoot = (typeof window !== 'undefined' && ((window as any).lastZkStateRoot || (window as any).lastRootTipStateCommitment)) || undefined;
+                    const zkFinalized = (typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight >= (b?.header?.height || 0)) || false;
+                    const zkProofHashVal = (b as any)?.header?.zkProofHash;
+                    const row: BlockData = {
                     height: b.header.height,
-                    hash: b.hash.substring(0, 10) + '...',
+                        hash: b.hash.substring(0, 10) + '...',
+                        fullHash: String(b.hash || ''),
+                    slot: slotVal,
                     leader: leaderInfo.label,
                     time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
                     recipients: b.txs.length,
                     isSelf: leaderInfo.isSelf,
+                        poolRewardIDC,
+                        payoutRoot: (b?.header?.payoutRoot ? String(b.header.payoutRoot) : undefined),
+                        zkProofHash: (zkProofHashVal ? String(zkProofHashVal) : undefined),
+                        zkRoot: zkRoot ? String(zkRoot) : undefined,
+                        zkFinalized,
                 };
                 setBlocks(prev => [row, ...prev].slice(0, 50));
 
@@ -266,9 +295,17 @@ export const useMiningData = ({
                     const rawDelta = prev ? Math.abs(b.header.timestamp - prev.header.timestamp) : 0;
                     const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
                     const leaderInfo = deriveLeader(b);
+                    const slotVal = (() => {
+                        try {
+                            const t = Number(b.header.timestamp || 0);
+                            const sec = Number(chainContext.params?.targetBlockTime || 10);
+                            return sec > 0 ? Math.floor(t / sec) : 0;
+                        } catch { return 0; }
+                    })();
                     const row: BlockData = {
                         height: b.header.height,
                         hash: String(b.hash || '').substring(0, 10) + '...',
+                        slot: slotVal,
                         leader: leaderInfo.label,
                         time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
                         recipients: Array.isArray(b.txs) ? b.txs.length : 0,
@@ -290,13 +327,42 @@ export const useMiningData = ({
                     const rawDelta = prev ? Math.abs(latest.header.timestamp - prev.header.timestamp) : 0;
                     const deltaMs = rawDelta > 1_000_000 ? rawDelta : rawDelta * 1000;
                     const leaderInfo = deriveLeader(latest);
+                    const slotVal = (() => {
+                        try {
+                            const t = Number(latest.header.timestamp || 0);
+                            const sec = Number(chainContext.params?.targetBlockTime || 10);
+                            return sec > 0 ? Math.floor(t / sec) : 0;
+                        } catch { return 0; }
+                    })();
+                    // compute coinbase-derived pool reward (sum of TRANSFER amounts)
+                    let poolRewardIDC2 = 0;
+                    try {
+                        const coinbase2 = latest?.txs?.[0];
+                        if (coinbase2 && coinbase2.ownerAddress === 'idc_system' && Array.isArray(coinbase2.ops)) {
+                            for (const op of coinbase2.ops) {
+                                if (op.type === 'TRANSFER' && typeof op.amount === 'number') {
+                                    poolRewardIDC2 += op.amount;
+                                }
+                            }
+                        }
+                    } catch {}
+                    const zkRoot2 = (typeof window !== 'undefined' && ((window as any).lastZkStateRoot || (window as any).lastRootTipStateCommitment)) || undefined;
+                    const zkFinalized2 = (typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight >= (latest?.header?.height || 0)) || false;
+                    const zkProofHashVal2 = (latest as any)?.header?.zkProofHash;
                     const row: BlockData = {
                         height: latest.header.height,
                         hash: String(latest.hash || '').substring(0, 10) + '...',
+                        fullHash: String(latest.hash || ''),
+                        slot: slotVal,
                         leader: leaderInfo.label,
                         time: deltaMs > 0 ? `${deltaMs.toFixed(0)}ms` : '--',
                         recipients: Array.isArray(latest.txs) ? latest.txs.length : 0,
                         isSelf: leaderInfo.isSelf,
+                        poolRewardIDC: poolRewardIDC2,
+                        payoutRoot: (latest?.header?.payoutRoot ? String(latest.header.payoutRoot) : undefined),
+                        zkProofHash: (zkProofHashVal2 ? String(zkProofHashVal2) : undefined),
+                        zkRoot: zkRoot2 ? String(zkRoot2) : undefined,
+                        zkFinalized: zkFinalized2,
                     };
                     setBlocks(prev => [row, ...prev].slice(0, 50));
                     lastHeightRef.current = Math.max(lastHeightRef.current, row.height);

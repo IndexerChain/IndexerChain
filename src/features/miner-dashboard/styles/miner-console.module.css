@@ -43,7 +43,7 @@
 
 .mainContent {
     flex-grow: 1;
-    padding: calc(var(--spacing-unit) * 3);
+    padding: calc(var(--spacing-unit) * 2);
     overflow-y: auto;
 }
 
@@ -140,22 +140,41 @@
 .dashboardGrid {
     display: grid;
     grid-template-columns: 1fr 2fr;
-    gap: calc(var(--spacing-unit) * 2.5);
+    gap: calc(var(--spacing-unit) * 2);
+    align-items: start;
 }
 
 /* V11 保持: 左侧面板单列布局 */
 .leftPanel {
     display: grid;
     grid-template-columns: 1fr;
-    gap: calc(var(--spacing-unit) * 2.5);
+    gap: calc(var(--spacing-unit) * 2);
     grid-auto-rows: minmax(min-content, max-content);
+}
+
+/* 右侧面板单列布局 */
+.rightPanel {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(var(--spacing-unit) * 2);
+    grid-auto-rows: minmax(min-content, max-content);
+}
+
+/* 顶部组件容器 */
+.topSection {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(var(--spacing-unit) * 2);
+    margin-bottom: calc(var(--spacing-unit) * 2);
 }
 
 .card {
     background-color: var(--color-surface);
-    padding: calc(var(--spacing-unit) * 2);
+    padding: calc(var(--spacing-unit) * 1.5);
     border-radius: 8px;
     border: 1px solid var(--color-border);
+    box-sizing: border-box;
+    width: 100%;
 }
 
 .card h3 {
@@ -283,10 +302,10 @@
 
 /* --- 实时区块列表 V12 稳定流修复保持 --- */
 .blocksCard {
-    grid-column: 2;
     display: flex;
     flex-direction: column;
     height: 600px; /* 固定高度，内部表格填满 */
+    width: 100%; /* 确保宽度填满容器 */
 }
 
 .liveFeedContainer {
@@ -479,12 +498,16 @@
         grid-template-columns: 1fr;
     }
 
+    .rightPanel {
+        grid-template-columns: 1fr;
+    }
+
     .controlCard {
         grid-column: 1 / 2;
     }
 
     .blocksCard {
-        grid-column: 1 / 2;
+        width: 100%;
     }
 
     .mainContent {

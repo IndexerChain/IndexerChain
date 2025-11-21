@@ -1432,27 +1432,14 @@ export async function handleRootTipUpdate(
   const rootHeight = rootTip.latestHeight;
   const rootTipHash = rootTip.latestHeaderHash;
 
-  // Phase 47: Wait for peer connections before attempting sync
-  // This is especially important when ROOT_TIP_UPDATE arrives before WebRTC connections are established
+  // Pool Mining Architecture: No need to wait for peer connections
+  // Independent IP nodes can sync using Signal Bootstrap + Warp Sync without P2P peers
   let peerCount = p2pNode.getPeerCount();
   if (peerCount === 0 && localHeight < rootHeight) {
     if (statusCallback) {
-      statusCallback(`Waiting for peer connections before sync...`);
+      statusCallback(`Syncing from Signal Server (no P2P peers needed)...`);
     }
-    
-    // Wait up to 10 seconds for peers to connect
-    const maxWaitTime = 10000;
-    const checkInterval = 500;
-    const startTime = Date.now();
-    
-    while (peerCount === 0 && Date.now() - startTime < maxWaitTime) {
-      await new Promise(resolve => setTimeout(resolve, checkInterval));
-      peerCount = p2pNode.getPeerCount();
-    }
-    
-    if (peerCount === 0 && statusCallback) {
-      statusCallback(`No peers available yet. Will retry when peers connect...`);
-    }
+    // Continue with Signal-based sync (Bootstrap Blocks + Warp Sync)
   }
 
   // Phase 47: Special case - If local is at genesis (height 0), ALWAYS force warp sync
@@ -1632,22 +1619,27 @@ export async function handleRootTipUpdate(
     }
   }
 
-  // Step 2: If height equal, no sync needed
-  if (rootHeight === localHeight) {
-    // Still check if hash matches (might be on a fork)
-    if (rootTipHash === localTipHash) {
-      return {
-        success: true,
-        synced: false,
-        method: "none",
-        fromHeight: localHeight,
-        toHeight: rootHeight,
-      };
-    }
-    // Hash mismatch at same height - this is a fork, but we'll handle it below
+  // All-Light-Node Chain: Light nodes only need headers, not full blocks
+  // Step 2: Check if header hash matches (primary sync condition for light nodes)
+  if (rootTipHash && localTipHash && rootTipHash === localTipHash) {
+    // Header hash matches - light node is synced (regardless of height history)
+    return {
+      success: true,
+      synced: true,
+      method: "none",
+      fromHeight: localHeight,
+      toHeight: rootHeight,
+    };
   }
 
-  // Step 3: If far behind (>= 1000 blocks), use Warp Sync
+  // Step 2.1: If height equal but hash mismatch, this is a fork
+  if (rootHeight === localHeight && rootTipHash !== localTipHash) {
+    // Hash mismatch at same height - this is a fork, handle it below
+  }
+
+  // Step 3: Light Node Header Sync - Only sync headers, not full blocks
+  // For light nodes, we only need to sync headers up to rootTip
+  // If we're far behind in headers (>= 1000), use Warp Sync to get headers + state root
   if (rootHeight - localHeight >= 1000) {
     // Large gap detected, using warp sync
     const warpSyncManager = getWarpSyncManager();
@@ -1674,7 +1666,8 @@ export async function handleRootTipUpdate(
     };
   }
 
-  // Step 4: If local tip is in recent headers, use Fast Sync
+  // Step 4: Light Node Header Sync - For light nodes, we only need headers, not full blocks
+  // If we have recent headers from rootTip, try to sync only headers
   if (rootTip.recentHeaders && rootTip.recentHeaders.length > 0) {
     // Convert recent headers to hash set
     const recentHashes = new Set<string>();
@@ -1694,13 +1687,45 @@ export async function handleRootTipUpdate(
     }
 
     if (recentHashes.has(localTipHash)) {
-      // Local tip is in recent headers - no fork, just need to sync
-      // Local tip found in recent headers, using fast sync
+      // Local tip is in recent headers - no fork
+      // For light nodes: If we're close to rootTip (within 500 blocks), allow mining
+      // Headers will sync in background, but we don't need to wait for full block sync
+      const heightDiff = rootHeight - localHeight;
+      if (heightDiff <= 500) {
+        // Close enough - light node can mine while headers sync in background
+        return {
+          success: true,
+          synced: true, // Consider synced for light nodes (header hash matches)
+          method: "fast",
+          fromHeight: localHeight,
+          toHeight: rootHeight,
+        };
+      }
+      // If far behind, still try to sync headers (but don't block mining if Signal is connected)
       return await fastSync500(chainContext, p2pNode, rootHeight, rootTip.recentHeaders);
     }
   }
 
-  // Step 5: Check for common ancestor (only if we suspect a fork)
+  // Step 5: Light Node Sync - For light nodes, if Signal is connected, allow mining while headers sync
+  // Check if we're connected to Signal (light nodes don't need full block history)
+  const isSignalConnected = p2pNode?.isConnected ?? false;
+  if (isSignalConnected && localTipHash !== rootTipHash) {
+    // Light node with Signal connection: Headers will sync in background
+    // Don't block mining - light nodes only need latest header, not full history
+    const heightDiff = rootHeight - localHeight;
+    if (heightDiff <= 1000) {
+      // Reasonable height difference - allow mining while headers sync
+      return {
+        success: true,
+        synced: true, // Consider synced for light nodes (Signal connected, headers syncing)
+        method: "none",
+        fromHeight: localHeight,
+        toHeight: rootHeight,
+      };
+    }
+  }
+
+  // Step 6: Check for common ancestor (only if we suspect a fork)
   // Only check if local tip hash doesn't match root tip hash
   if (localTipHash !== rootTipHash && rootTip.recentHeaders && rootTip.recentHeaders.length > 0) {
       // Only miners can trigger fork detection and reorg

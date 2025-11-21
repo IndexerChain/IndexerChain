@@ -809,6 +809,14 @@ export class BrowserP2PNode implements P2PNode {
         } else {
           logger.warn(`[Phase 32] ⚠️ No handlers registered for BOOTSTRAP_RESPONSE - bootstrap sync may not work`);
         }
+        // Cache ZK fields for UI
+        if (typeof window !== "undefined") {
+          try {
+            (window as any).lastZkStateRoot = message.zkStateRoot ?? message.stateCommitment ?? null;
+            (window as any).lastZkFinalizedHeight = message.zkFinalizedHeight ?? 0;
+            (window as any).lastZkProofHash = message.zkProofHash ?? null;
+          } catch {}
+        }
         break;
 
       // Phase 32: Handle root tip update from signal server
@@ -828,6 +836,15 @@ export class BrowserP2PNode implements P2PNode {
           }
         } else {
           logger.warn(`[Phase 32] ⚠️ No handlers registered for ROOT_TIP_UPDATE`);
+        }
+        // Cache ZK fields for UI (if provided)
+        if (typeof window !== "undefined") {
+          try {
+            const rt = (message as any)?.rootTip || {};
+            (window as any).lastZkStateRoot = rt.zkStateRoot ?? rt.stateCommitment ?? (window as any).lastZkStateRoot ?? null;
+            if (typeof rt.zkFinalizedHeight === "number") (window as any).lastZkFinalizedHeight = rt.zkFinalizedHeight;
+            if (rt.zkProofHash) (window as any).lastZkProofHash = rt.zkProofHash;
+          } catch {}
         }
         break;
       
@@ -918,6 +935,17 @@ export class BrowserP2PNode implements P2PNode {
           }
         } else {
           logger.debug(`[LightNode] No handlers registered for BALANCE_PROOF`);
+        }
+        break;
+      }
+      case "PAYOUT_PROOF": {
+        const handlers = this.messageHandlers.get("PAYOUT_PROOF" as any);
+        if (handlers && handlers.size > 0) {
+          for (const handler of handlers) {
+            handler(message, "signal-server");
+          }
+        } else {
+          logger.debug(`[LightNode] No handlers registered for PAYOUT_PROOF`);
         }
         break;
       }

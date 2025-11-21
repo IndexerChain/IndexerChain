@@ -586,26 +586,29 @@ export async function appendMinedBlock(
       } catch (error) {
         // Don't fail block append if snapshot fails
       }
-      // Phase 50: Seed snapshot to signal server for bootstrap
+      // Phase 50: Seed snapshot to signal server for bootstrap (configurable)
       try {
-        if (context.p2p && (context.p2p as any).sendToSignalServer) {
+        const { isSnapshotSeedingEnabled, getSnapshotSeedingIntervalBlocks } = await import("./featureFlags.js");
+        const seedingEnabled = isSnapshotSeedingEnabled();
+        const seedInterval = Math.max(1, getSnapshotSeedingIntervalBlocks());
+        if (seedingEnabled && context.p2p && (context.p2p as any).sendToSignalServer && (height % seedInterval === 0)) {
           if (typeof localStorage !== "undefined") {
             const key = `indexerchain_snapshot_v1_${height}`;
             const raw = localStorage.getItem(key);
             if (raw) {
-              const meta = { id: `snap_${String(height).padStart(7, "0")}`, height, createdAt: Date.now(), version: 1 };
-              // Prefer metadata from snapshot module if available
-              try {
-                const { loadAllSnapshotMeta } = await import("./snapshot.js");
-                const allMetas = loadAllSnapshotMeta();
-                const m = allMetas.find((x: any) => x.height === height);
-                if (m) {
-                  (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta: m, data: JSON.parse(raw).data || JSON.parse(raw).delta || null });
-                } else {
-                  (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta, data: JSON.parse(raw).data || JSON.parse(raw).delta || null });
-                }
-              } catch {
-                (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta, data: JSON.parse(raw).data || JSON.parse(raw).delta || null });
+              // Parse once
+              let parsed: any = null;
+              try { parsed = JSON.parse(raw); } catch {}
+              const base64Data = parsed?.data || parsed?.delta || null;
+              if (base64Data && typeof base64Data === "string") {
+                let meta: any = { id: `snap_${String(height).padStart(7, "0")}`, height, createdAt: Date.now(), version: 1 };
+                try {
+                  const { loadAllSnapshotMeta } = await import("./snapshot.js");
+                  const allMetas = loadAllSnapshotMeta();
+                  const m = allMetas.find((x: any) => x.height === height);
+                  if (m) meta = m;
+                } catch {}
+                (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta, data: base64Data });
               }
             }
           }

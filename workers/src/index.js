@@ -855,6 +855,10 @@ export class SignalingRoom {
             recentHeaders: data.wantHeaders ? this.bootstrapState.recentHeaders.slice(-(data.headerCount || 500)) : undefined,
             latestSnapshotMeta: data.wantSnapshotMeta ? this.bootstrapState.latestSnapshotMeta : undefined,
             stateCommitment: this.bootstrapState.stateCommitment,
+            // ZK additions for all-light mode
+            zkStateRoot: this.bootstrapState.latestZkStateRoot || this.bootstrapState.stateCommitment || null,
+            zkFinalizedHeight: this.bootstrapState.zkFinalizedHeight || 0,
+            zkProofHash: this.bootstrapState.latestZkProofHash || null,
             trustLevel: this.bootstrapState.trustLevel,
             stale: false, // Phase 37: Can be set to true if rootTip is outdated
             timestamp: Date.now(),
@@ -1061,6 +1065,9 @@ export class SignalingRoom {
             tipHash: this.bootstrapState.latestHeaderHash,
             availableFromHeight: this.bootstrapBlocksMeta?.availableFromHeight || 0,
             availableToHeight: this.bootstrapBlocksMeta?.availableToHeight || 0,
+            // ZK additions
+            zkStateRoot: this.bootstrapState.latestZkStateRoot || this.bootstrapState.stateCommitment || null,
+            zkFinalizedHeight: this.bootstrapState.zkFinalizedHeight || 0,
             timestamp: Date.now(),
             sender: 'signal-server',
           };
@@ -1104,6 +1111,10 @@ export class SignalingRoom {
           this.bootstrapState.latestHeaderHash = headerHash;
           this.bootstrapState.lastUpdated = Date.now();
           this.bootstrapState.stateCommitment = stateCommitment || header?.stateCommitment || null;
+          // ZK aliases/state
+          this.bootstrapState.latestZkStateRoot = this.bootstrapState.stateCommitment;
+          if (payload.zkProofHash) this.bootstrapState.latestZkProofHash = payload.zkProofHash;
+          if (typeof payload.zkFinalizedHeight === 'number') this.bootstrapState.zkFinalizedHeight = payload.zkFinalizedHeight;
           this.bootstrapState.trustLevel = 'root-only'; // Phase 37: Default to root-only, can be upgraded to 'local-majority' if verified by multiple peers
           
           // Phase 38: Update recent headers (keep last 500 for faster sync)
@@ -1162,6 +1173,10 @@ export class SignalingRoom {
               updatedAt: this.bootstrapState.lastUpdated,
               stateCommitment: this.bootstrapState.stateCommitment,
               trustLevel: this.bootstrapState.trustLevel,
+              // ZK additions
+              zkStateRoot: this.bootstrapState.latestZkStateRoot || this.bootstrapState.stateCommitment || null,
+              zkFinalizedHeight: this.bootstrapState.zkFinalizedHeight || 0,
+              zkProofHash: this.bootstrapState.latestZkProofHash || null,
             },
             timestamp: Date.now(),
           };
@@ -1278,6 +1293,101 @@ export class SignalingRoom {
               error: error instanceof Error ? error.message : String(error),
               requestId,
             }));
+          }
+        } else if (data.type === 'REQUEST_PAYOUT_PROOF') {
+          // Build Merkle proof for "address:amountUIDC" list extracted from coinbase at given height
+          try {
+            const height = parseInt(data.height || '0', 10);
+            const address = String(data.address || '');
+            if (!height || !address) {
+              server.send(JSON.stringify({ type: 'PAYOUT_PROOF', ok: false, reason: 'INVALID_PARAMS' }));
+              return;
+            }
+            const block = await this.state.storage.get(`block:${height}`);
+            if (!block || !block.txs || block.txs.length === 0) {
+              server.send(JSON.stringify({ type: 'PAYOUT_PROOF', ok: false, reason: 'BLOCK_NOT_AVAILABLE' }));
+              return;
+            }
+            const coinbase = block.txs[0];
+            if (coinbase.ownerAddress !== 'idc_system') {
+              server.send(JSON.stringify({ type: 'PAYOUT_PROOF', ok: false, reason: 'NO_COINBASE' }));
+              return;
+            }
+            // Try payout metadata first
+            let entries = [];
+            try {
+              const meta = coinbase.ops.find((op) => op.type !== 'TRANSFER' && op.namespace === 'payout' && typeof op.value === 'string');
+              if (meta) {
+                const parsed = JSON.parse(meta.value || '{}');
+                entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+              }
+            } catch {}
+            if (!entries.length) {
+              // Fallback to TRANSFER ops; convert amount(IDC) to UIDC by *1e6
+              for (const op of coinbase.ops) {
+                if (op.type === 'TRANSFER' && op.to && typeof op.amount === 'number') {
+                  const amtUIDC = String(Math.round(op.amount * 1_000_000));
+                  entries.push({ address: op.to, amountUIDC: amtUIDC });
+                }
+              }
+            }
+            const leaves = entries
+              .map((e) => ({ addr: String(e.address || ''), amt: String(e.amountUIDC || '0') }))
+              .filter((x) => x.addr && x.amt)
+              .sort((a, b) => a.addr.localeCompare(b.addr))
+              .map((x) => `${x.addr}:${x.amt}`);
+            if (leaves.length === 0) {
+              server.send(JSON.stringify({ type: 'PAYOUT_PROOF', ok: false, reason: 'NO_ENTRIES' }));
+              return;
+            }
+            const idx = leaves.findIndex((l) => l.startsWith(address + ":"));
+            if (idx < 0) {
+              server.send(JSON.stringify({ type: 'PAYOUT_PROOF', ok: false, reason: 'ADDRESS_NOT_FOUND' }));
+              return;
+            }
+            // sha256 hex
+            async function sha256Hex(str) {
+              const enc = new TextEncoder().encode(str);
+              const h = await crypto.subtle.digest('SHA-256', enc);
+              return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
+            }
+            const leafHashes = [];
+            for (const l of leaves) leafHashes.push(await sha256Hex(l));
+            let level = [...leafHashes];
+            const siblings = [];
+            const positions = []; // 'L' means sibling is Left-of-acc, 'R' means sibling is Right-of-acc
+            let index = idx;
+            while (level.length > 1) {
+              const next = [];
+              for (let i = 0; i < level.length; i += 2) {
+                const left = level[i];
+                const right = i + 1 < level.length ? level[i + 1] : level[i];
+                const parent = await sha256Hex(left + right);
+                next.push(parent);
+                if (i === index || i + 1 === index) {
+                  const isLeft = i === index;
+                  siblings.push(isLeft ? right : left);
+                  positions.push(isLeft ? 'R' : 'L');
+                  index = Math.floor(i / 2);
+                }
+              }
+              level = next;
+            }
+            const root = level[0];
+            const leafHash = leafHashes[idx];
+            server.send(JSON.stringify({
+              type: 'PAYOUT_PROOF',
+              ok: true,
+              height,
+              address,
+              entry: leaves[idx],
+              leafHash,
+              root,
+              siblings,
+              positions
+            }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'PAYOUT_PROOF', ok: false, reason: 'INTERNAL_ERROR' }));
           }
         } else if (data.type === 'RESET_ROOT_TIP') {
           // Phase 45: Handle rootTip reset request (admin only)

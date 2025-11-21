@@ -28,6 +28,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
   const [bubble, setBubble] = useState<{ text: string; visible: boolean }>({ text: '', visible: false });
   const [guardReason, setGuardReason] = useState<string>('');
   const [miningGuardOk, setMiningGuardOk] = useState<boolean>(true);
+  const [statusText, setStatusText] = useState<string>('');
   const address = props.nodeAddress || '';
   const shortAddr = useMemo(() => address ? `${address.slice(0, 10)}...${address.slice(-6)}` : '' , [address]);
 
@@ -211,6 +212,21 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     setTimeout(() => setBubble({ text: '', visible: false }), 1200);
   };
 
+  // Force a proof refresh immediately (not waiting for poll)
+  const requestProofNow = () => {
+    try {
+      const p2p = props.p2pNode as any;
+      const tip = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+      const target = Math.max(1, Number(tip) || 1);
+      if (p2p) {
+        p2p.sendToSignalServer?.('REQUEST_STATE_ROOT', { targetHeight: target });
+        if (props.nodeAddress) {
+          p2p.sendToSignalServer?.('REQUEST_BALANCE_PROOF', { address: props.nodeAddress, targetHeight: target });
+        }
+      }
+    } catch {}
+  };
+
   const handleStartStop = async () => {
     // Auto-mining mode: normal toggle
     if (autoMining) {
@@ -219,6 +235,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     }
     // Single-shot mine with feedback when not auto-mining
     if (!miningGuardOk) {
+      setStatusText(`⚠️ ${guardReason || 'Cannot mine now'}`);
       showBubble(`⚠️ ${guardReason || 'Cannot mine now'}`);
       return;
     }
@@ -228,8 +245,14 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     // Start mining briefly and stop (do not flip visual button)
     try {
       props.onToggleMining(); // start
+      setStatusText('⛏️ Mining...');
+      // refresh proof shortly after start
+      setTimeout(requestProofNow, 600);
       setTimeout(() => {
         try { props.onToggleMining(); } catch {}
+        // refresh proof after stop to reflect balance change
+        requestProofNow();
+        if (!guardReason) setStatusText('✅ Ready');
       }, 1600);
     } catch {}
   };
@@ -269,7 +292,12 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
         <input type="checkbox" checked={autoMining} onChange={(e) => setAutoMining(e.target.checked)} />
       </div>
 
-      <div style={{ marginTop: 24, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+      {/* Inline status (reason or ready/mining) */}
+      <div style={{ marginTop: 10, fontSize: 13, color: miningGuardOk ? '#8b949e' : '#ffa198' }}>
+        {miningGuardOk ? (statusText || '✅ Ready') : `⚠️ ${guardReason}`}
+      </div>
+
+      <div style={{ marginTop: 16, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <button
           onClick={handleStartStop}
           style={{

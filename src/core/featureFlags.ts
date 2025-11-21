@@ -106,7 +106,7 @@ export function isSlotLeaderModeEnabled(): boolean {
     "SLOT_LEADER_ENABLED",
     "indexerchain_slot_leader_enabled",
     "VITE_SLOT_LEADER_ENABLED",
-    false
+    true
   );
 }
 
@@ -115,7 +115,25 @@ export function isProposerEnforceEnabled(): boolean {
     "PROPOSER_ENFORCE_ENABLED",
     "indexerchain_proposer_enforce_enabled",
     "VITE_PROPOSER_ENFORCE_ENABLED",
-    false
+    true
+  );
+}
+
+export function isSnapshotSeedingEnabled(): boolean {
+  return readBooleanFromAny(
+    "SNAPSHOT_SEEDING_ENABLED",
+    "indexerchain_snapshot_seeding_enabled",
+    "VITE_SNAPSHOT_SEEDING_ENABLED",
+    true
+  );
+}
+
+export function getSnapshotSeedingIntervalBlocks(): number {
+  return readNumberFromAny(
+    "SNAPSHOT_SEED_INTERVAL",
+    "indexerchain_snapshot_seed_interval",
+    "VITE_SNAPSHOT_SEED_INTERVAL",
+    2048
   );
 }
 

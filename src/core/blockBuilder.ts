@@ -297,15 +297,16 @@ export async function createCoinbaseTx(
       });
     }
   } else {
-    // Legacy single-miner + referrals + fees
-    const minerRewardIDC = uIDCToIDC(blockRewardUIDC);
-    if (minerRewardIDC > 0) {
+    // Pool Mining Architecture: Always generate multi-output coinbase (even for single node)
+    // Treat single miner as a pool with one participant
+    const singleMinerRewardIDC = uIDCToIDC(blockRewardUIDC);
+    if (singleMinerRewardIDC > 0) {
       ops.push({
         type: "TRANSFER",
         namespace: "",
         key: "",
         to: minerAddress,
-        amount: minerRewardIDC,
+        amount: singleMinerRewardIDC,
         nonce: 0,
         owner: systemAddress,
       });
@@ -338,6 +339,7 @@ export async function createCoinbaseTx(
         owner: systemAddress,
       });
     }
+    // Ensure at least one output exists (pool mining always has outputs)
     if (ops.length === 0) {
       ops.push({
         type: "TRANSFER",
@@ -723,12 +725,11 @@ export async function buildCandidateBlock(
   // Phase 48-D: Compute payoutRoot from coinbase TRANSFER recipients (sorted by address) and set into header
   try {
     const cb = coinbaseTx;
-    const leaves = cb.ops
+    const { computePayoutRoot } = await import("./pool/payout.js");
+    const entries = cb.ops
       .filter((op) => op.type === "TRANSFER" && op.to && typeof op.amount === "number" && op.amount > 0)
-      .map((op) => ({ addr: op.to as Address, amt: IDCToUIDC(op.amount as number).toString() }))
-      .sort((a, b) => a.addr.localeCompare(b.addr))
-      .map((x) => `${x.addr}:${x.amt}`);
-    const payoutRoot = await calcMerkleRoot(leaves);
+      .map((op) => ({ address: op.to as Address, amountUIDC: IDCToUIDC(op.amount as number).toString() }));
+    const payoutRoot = await computePayoutRoot(entries);
     (header as any).payoutRoot = payoutRoot;
   } catch {
     // Leave payoutRoot undefined on failure

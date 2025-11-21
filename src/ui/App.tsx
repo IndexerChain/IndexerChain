@@ -4111,13 +4111,18 @@ function App() {
       const { MiningGuard: Guard } = await import("../core/miningGuard.js");
       const message = Guard.getStatusMessage(guardResult, locale);
       
-      // Don't show error for NOT_SYNCED if we're at height 0 (new chain) or bootstrap is not complete
-      // These are normal states during initial sync, not errors
+      // All-Light-Node Chain: Don't show error for NOT_SYNCED in light node mode
+      // Light nodes don't need full block history, only latest header + ZK state root
+      // These are normal states during header sync, not errors
       const localTip = chainContext.storage.getTip();
-      if (guardResult.code === "NOT_SYNCED" && (localTip?.header.height === 0 || !bootstrapComplete)) {
-        // Don't set error - this is informational, not an error
-        // The mining button will be disabled based on miningGuardResult
-        return;
+      const isLightNode = typeof window !== "undefined" && (window as any).nodeMode === 'light';
+      if (guardResult.code === "NOT_SYNCED") {
+        // For light nodes: Header sync is in progress, not an error
+        if (isLightNode || localTip?.header.height === 0 || !bootstrapComplete) {
+          // Don't set error - this is informational, not an error
+          // The mining button will be disabled based on miningGuardResult
+          return;
+        }
       }
       
       setError(message);
@@ -4431,6 +4436,14 @@ function App() {
   // Phase 42: Add multi-device mining protection
   const handleStartMining = async () => {
     if (!chainContext) return;
+    // Light-mode proving behavior: do not build or mine blocks in light node mode
+    try {
+      const mode = typeof localStorage !== 'undefined' ? localStorage.getItem('indexer_node_mode') : null;
+      if (mode === 'light') {
+        setError(locale === "zh" ? "当前为轻节点（Proving 模式），不执行本地出块。" : "Light mode (Proving) is active; local block production is disabled.");
+        return;
+      }
+    } catch {}
     // Enforce mining on network tip: if local is behind, trigger fast sync and delay start
     try {
       const localH = chainContext.storage.getTip()?.header.height ?? 0;

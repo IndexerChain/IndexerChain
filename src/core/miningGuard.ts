@@ -257,26 +257,23 @@ export class MiningGuard {
     // Phase 45: First year requires only 1 independent peer (define early)
     const MIN_PEERS_FIRST_YEAR = 1;
     
-    // Check 1: P2P connection to signal server (required for bootstrap)
-    if (!p2pNode || !p2pNode.isConnected) {
-      // If bootstrap is complete, we might still allow mining (Cold Start mode)
-      if (bootstrapComplete) {
-        logger.debug(`[Phase 32] P2P disconnected but bootstrap complete - allowing Cold Start mining`);
-        // Continue to other checks, but note that we're in Cold Start mode
-      } else {
-        return {
-          ok: false,
-          code: "INSUFFICIENT_PEERS",
-          reason: "Not connected to P2P network and bootstrap not complete",
-          details: {
-            peerCount: 0,
-            requiredPeers: MIN_PEERS_FIRST_YEAR, // Phase 45: Use first year minimum
-          },
-        };
-      }
-    }
-
+    // Check 1: Signal/Shadow connection (required for pool mining)
+    // New architecture: Independent IP nodes can mine with only Signal/Shadow connection
     const peerCount = p2pNode?.getPeerCount() ?? 0;
+    const isSignalConnected = p2pNode?.isConnected ?? false;
+    
+    // Check if we have at least Signal/Shadow connection
+    if (!isSignalConnected && !bootstrapComplete) {
+      return {
+        ok: false,
+        code: "INSUFFICIENT_PEERS",
+        reason: "Not connected to Signal Server or Shadow Node. Connect to network to start mining.",
+        details: {
+          peerCount: 0,
+          requiredPeers: 0, // No peer requirement, only Signal/Shadow needed
+        },
+      };
+    }
     const isMainnetNetwork = isMainnet(chainContext.params);
     
     // Phase 33: Intelligent Peer Quorum System
@@ -323,116 +320,42 @@ export class MiningGuard {
     // Phase 33: Determine mining mode based on quorum status, bootstrap status, and configuration
     let miningMode: MiningMode = "BLOCKED";
     
-    // Phase 37: Cold Start mode - allow mining if bootstrapComplete === true, even with 0 peers
-    // This is for early network phase where nodes can mine based on signal server's rootTip
-    const isColdStartMode = bootstrapComplete && peerCount === 0;
-    if (isColdStartMode) {
-      miningMode = "GUARDED"; // Use GUARDED mode for Cold Start
+    // Pool Mining Architecture: Cold Start / Independent IP mode
+    // Allow mining if Signal/Shadow is connected and sync is reasonable, even with 0 P2P peers
+    const isPoolMiningMode = isSignalConnected && bootstrapComplete;
+    if (isPoolMiningMode && peerCount === 0) {
+      miningMode = "GUARDED"; // Use GUARDED mode for independent IP mining (no P2P peers)
     }
     
-    // Phase 45: First Year Mode - Ultra-lenient rules
-    // First year (age < 1 year OR height < 50,000): Only check minimal requirements
-    const isFirstYearMode = (networkAgeYears < 1 || currentHeight < 50_000) && isMainnetNetwork;
+    // Pool Mining Architecture: Simplified requirements for independent IP mining
+    // New rules: Signal/Shadow connection + QuorumScore ≥ 30 (independent IP) + sync status
+    const POOL_MINING_REQUIRED_QUORUM_SCORE = 30; // Independent IP = 30+ score
     
-    if (isFirstYearMode && p2pNode) {
-      // Phase 45: First year requirements: ≥1 independent IP, Quorum ≥ 40, bootstrapComplete, no critical state drift
-      // Check state drift (only critical drift blocks mining)
-      let stateDriftCritical = false;
-      try {
-        const { getStateDriftDetector } = await import("./stateDriftDetector.js");
-        const driftDetector = getStateDriftDetector();
-        driftDetector.initialize(chainContext, p2pNode);
-        const driftCheck = driftDetector.checkDrift();
-        stateDriftCritical = driftCheck.hasDrift && driftCheck.severity === "critical";
-      } catch (e) {
-        // Production: No console logs
-      }
-      
-      // Phase 45: Get dynamic required quorum score (first year = 40)
-      const firstYearRequiredQuorumScore = quorumManager.getRequiredQuorumScore(chainContext.params, { height: currentHeight });
-      const firstYearRequiredPeers = MIN_PEERS_FIRST_YEAR;
-      
-      // Phase 45: Check independent peers first (must have ≥1)
-      if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "INSUFFICIENT_PEERS",
-          reason: `首年规则：需要至少 ${firstYearRequiredPeers} 个独立 IP 对等节点，目前只有 ${quorumStatus.independentPeerCount} 个`,
-          details: {
-            peerCount,
-            requiredPeers: firstYearRequiredPeers,
-            independentPeerCount: quorumStatus.independentPeerCount,
-            quorumScore: quorumStatus.totalScore,
-            requiredQuorumScore: firstYearRequiredQuorumScore,
-          },
-        };
-      }
-      
-      // Check quorum score (constant = current policy threshold)
-      if (quorumStatus.totalScore < firstYearRequiredQuorumScore) {
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "INSUFFICIENT_PEERS",
-          reason: `规则 2：当前 Quorum 分数为 ${quorumStatus.totalScore}，需要 ≥ ${firstYearRequiredQuorumScore}`,
-          details: {
-            peerCount,
-            requiredPeers: firstYearRequiredPeers,
-            quorumScore: quorumStatus.totalScore,
-            requiredQuorumScore: firstYearRequiredQuorumScore,
-            independentPeerCount: quorumStatus.independentPeerCount,
-          },
-        };
-      }
-      
-      // Phase 45: All first year requirements met
-      if (bootstrapComplete && !stateDriftCritical) {
-        // Production: No console logs
-        miningMode = "SAFE";
-        // Skip all StateLock/Finality checks for first year (but Quorum score is checked above)
-        // Continue to wallet/network checks, then return success
-      } else {
-        // Phase 45: First year: Still need minimal requirements
-        const reasons: string[] = [];
-        if (quorumStatus.independentPeerCount < firstYearRequiredPeers) {
-          reasons.push(`需要 ≥${firstYearRequiredPeers} 个独立对等节点（当前: ${quorumStatus.independentPeerCount}）`);
-        }
-        if (quorumStatus.totalScore < firstYearRequiredQuorumScore) {
-          reasons.push(`Quorum 分数 ${quorumStatus.totalScore} < 要求 ${firstYearRequiredQuorumScore}`);
-        }
-        if (!bootstrapComplete) {
-          reasons.push("Bootstrap 未完成");
-        }
-        if (stateDriftCritical) {
-          reasons.push("检测到严重状态漂移");
-        }
-        
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "INSUFFICIENT_PEERS",
-          reason: `首年规则：${reasons.join(", ")}`,
-          details: {
-            peerCount,
-            requiredPeers: firstYearRequiredPeers,
-            quorumScore: quorumStatus.totalScore,
-            requiredQuorumScore: firstYearRequiredQuorumScore,
-            independentPeerCount: quorumStatus.independentPeerCount,
-            requiredIndependentPeers: firstYearRequiredPeers,
-            networkStage: "GENESIS_QUORUM", // Use existing stage type
-            networkStageInfo: {
-              stage: "GENESIS_QUORUM",
-              relaxedChecks: ["StateLock", "Finality", "GSN"], // Quorum score is still required (≥30)
-              description: "First year: Relaxed rules - require ≥1 independent IP, Quorum ≥30, bootstrap complete, no critical drift",
-            },
-          },
-        };
-      }
+    // Check QuorumScore (independent IP requirement)
+    // In pool mining mode, independent IP nodes can mine with only Signal/Shadow connection
+    // QuorumScore ≥ 30 means the node is an independent IP (not same IP as others)
+    if (p2pNode && quorumStatus.totalScore < POOL_MINING_REQUIRED_QUORUM_SCORE) {
+      return {
+        ok: false,
+        mode: "BLOCKED",
+        code: "INSUFFICIENT_PEERS",
+        reason: `Pool mining requires independent IP (QuorumScore ≥ ${POOL_MINING_REQUIRED_QUORUM_SCORE}). Current: ${quorumStatus.totalScore}`,
+        details: {
+          peerCount,
+          requiredPeers: 0, // No peer requirement in pool mining
+          quorumScore: quorumStatus.totalScore,
+          requiredQuorumScore: POOL_MINING_REQUIRED_QUORUM_SCORE,
+          independentPeerCount: quorumStatus.independentPeerCount,
+        },
+      };
     }
+    
+    // If QuorumScore is sufficient and Signal/Shadow is connected, allow mining
+    // Note: We skip peer count checks in pool mining mode - only Signal/Shadow connection is needed
     
     // Phase 39: Stage 1 - Genesis Quorum Mode (height = 0)
-    if (networkStage === "GENESIS_QUORUM" && isMainnetNetwork && p2pNode && !isFirstYearMode) {
+    // Pool Mining Architecture: Genesis mode still applies, but with simplified requirements
+    if (networkStage === "GENESIS_QUORUM" && isMainnetNetwork && p2pNode) {
       // Genesis mode: Check minimal requirements
       // Requirements: ≥1 independent IP, online >2 minutes, bootstrapComplete
       if (quorumStatus.ready && quorumStatus.independentPeerCount >= 1) {
@@ -459,8 +382,9 @@ export class MiningGuard {
       }
     }
     
-    // Phase 35: Check mainnet admission rules first (unless in Cold Start mode, Genesis mode, or First Year mode)
-    if (isMainnetNetwork && !isColdStartMode && networkStage !== "GENESIS_QUORUM" && !isFirstYearMode && p2pNode) {
+    // Phase 35: Check mainnet admission rules first (unless in Pool Mining mode, Genesis mode)
+    // Pool Mining Architecture: Skip strict admission rules if Signal/Shadow connected and QuorumScore sufficient
+    if (isMainnetNetwork && !isPoolMiningMode && networkStage !== "GENESIS_QUORUM" && p2pNode) {
       const admissionStatus = quorumManager.getMainnetAdmissionStatus();
       
       if (admissionStatus.admissionReady) {
@@ -618,46 +542,22 @@ export class MiningGuard {
       };
     } else {
       // BLOCKED: Not enough peers and guarded mining not allowed
-      // Phase 45: Skip this check if we're in first year mode and already passed first year checks above
-      // (First year mode is handled earlier in the function, so if we reach here in first year mode,
-      // it means bootstrap is not complete or there's another issue)
-      if (isFirstYearMode) {
-        // Phase 45: In first year mode, if we reach here, it's likely bootstrap is not complete
-        // or we're missing some other requirement. Don't show peer count error if peers are sufficient.
-        if (quorumStatus.independentPeerCount >= MIN_PEERS_FIRST_YEAR) {
-          // Peers are sufficient, but something else is blocking (likely bootstrap)
-          // This should have been handled in the first year mode check above
-          // Just continue to other checks
-        } else {
-          // Peers are actually insufficient
-          return {
-            ok: false,
-            mode: "BLOCKED",
-            code: "INSUFFICIENT_PEERS",
-            reason: `首年规则：需要至少 ${MIN_PEERS_FIRST_YEAR} 个独立 IP 对等节点，目前只有 ${quorumStatus.independentPeerCount} 个`,
-            details: {
-              peerCount,
-              requiredPeers: MIN_PEERS_FIRST_YEAR,
-              independentPeerCount: quorumStatus.independentPeerCount,
-              requiredIndependentPeers: MIN_PEERS_FIRST_YEAR,
-              quorumScore: quorumStatus.totalScore,
-              requiredQuorumScore: quorumManager.getRequiredQuorumScore(chainContext.params, { height: currentHeight }),
-            },
-          };
-        }
-      } else {
-        // Normal mode: Show peer insufficiency
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "INSUFFICIENT_PEERS",
-          reason: `Insufficient peers: ${peerCount} < ${minPeersRequired}`,
-          details: {
-            peerCount,
-            requiredPeers: minPeersRequired,
-          },
-        };
-      }
+      // Pool Mining Architecture: In pool mining mode, we don't require peers, only Signal/Shadow connection
+      // If we reach here, it means Signal/Shadow is not connected or QuorumScore is insufficient
+      // This should have been handled by the pool mining checks above
+      // Just return a generic error
+      return {
+        ok: false,
+        mode: "BLOCKED",
+        code: "INSUFFICIENT_PEERS",
+        reason: `Pool mining requires Signal/Shadow connection and QuorumScore ≥ 30. Current: Signal=${isSignalConnected}, QuorumScore=${quorumStatus.totalScore}`,
+        details: {
+          peerCount,
+          requiredPeers: 0, // No peer requirement in pool mining
+          quorumScore: quorumStatus.totalScore,
+          requiredQuorumScore: POOL_MINING_REQUIRED_QUORUM_SCORE,
+        },
+      };
     }
     
     // Continue with other checks, but mining is allowed in GUARDED or LOCAL_ONLY mode
@@ -720,32 +620,44 @@ export class MiningGuard {
       }
     }
 
-    // Check 5: Synchronization status (STRICT)
-    // Enforce: must be fully synced to the latest known network height before mining
-    {
-      // Allow mining while syncing: do NOT block on NOT_SYNCED; treat as GUARDED scenario.
-      // Intentionally no-op here so nodes can mine and sync concurrently.
-    }
-
-    // Check 5.1: Require at least one open data channel (ensures block propagation before mining)
-    if (p2pNode) {
-      const openChannels =
-        Array.from(p2pNode.peers?.values() || []).filter(
-          (p: any) => p.connected && p.dataChannel && p.dataChannel.readyState === "open"
-        ).length;
-      // If there are known peers but zero open channels, block mining
-      if (peerCount > 0 && openChannels === 0) {
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "NOT_SYNCED",
-          reason: "No data channels open to peers. Wait for a P2P data channel to open before mining.",
-          details: {
-            peerCount,
-          },
-        };
+    // Check 5: Light Node Synchronization Status (All-Light-Node Chain Architecture)
+    // Light nodes don't need full block history, only latest header + ZK state root
+    // Check if local tip header matches network rootTip header (not height-based)
+    if (p2pNode && typeof window !== "undefined") {
+      const rootTipHeight = (window as any).lastRootTipHeight || 0;
+      const rootTipHash = (window as any).lastRootTipHash || '';
+      const localTip = chainContext.storage.getTip();
+      const localTipHash = localTip?.hash || '';
+      
+      // Light node sync condition: latest header hash must match rootTip (or we're syncing headers)
+      // We don't require full height history, only that we have the latest header
+      if (rootTipHeight > 0 && rootTipHash && localTipHash && localTipHash !== rootTipHash) {
+        // Check if we're in the process of syncing (local height is close to rootTip)
+        // For light nodes, we allow mining if we're within reasonable range and Signal is connected
+        const heightDiff = rootTipHeight - currentHeight;
+        const isSignalConnected = p2pNode?.isConnected ?? false;
+        
+        // If Signal is connected and we're syncing headers, allow mining
+        // Light nodes sync headers quickly, so we allow a larger threshold
+        if (!isSignalConnected || heightDiff > 500) {
+          return {
+            ok: false,
+            mode: "BLOCKED",
+            code: "NOT_SYNCED",
+            reason: `Light node header sync required. Local tip hash doesn't match network rootTip. Please sync headers before mining.`,
+            details: {
+              localHeight: currentHeight,
+              networkHeight: rootTipHeight,
+              peerCount,
+            },
+          };
+        }
+        // If Signal is connected and height diff is reasonable, allow mining (header sync in progress)
       }
     }
+    
+    // Note: Removed data channel check - pool mining doesn't require P2P data channels,
+    // only Signal/Shadow connection is needed for submitting shares and receiving blocks
     
     // Check 6: Finality status (if finality is enabled)
     // Phase 39: Finality Initialization Mode

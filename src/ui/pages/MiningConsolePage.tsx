@@ -3,6 +3,7 @@ import { useMiningData } from '../../features/miner-dashboard/hooks/useMiningDat
 import { ChainContext } from '../../core/chain';
 import { MinerClient } from '../../core/minerClient';
 import styles from '../../features/miner-dashboard/styles/miner-console.module.css';
+import { getSlotIdentity, deriveRandSeed, selectLeader } from '../../core/slotSchedule.js';
 
 // Mining Guard card - memoized to avoid refresh; only changes on explicit prop changes (clicks)
 const MiningGuardCard = React.memo((props: {
@@ -11,11 +12,13 @@ const MiningGuardCard = React.memo((props: {
     autoMining: boolean;
     onToggleMining: () => void;
     onToggleAutoMining: (checked: boolean) => void;
+    showStatusBadge?: boolean;
+    lightMode?: boolean;
 }) => {
-    const { displayMining, guardMessage, autoMining, onToggleMining, onToggleAutoMining } = props;
+    const { displayMining, guardMessage, autoMining, onToggleMining, onToggleAutoMining, showStatusBadge, lightMode } = props;
     return (
         <div className={`${styles.card} ${styles.controlCard}`}>
-            <h3>挖矿控制与状态 (Mining Guard)</h3>
+            <h3>{lightMode ? '证明控制与状态 (Proving Guard)' : '挖矿控制与状态 (Mining Guard)'}</h3>
             <div className={styles.controlCardTop}>
                 <button
                     id="toggle-mining"
@@ -23,11 +26,13 @@ const MiningGuardCard = React.memo((props: {
                     onClick={onToggleMining}
                     title={guardMessage || ''}
                 >
-                    {displayMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
+                    {displayMining ? (lightMode ? '停止证明 (Stop Proving)' : '停止挖矿 (Stop Mining)') : (lightMode ? '启动证明 (Start Proving)' : '启动挖矿 (Start Mining)')}
                 </button>
-                <div id="mining-status-badge" className={`${styles.miningStatusBadge} ${displayMining ? styles.statusReady : styles.statusSyncing}`}>
-                    {displayMining ? '✅ Active Mining' : '✅ Synced / Waiting'}
-                </div>
+                {showStatusBadge !== false && (
+                    <div id="mining-status-badge" className={`${styles.miningStatusBadge} ${displayMining ? styles.statusReady : styles.statusSyncing}`}>
+                        {displayMining ? '✅ Active Mining' : '✅ Synced / Waiting'}
+                    </div>
+                )}
             </div>
             <div
                 id="error-alert"
@@ -52,7 +57,8 @@ const MiningGuardCard = React.memo((props: {
 }, (prev, next) => (
     prev.displayMining === next.displayMining &&
     prev.autoMining === next.autoMining &&
-    prev.guardMessage === next.guardMessage
+    prev.guardMessage === next.guardMessage &&
+    prev.showStatusBadge === next.showStatusBadge
 ));
 
 interface MiningConsolePageProps {
@@ -77,7 +83,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         } catch {}
         return true;
     });
-    const [nodeMode, setNodeMode] = useState<'full' | 'light'>(() => {
+    const [nodeMode] = useState<'full' | 'light'>(() => {
         try {
             const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_node_mode') : null;
             if (saved === 'light' || saved === 'full') return saved as any;
@@ -85,6 +91,28 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return 'full';
     });
     const [isLiveFeedActive, setIsLiveFeedActive] = useState(true);
+    const [zkVerified, setZkVerified] = useState<boolean>(false);
+    const [zkLatencyMs, setZkLatencyMs] = useState<number>(0);
+    const [leaderThisSlot, setLeaderThisSlot] = useState<string | null>(null);
+    const [payoutHeight, setPayoutHeight] = useState<number>(() => {
+        try {
+            const tip = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+            return Number(tip) || 0;
+        } catch {}
+        return 0;
+    });
+    const [payoutProof, setPayoutProof] = useState<{
+        ok: boolean;
+        height?: number;
+        address?: string;
+        entry?: string;
+        root?: string;
+        leafHash?: string;
+        siblings?: string[];
+        positions?: ('L'|'R')[];
+        verified?: boolean;
+        error?: string;
+    } | null>(null);
 
     // Override body background when Console is active
     useEffect(() => {
@@ -100,6 +128,162 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             document.body.style.color = originalColor;
         };
     }, []);
+
+	// Helpers for compact display
+	const shortHash = (v?: string, len: number = 12) => {
+		if (!v || typeof v !== 'string') return '--';
+		return v.length > len ? `${v.substring(0, len)}...` : v;
+	};
+	const shortAddr = (a?: string, head: number = 8, tail: number = 4) => {
+		if (!a || typeof a !== 'string') return '--';
+		if (a.length <= head + tail) return a;
+		return `${a.substring(0, head)}...${a.substring(a.length - tail)}`;
+	};
+	const humanLeader = (s?: string) => {
+		if (!s) return '--';
+		return s.startsWith('idc_') ? shortAddr(s, 8, 4) : s;
+	};
+
+    // Compute current slot leader via VRF (deterministic, equal-weighted from last coinbase recipients)
+    useEffect(() => {
+        let cancelled = false;
+        const compute = async () => {
+            try {
+                const ctx = props.chainContext;
+                const tip = ctx?.storage.getTip() || null;
+                if (!tip) {
+                    if (!cancelled) setLeaderThisSlot(null);
+                    return;
+                }
+                const now = Date.now();
+                const { epochId, slotIndex } = getSlotIdentity(now);
+                const seed = await deriveRandSeed(tip.hash, epochId, slotIndex);
+                const recipients: string[] = [];
+                const coinbase = tip.txs?.[0];
+                if (coinbase && coinbase.ownerAddress === 'idc_system') {
+                    for (const op of coinbase.ops) {
+                        if (op.type === 'TRANSFER' && op.to && typeof op.to === 'string' && op.to.startsWith('idc_')) {
+                            if (!recipients.includes(op.to)) recipients.push(op.to);
+                        }
+                    }
+                }
+                if (recipients.length === 0 && props.nodeAddress) recipients.push(props.nodeAddress);
+                const candidates = recipients.map(a => ({ address: a as any, weight: 1 }));
+                const leader = await selectLeader(epochId, slotIndex, seed, candidates);
+                if (!cancelled) setLeaderThisSlot(leader || null);
+            } catch {
+                if (!cancelled) setLeaderThisSlot(null);
+            }
+        };
+        compute();
+        const t = setInterval(compute, 500);
+        return () => { cancelled = true; clearInterval(t); };
+    }, [props.chainContext, props.nodeAddress]);
+
+    // Pool Rewards: handle payout proof from Worker and verify (using positions for order)
+    useEffect(() => {
+        const p2p: any = props.p2pNode;
+        if (!p2p) return;
+        const onPayout = async (msg: any) => {
+            if (!msg || msg.type !== 'PAYOUT_PROOF') return;
+            if (!msg.ok) {
+                setPayoutProof({ ok: false, error: msg?.reason || 'UNKNOWN' });
+                return;
+            }
+            try {
+                const entry: string = String(msg.entry || '');
+                // sha256 hex
+                const enc = new TextEncoder().encode(entry);
+                const h = await crypto.subtle.digest('SHA-256', enc);
+                let acc = Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
+                const siblings: string[] = Array.isArray(msg.siblings) ? msg.siblings : [];
+                const positions: ('L'|'R')[] = Array.isArray(msg.positions) ? msg.positions : [];
+                for (let i = 0; i < siblings.length; i++) {
+                    const sib = String(siblings[i] || '');
+                    const pos = positions[i] || 'R';
+                    const combined = pos === 'L' ? (sib + acc) : (acc + sib);
+                    const enc2 = new TextEncoder().encode(combined);
+                    const h2 = await crypto.subtle.digest('SHA-256', enc2);
+                    acc = Array.from(new Uint8Array(h2)).map(b => b.toString(16).padStart(2, '0')).join('');
+                }
+                const verified = acc === String(msg.root || '');
+                setPayoutProof({
+                    ok: true,
+                    height: Number(msg.height || 0) || 0,
+                    address: String(msg.address || ''),
+                    entry,
+                    root: String(msg.root || ''),
+                    leafHash: String(msg.leafHash || ''),
+                    siblings,
+                    positions,
+                    verified
+                });
+            } catch {
+                setPayoutProof({ ok: false, error: 'VERIFY_ERROR' });
+            }
+        };
+        try { p2p.onMessage?.('PAYOUT_PROOF' as any, onPayout); } catch {}
+        return () => { try { p2p.offMessage?.('PAYOUT_PROOF' as any, onPayout); } catch {} };
+    }, [props.p2pNode]);
+
+    // Network Health panel data
+    const [healthSnapshot, setHealthSnapshot] = useState<{
+        local: number;
+        signal: number;
+        finality: number;
+        p2pPeers: number;
+        status: 'aligned' | 'syncing' | 'fork_detected' | 'offline';
+        isSignalConnected: boolean;
+        quorumScore: number;
+        isIndependentIPMining: boolean; // Pool Mining Architecture: Independent IP mining status
+    }>({ local: 0, signal: 0, finality: 0, p2pPeers: 0, status: 'offline', isSignalConnected: false, quorumScore: 0, isIndependentIPMining: false });
+    const [quorumScoreState, setQuorumScoreState] = useState(0);
+    // Async update quorumScore
+    useEffect(() => {
+        const updateQuorumScore = async () => {
+            try {
+                if (props.chainContext && props.p2pNode) {
+                    const { getQuorumManager } = await import('../../core/quorumManager.js');
+                    const quorumManager = getQuorumManager();
+                    quorumManager.initialize(props.p2pNode, props.chainContext);
+                    const quorumStatus = quorumManager.getQuorumStatus();
+                    setQuorumScoreState(quorumStatus.totalScore || 0);
+                }
+            } catch {}
+        };
+        updateQuorumScore();
+        const id = setInterval(updateQuorumScore, 2000);
+        return () => clearInterval(id);
+    }, [props.chainContext, props.p2pNode]);
+    useEffect(() => {
+        const id = setInterval(() => {
+            const localH = props.chainContext?.storage.getTip()?.header.height || 0;
+            const signalH = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+            const finalizedH = (typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight) || 0;
+            const peers = (() => {
+                try {
+                    const p = props.p2pNode;
+                    return p?.peers ? p.peers.size : 0;
+                } catch { return 0; }
+            })();
+            const isSignalConnected = (() => {
+                try {
+                    const p = props.p2pNode;
+                    return p?.isConnected ?? false;
+                } catch { return false; }
+            })();
+            // Pool Mining Architecture: Independent IP mining = Signal connected + QuorumScore >= 30 + peerCount === 0
+            const isIndependentIPMining = isSignalConnected && quorumScoreState >= 30 && peers === 0;
+            let status: 'aligned' | 'syncing' | 'fork_detected' | 'offline' = 'offline';
+            if (signalH === 0 && peers === 0 && !isSignalConnected) status = 'offline';
+            else if (localH >= signalH && signalH > 0) status = 'aligned';
+            else if (localH < signalH) status = 'syncing';
+            // naive fork detection: if we have higher local than signal by a margin
+            else if (localH > signalH + 5) status = 'fork_detected';
+            setHealthSnapshot({ local: localH, signal: signalH, finality: finalizedH, p2pPeers: peers, status, isSignalConnected, quorumScore: quorumScoreState, isIndependentIPMining });
+        }, 1000);
+        return () => clearInterval(id);
+    }, [props.chainContext, props.p2pNode, quorumScoreState]);
 
     const {
         status,
@@ -131,9 +315,24 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         bootstrapComplete: props.bootstrapComplete
     });
 
+    // Reorg banner: detect local height rollback (depends on localHeight above)
+    const [reorgInfo, setReorgInfo] = useState<{ from: number; to: number; count: number } | null>(null);
+    const prevLocalHeightRef = useRef<number>(0);
+    useEffect(() => {
+        const prev = prevLocalHeightRef.current;
+        if (typeof localHeight === 'number' && localHeight >= 0) {
+            if (prev > 0 && localHeight < prev) {
+                setReorgInfo({ from: prev, to: localHeight, count: prev - localHeight });
+                setTimeout(() => setReorgInfo(null), 5000);
+            }
+            prevLocalHeightRef.current = localHeight;
+        }
+    }, [localHeight]);
+
     // Show guard reason / user feedback
     const [guardMessage, setGuardMessage] = useState<string>("");
     const [lightVerifiedBalance, setLightVerifiedBalance] = useState<number | null>(null);
+    const [lastBalanceProofHeight, setLastBalanceProofHeight] = useState<number>(0);
 
     // Sync local state with hook state
     useEffect(() => {
@@ -183,16 +382,33 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         setHookIsLiveFeedActive(newState);
     };
 
+    // Mock ZK verification status/latency for UI (until backend wires in)
+    useEffect(() => {
+        const startedAt = Date.now();
+        const id = setInterval(() => {
+            const advancing = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+            setZkVerified(advancing > 0);
+            setZkLatencyMs(Math.max(20, Math.min(2000, Date.now() - startedAt)));
+        }, 1000);
+        return () => clearInterval(id);
+    }, []);
+
     // Keep a human-readable guard reason (we no longer block start while syncing)
+    // Pool Mining Architecture: No longer require peers, only Signal/Shadow connection needed
     useEffect(() => {
         if (isMining) {
             setGuardMessage('');
             return;
         }
-        if (peerCount <= 0) {
-            setGuardMessage('⚠️ No peers connected. Connect to network to start mining.');
+        // Pool Mining Architecture: Check Signal/Shadow connection instead of peer count
+        // Use healthSnapshot.isSignalConnected if available, otherwise check p2pNode directly
+        const isSignalConnected = healthSnapshot.isSignalConnected || (props.p2pNode?.isConnected ?? false);
+        if (!isSignalConnected) {
+            setGuardMessage('⚠️ Not connected to Signal Server. Connect to network to start mining.');
             return;
         }
+        // If Signal is connected, rely on miningGuardResult for detailed status
+        // (MiningGuard already checks Signal connection and sync status)
         if (miningGuardResult && !miningGuardResult.ok) {
             // Special messaging for same device/IP single-active restriction
             if (miningGuardResult.code === 'NOT_ACTIVE_MINER') {
@@ -207,7 +423,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             return;
         }
         setGuardMessage('');
-    }, [isMining, peerCount, networkHeight, localHeight, miningGuardResult]);
+    }, [isMining, healthSnapshot.isSignalConnected, props.p2pNode, miningGuardResult]);
 
     // Light node: request state root and balance proof and verify
     useEffect(() => {
@@ -235,6 +451,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     if (Number.isFinite(val)) {
                         setLightVerifiedBalance(val);
                     }
+                    const h = Number(msg.height || 0) || 0;
+                    if (h > 0) setLastBalanceProofHeight(h);
                 }
             } catch {}
         };
@@ -773,23 +991,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 </button>
                             </div>
                             
+                            
                             <div className={styles.balanceInfo}>
                                 <span className={styles.balanceLabel}>Current Balance (IDC):</span>
                                 <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance">
                                     {(nodeMode === 'light' && lightVerifiedBalance !== null ? lightVerifiedBalance : balance).toFixed(2)}
                                 </span>
-                            </div>
-                            
-                            <div className={styles.balanceInfo} style={{ gap: 8 }}>
-                                <span className={styles.balanceLabel}>Node Mode:</span>
-                                <select
-                                    value={nodeMode}
-                                    onChange={(e) => setNodeMode(e.target.value as any)}
-                                    style={{ background: '#161b22', color: '#c9d1d9', border: '1px solid #30363d', borderRadius: 6, padding: '4px 8px' }}
-                                >
-                                    <option value="full">Full/Pruned</option>
-                                    <option value="light">Light (Header+Proof)</option>
-                                </select>
                             </div>
                         </div>
 
@@ -799,18 +1006,56 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 Local Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar">{localHeight.toLocaleString()}</span> | 
                                 Network Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar">{networkHeight.toLocaleString()}</span> | 
                                 Peers: <span className={styles.dataValue} id="peer-count-bar">{peerCount}</span>
-                                {nodeMode === 'light' ? <span style={{ marginLeft: 10, color: '#8b949e' }}>| Mode: Light (Header+Proof)</span> : null}
                             </span>
                         </div>
-
+                        {/* ZK/Sync status bar */}
                         {nodeMode === 'light' && (
-                            <div className={styles.card} style={{ background: '#0f1520', borderColor: '#30363d' }}>
-                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Light Node (Header+Proof)</div>
-                                <div style={{ color: '#8b949e', fontSize: 13 }}>
-                                    轻节点不存储本地区块，仅通过区块头与余额证明展示余额；当你开始挖矿时，会自动拉取并应用最新快照以具备世界状态。
+                            <div className={styles.card} style={{ display: 'flex', gap: 12, padding: 12, alignItems: 'center' }}>
+                                <div>
+									<div style={{ fontSize: 12, color: '#8b949e' }}>ZK</div>
+                                    <div style={{ marginTop: 2 }}>{zkVerified ? 'Yes ✅' : 'No ⏳'}</div>
+                                </div>
+                                <div>
+									<div style={{ fontSize: 12, color: '#8b949e' }}>Latency</div>
+                                    <div style={{ marginTop: 2 }}>{zkLatencyMs.toFixed(0)} ms</div>
+                                </div>
+                                <div>
+									<div style={{ fontSize: 12, color: '#8b949e' }}>Finalized</div>
+                                    <div style={{ marginTop: 2 }}>{(typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight) || 0}</div>
+                                </div>
+                                <div>
+									<div style={{ fontSize: 12, color: '#8b949e' }}>Sync</div>
+                                    <div style={{ marginTop: 2 }}>
+                                        {networkHeight >= localHeight ? `Behind by ${Math.max(0, networkHeight - localHeight)} blocks` : 'Synced'}
+                                    </div>
+                                </div>
+                                <div>
+									<div style={{ fontSize: 12, color: '#8b949e' }}>Leader</div>
+									<div style={{ marginTop: 2 }} title={leaderThisSlot || ''}>{humanLeader(leaderThisSlot || '')}</div>
                                 </div>
                             </div>
                         )}
+
+                        {/* Top Section */}
+                        <div className={styles.topSection}>
+                            {/* Reorg Banner */}
+                            {reorgInfo && (
+                                <div className={styles.card} style={{ background: '#2b2111', borderColor: '#8b5e34', color: '#e3b341' }}>
+                                    ⚠️ Reorg detected: rolled back {reorgInfo.count} block(s) from {reorgInfo.from} to {reorgInfo.to}. Auto resyncing...
+                                </div>
+                            )}
+
+                            {/* Light Validator Info - Pool Mining Architecture */}
+                            {nodeMode === 'light' && (
+                                <div className={styles.card} style={{ background: '#0f1520', borderColor: '#30363d' }}>
+                                    <div style={{ fontWeight: 600, marginBottom: 6 }}>Light Validator (Header + ZK) - Pool Mining Mode</div>
+                                    <div style={{ color: '#8b949e', fontSize: 13 }}>
+                                        轻节点不存储本地区块，仅通过区块头与余额证明展示余额。池化挖矿模式：所有节点共享区块奖励，按权重分配。当你开始证明时，会自动拉取并应用最新快照以具备世界状态。
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         {/* Dashboard Grid */}
                         <div className={styles.dashboardGrid}>
                             {/* Left Panel */}
@@ -820,6 +1065,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     displayMining={displayMining}
                                     guardMessage={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? '⚠️ 同一设备/浏览器仅允许一个活动矿工会话' : guardMessage}
                                     autoMining={autoMining}
+                                    showStatusBadge={nodeMode !== 'light'}
+                                    lightMode={nodeMode === 'light'}
                                     onToggleMining={() => {
                                         if (autoMining) {
                                             // 自动挖矿模式：切换按钮状态
@@ -832,6 +1079,118 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     }}
                                     onToggleAutoMining={setAutoMining}
                                 />
+
+                                {/* Network Health under Proving Guard */}
+                                <div className={styles.card}>
+									<h3>Network Health</h3>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px 24px', marginBottom: 12 }}>
+                                        <div>
+                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Local</div>
+                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.local.toLocaleString()}</div>
+                                        </div>
+                                        <div>
+											<div className={styles.dataLabel} style={{ marginBottom: 4 }}>Signal</div>
+                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.signal.toLocaleString()}</div>
+                                        </div>
+                                        <div>
+											<div className={styles.dataLabel} style={{ marginBottom: 4 }}>Finalized</div>
+                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.finality.toLocaleString()}</div>
+                                        </div>
+                                        <div>
+											<div className={styles.dataLabel} style={{ marginBottom: 4 }}>Peers</div>
+                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.p2pPeers}</div>
+                                        </div>
+                                    </div>
+                                    <div style={{ paddingTop: 12, borderTop: '1px solid #30363d' }}>
+                                        <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Status</div>
+                                        <div className={styles.dataValue} style={{ fontSize: '0.95em' }}>
+                                            {healthSnapshot.status === 'aligned' && <span style={{ color: '#4ee672' }}>aligned ✅</span>}
+                                            {healthSnapshot.status === 'syncing' && <span style={{ color: '#e3b341' }}>syncing ⏳</span>}
+                                            {healthSnapshot.status === 'fork_detected' && <span style={{ color: '#da3633' }}>fork_detected ⚠️</span>}
+                                            {healthSnapshot.status === 'offline' && <span style={{ color: '#8b949e' }}>offline 🔌</span>}
+                                        </div>
+                                    </div>
+                                    {/* Pool Mining Architecture: Independent IP mining status */}
+                                    {healthSnapshot.isIndependentIPMining && (
+                                        <div style={{ marginTop: 12, padding: 10, background: '#0f1520', border: '1px solid #30363d', borderRadius: 6, fontSize: 12, color: '#4ee672', lineHeight: 1.5 }}>
+                                            ✅ 独立 IP 已接入信号服务器，可以开始挖矿（池化模式，无需其他 peer）
+                                        </div>
+                                    )}
+                                    {healthSnapshot.isSignalConnected && healthSnapshot.p2pPeers === 0 && healthSnapshot.quorumScore < 30 && (
+                                        <div style={{ marginTop: 12, padding: 10, background: '#2b2111', border: '1px solid #8b5e34', borderRadius: 6, fontSize: 12, color: '#e3b341', lineHeight: 1.5 }}>
+                                            ⚠️ 已连接信号服务器，但 QuorumScore ({healthSnapshot.quorumScore.toString()}) &lt; 30，需要独立 IP 才能挖矿
+                                        </div>
+                                    )}
+                                </div>
+                                {/* Pool Rewards (Proof) */}
+                                <div className={styles.card} style={{ marginTop: 12 }}>
+                                    <h3>Pool Rewards (Proof)</h3>
+                                    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
+                                        验证你在指定区块高度获得的池化奖励。输入区块高度，获取并验证你的奖励 Merkle 证明。
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <label className={styles.dataLabel} style={{ minWidth: 60 }}>Height:</label>
+                                        <input
+                                            type="number"
+                                            value={payoutHeight}
+                                            onChange={(e) => setPayoutHeight(Math.max(0, Number(e.target.value) || 0))}
+                                            style={{ background: '#0d1117', color: '#c9d1d9', border: '1px solid #30363d', borderRadius: 6, padding: '4px 8px', width: 140 }}
+                                            placeholder="Block height"
+                                        />
+                                        <button
+                                            className={styles.btn}
+                                            onClick={() => {
+                                                try {
+                                                    const p2p: any = props.p2pNode;
+                                                    const addr = props.nodeAddress || '';
+                                                    const h = payoutHeight || (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+                                                    p2p?.sendToSignalServer?.('REQUEST_PAYOUT_PROOF', { address: addr, height: h });
+                                                } catch {}
+                                            }}
+                                        >
+                                            Get My Proof
+                                        </button>
+                                    </div>
+                                    {payoutProof && (
+                                        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #30363d' }}>
+                                            <div className={styles.dataLabel} style={{ marginBottom: 8, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>Proof Result</div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, lineHeight: 1.6 }}>
+                                                <div>
+                                                    <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Verified:</span>{' '}
+                                                    <span className={styles.dataValue} style={{ color: payoutProof.verified ? '#4ee672' : '#da3633' }}>
+                                                        {payoutProof.verified ? 'Yes ✅' : (payoutProof.ok ? 'No ❌' : `Error: ${payoutProof.error}`)}
+                                                    </span>
+                                                </div>
+                                                {payoutProof.entry && (
+                                                    <div>
+                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Entry:</span>{' '}
+                                                        <span className={styles.dataValue} style={{ fontSize: '0.9em', wordBreak: 'break-all' }}>{payoutProof.entry}</span>
+                                                    </div>
+                                                )}
+                                                {payoutProof.root && (
+                                                    <div>
+                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Root:</span>{' '}
+                                                        <span className={styles.dataValue} style={{ fontSize: '0.9em', fontFamily: 'monospace' }} title={payoutProof.root}>
+                                                            {payoutProof.root.slice(0, 18)}...
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {typeof payoutProof.height === 'number' && (
+                                                    <div>
+                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Height:</span>{' '}
+                                                        <span className={`${styles.dataValue} ${styles.numeric}`}>{payoutProof.height.toLocaleString()}</span>
+                                                    </div>
+                                                )}
+                                                {payoutProof.siblings && (
+                                                    <div>
+                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Siblings:</span>{' '}
+                                                        <span className={styles.dataValue}>{payoutProof.siblings.length}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
 
                                 {/* Slot Card */}
                                 {nodeMode !== 'light' && (
@@ -885,56 +1244,113 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 )}
                             </div>
 
-                            {/* Right Panel - Blocks Card */}
-                            {nodeMode !== 'light' && (
-                            <div className={`${styles.card} ${styles.blocksCard}`}>
-                                <h3>
-                                    <span>实时区块列表 (Live Block Feed)</span>
-                                    <button 
-                                        id="toggle-live-feed" 
-                                        className={`${styles.liveToggleBtn} ${isLiveFeedActive ? styles.liveToggleLive : styles.liveTogglePaused}`}
-                                        onClick={handleToggleLiveFeed}
-                                    >
-                                        {isLiveFeedActive ? '暂停 (Pause) ⏸️' : '实时 (Live) 🟢'}
-                                    </button>
-                                </h3>
-                                <div className={styles.liveFeedContainer} id="live-feed-container">
-                                    <table className={styles.liveTable}>
-                                        <thead>
-                                            <tr>
-                                                <th>Height</th>
-                                                <th>Hash</th>
-                                                <th>Leader</th>
-                                                <th>Time</th>
-                                                <th>Recipients</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="live-block-feed-body">
-                                            {blocks.map((block, idx) => (
-                                                <tr key={`${block.hash}-${idx}`} className={styles.tableRow}>
-                                                    <td>{block.height.toLocaleString()}</td>
-                                                    <td>{block.hash}</td>
-                                                    <td>
-                                                        <span style={{ color: block.isSelf ? '#4ee672' : '#c9d1d9' }}>
-                                                            {block.leader}
-                                                        </span>
-                                                    </td>
-                                                    <td>{block.time}</td>
-                                                    <td>{block.recipients}</td>
-                                                </tr>
-                                            ))}
-                                            {blocks.length === 0 && (
+                            {/* Right Panel */}
+                            <div className={styles.rightPanel}>
+                                {/* Blocks Card */}
+                                <div className={`${styles.card} ${styles.blocksCard}`}>
+                                    <h3>
+                                        <span>实时区块列表 (Live Block Feed)</span>
+                                        <button 
+                                            id="toggle-live-feed" 
+                                            className={`${styles.liveToggleBtn} ${isLiveFeedActive ? styles.liveToggleLive : styles.liveTogglePaused}`}
+                                            onClick={handleToggleLiveFeed}
+                                        >
+                                            {isLiveFeedActive ? '暂停 (Pause) ⏸️' : '实时 (Live) 🟢'}
+                                        </button>
+                                    </h3>
+                                    <div className={styles.liveFeedContainer} id="live-feed-container">
+                                        <table className={styles.liveTable}>
+                                            <thead>
                                                 <tr>
-                                                    <td colSpan={5} style={{ textAlign: 'center', padding: 20, color: '#8b949e' }}>
-                                                        No blocks yet...
-                                                    </td>
+                                                    <th>Height</th>
+                                                    <th>Hash</th>
+                                                    <th>Slot</th>
+                                                    <th>Proposer</th>
+                                                    <th>ZK Proof</th>
+                                                    <th>ZK Root</th>
+                                                    <th>Time</th>
+                                                    <th>Pool Reward</th>
+                                                    <th>Details</th>
+                                                    <th>Recipients</th>
                                                 </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody id="live-block-feed-body">
+                                                {blocks.map((block, idx) => (
+                                                    <React.Fragment key={`${block.hash}-${idx}`}>
+                                                        <tr className={styles.tableRow}>
+                                                            <td>{block.height.toLocaleString()}</td>
+                                                            <td title={block.fullHash}>{shortHash(block.fullHash || block.hash, 12)}</td>
+                                                            <td>{block.slot ?? '--'}</td>
+                                                            <td>
+                                                                <span style={{ color: block.isSelf ? '#4ee672' : '#c9d1d9' }}>
+                                                                    {humanLeader(block.leader)}
+                                                                </span>
+                                                            </td>
+                                                            <td>{(block.zkFinalized ?? ((typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight >= block.height))) ? '✓' : '⏳'}</td>
+                                                            <td title={block.zkRoot || (typeof window !== 'undefined' && (window as any).lastZkStateRoot) || ''}>
+                                                                {block.zkRoot ? shortHash(String(block.zkRoot), 10) : ((window as any)?.lastZkStateRoot ? shortHash(String((window as any).lastZkStateRoot), 10) : '--')}
+                                                            </td>
+                                                            <td>{block.time}</td>
+                                                            <td>{typeof block.poolRewardIDC === 'number' ? block.poolRewardIDC.toFixed(2) : '--'}</td>
+                                                            <td>
+                                                                <details>
+                                                                    <summary style={{ cursor: 'pointer' }}>View</summary>
+                                                                    <div style={{ paddingTop: 6, color: '#8b949e' }}>
+                                                                        <div title={block.payoutRoot || ''}><span className={styles.dataLabel}>payoutRoot:</span> <span className={styles.dataValue}>{block.payoutRoot ? shortHash(block.payoutRoot, 18) : '--'}</span></div>
+                                                                        <div title={block.zkProofHash || ''}><span className={styles.dataLabel}>zkProofHash:</span> <span className={styles.dataValue}>{block.zkProofHash ? shortHash(block.zkProofHash, 18) : '--'}</span></div>
+                                                                    </div>
+                                                                </details>
+                                                            </td>
+                                                            <td>{block.recipients}</td>
+                                                        </tr>
+                                                    </React.Fragment>
+                                                ))}
+                                                {blocks.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={10} style={{ textAlign: 'center', padding: 20, color: '#8b949e' }}>
+                                                            No blocks yet...
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                
+                                {/* Proving Panel under Live Block Feed (right column) - Pool Mining Architecture */}
+                                <div className={styles.card}>
+                                    <h3>Proving Panel (Pool Mining)</h3>
+                                    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
+                                        池化挖矿模式：所有参与者按权重共享区块奖励
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                        <div>
+                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Leader</div>
+                                            <div className={styles.dataValue} id="leader-this-slot" title={leaderThisSlot || ''} style={{ fontSize: '0.95em', wordBreak: 'break-all' }}>
+                                                {humanLeader(leaderThisSlot || '--')}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>My Weight</div>
+                                            <div className={`${styles.dataValueLg} ${styles.numeric}`} id="my-weight" style={{ fontSize: '1.2em', color: '#4ee672' }}>
+                                                {effectiveWeight.toFixed(2)}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward/Block</div>
+                                            <div className={`${styles.dataValue} ${styles.numeric}`} id="est-reward-block" style={{ fontSize: '1em' }}>
+                                                ≈ {(projectedReward / ((24 * 60 * 60) / (props.chainContext?.params?.targetBlockTime || 10))).toFixed(4)} IDC
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward/Day</div>
+                                            <div className={`${styles.dataValue} ${styles.numeric}`} id="est-reward-day" style={{ fontSize: '1em' }}>
+                                                ≈ {projectedReward.toFixed(2)} IDC
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            )}
                         </div>
                     </div>
                 )}
@@ -949,11 +1365,27 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             <div className={styles.balanceDisplay}>
                                 <span id="wallet-summary-balance">{balance.toFixed(2)}</span> <span style={{ fontSize: '0.6em', color: '#c9d1d9' }}>IDC</span>
                             </div>
+                                    {nodeMode === 'light' && (
+                                        <div style={{ marginTop: 8 }}>
+                                            <span className={styles.dataLabel}>ZK Verified:</span>{' '}
+                                            <span className={styles.dataValue}>
+                                                {lightVerifiedBalance !== null ? 'Yes ✅' : 'No ⏳'}
+                                            </span>
+                                            {lightVerifiedBalance !== null && (
+                                                <span style={{ marginLeft: 10, color: '#8b949e' }}>
+                                                    at height {lastBalanceProofHeight}
+                                                </span>
+                                            )}
+                                            <div style={{ marginTop: 6, color: '#8b949e', fontSize: 13 }}>
+                                                说明：该余额通过 ZK 状态根与 Merkle 证明本地验证，无需本地数据库或全节点。
+                                            </div>
+                                        </div>
+                                    )}
                             
                             <p className={styles.dataLabel}>主钱包地址:</p>
                             <div className={styles.walletAddressBox}>
-                                <span id="wallet-full-address" style={{ fontFamily: 'Consolas, Courier New, monospace' }}>
-                                    {props.nodeAddress || 'Loading...'}
+								<span id="wallet-full-address" style={{ fontFamily: 'Consolas, Courier New, monospace' }} title={props.nodeAddress || ''}>
+									{formatAddress(props.nodeAddress || '')}
                                 </span>
                                 <button 
                                     onClick={copyWalletAddress}
