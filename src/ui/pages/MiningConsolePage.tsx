@@ -479,7 +479,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             try {
                 const local = ctx.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
                 // If we're far behind, consider warp even if availableFrom is low (e.g., 1)
                 const FAR_BEHIND = 500; // threshold to trigger snapshot warp
                 if (!triggeredRef.current && network > 0 && (network - local >= FAR_BEHIND)) {
