@@ -958,6 +958,41 @@ export class SignalingRoom {
               }
             }
           }
+        } else if (data.type === 'SEED_BOOTSTRAP_BLOCKS') {
+          // Allow clients to seed a small rolling window of recent blocks (no auth)
+          try {
+            const blocks = Array.isArray(data.blocks) ? data.blocks : [];
+            if (blocks.length === 0) {
+              server.send(JSON.stringify({ type: 'SEED_BOOTSTRAP_BLOCKS_ACK', ok: false, reason: 'NO_BLOCKS' }));
+              return;
+            }
+            await this.loadBootstrapBlocksMeta();
+            let stored = 0;
+            for (const block of blocks) {
+              const height = block?.header?.height;
+              if (typeof height !== 'number') continue;
+              if (height <= 0 || height > this.bootstrapBlocksMeta.maxStoredHeight) continue;
+              const key = `block:${height}`;
+              await this.state.storage.put(key, block);
+              if (this.bootstrapBlocksMeta.availableFromHeight === 0) {
+                this.bootstrapBlocksMeta.availableFromHeight = height;
+              } else {
+                this.bootstrapBlocksMeta.availableFromHeight = Math.min(this.bootstrapBlocksMeta.availableFromHeight, height);
+              }
+              this.bootstrapBlocksMeta.availableToHeight = Math.max(this.bootstrapBlocksMeta.availableToHeight, height);
+              stored++;
+            }
+            await this.state.storage.put('bootstrapBlocksMeta', this.bootstrapBlocksMeta);
+            server.send(JSON.stringify({
+              type: 'SEED_BOOTSTRAP_BLOCKS_ACK',
+              ok: true,
+              stored,
+              availableFromHeight: this.bootstrapBlocksMeta.availableFromHeight,
+              availableToHeight: this.bootstrapBlocksMeta.availableToHeight,
+            }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'SEED_BOOTSTRAP_BLOCKS_ACK', ok: false, reason: 'INTERNAL_ERROR' }));
+          }
         } else if (data.type === 'REQUEST_BOOTSTRAP_BLOCKS') {
           try {
             // WebSocket-based bootstrap blocks (bypass CORS)

@@ -525,6 +525,7 @@ function App() {
   const [txOpType, setTxOpType] = useState<"PUT" | "APPEND" | "DELETE">("PUT");
 
   const p2pNodeRef = useRef<BrowserP2PNode | null>(null);
+  const lastSeedTsRef = useRef<number>(0);
   
   // Phase 40: Shadow Node for mobile persistence
   const shadowNodeRef = useRef<ShadowNodeClient | null>(null);
@@ -4701,6 +4702,22 @@ function App() {
                 };
                 const p2p = p2pNodeRef.current;
                 p2p?.sendToSignalServer?.("UPDATE_ROOT_TIP", payload.payload);
+                // Throttled seeding of recent window of blocks
+                const now = Date.now();
+                if (!lastSeedTsRef.current || now - lastSeedTsRef.current > 15000) {
+                  lastSeedTsRef.current = now;
+                  const tipH = chainContext.storage.getTip()?.header.height || foundBlock.header.height;
+                  const span = 512;
+                  const from = Math.max(1, tipH - span + 1);
+                  const blocks: any[] = [];
+                  for (let h = from; h <= tipH; h++) {
+                    const b = chainContext.storage.getBlockByHeight(h);
+                    if (b) blocks.push(b);
+                  }
+                  if (blocks.length > 0) {
+                    p2p?.sendToSignalServer?.("SEED_BOOTSTRAP_BLOCKS", { blocks });
+                  }
+                }
               } catch (e) {
                 // ignore
               }
