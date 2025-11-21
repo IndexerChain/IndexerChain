@@ -270,37 +270,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         try { 
             p2p.onMessage?.("BOOTSTRAP_RESPONSE", async (payload: any) => {
                 try {
-                    // Detect mainnet genesis mismatch and auto-reset once
-                    try {
-                        const params = (ctx as any)?.params;
-                        const isMainnet = params?.networkId && params.networkId === "IXC_MAINNET_V1";
-                        if (isMainnet && !(window as any).__ixc_genesis_checked__) {
-                            (window as any).__ixc_genesis_checked__ = true;
-                            try {
-                                const { getMainnetGenesisHash } = await import("../../core/networkParams.js");
-                                const expectedGenesisHash = await getMainnetGenesisHash();
-                                const localGenesis = (ctx.storage.getBlockByHeight(0) as any)?.hash || "";
-                                if (localGenesis && expectedGenesisHash && localGenesis !== expectedGenesisHash) {
-                                    // Clear local chain and snapshots, then reload to re-init with correct genesis
-                                    try { ctx.storage.reset(); } catch {}
-                                    try { 
-                                        if (typeof localStorage !== "undefined") {
-                                            localStorage.removeItem("indexerchain_blocks_v1");
-                                            localStorage.removeItem("indexerchain_snapshots_meta_v1");
-                                            for (const k of Object.keys(localStorage)) {
-                                                if (k.startsWith("indexerchain_snapshot_v1_")) localStorage.removeItem(k);
-                                            }
-                                        }
-                                    } catch {}
-                                    setTimeout(() => window.location.reload(), 50);
-                                    return;
-                                }
-                            } catch {}
-                        }
-                    } catch {}
                     // Update hints
                     if (typeof window !== "undefined" && payload?.latestHeight > 0) {
-                        (window as any).lastRootTipHeight = payload.latestHeight;
+                        (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, payload.latestHeight);
                         (window as any).lastRootTipHash = payload.latestHeaderHash || "";
                         if (payload.availableFromHeight) {
                             (window as any).lastAvailableFromHeight = payload.availableFromHeight;
@@ -510,37 +482,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         const p2p = props.p2pNode as any;
         if (!ctx || !p2p) return;
         const triggeredRef = { current: false };
-        const lastHeightRef = { h: 0, t: Date.now() };
         const tick = async () => {
             try {
                 const local = ctx.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
                 // If we're far behind, consider warp even if availableFrom is low (e.g., 1)
                 const FAR_BEHIND = 500; // threshold to trigger snapshot warp
-                // One-time auto-repair: if stuck for >20s and gap >= 2000, clear local chain to resolve fork lock
-                try {
-                    const now = Date.now();
-                    if (local !== lastHeightRef.h) {
-                        lastHeightRef.h = local;
-                        lastHeightRef.t = now;
-                    } else if (network > 0 && network - local >= 2000 && now - lastHeightRef.t > 20000) {
-                        if (!(window as any).__ixc_auto_repair_done__) {
-                            (window as any).__ixc_auto_repair_done__ = true;
-                            try { ctx.storage.reset(); } catch {}
-                            try { 
-                                if (typeof localStorage !== "undefined") {
-                                    localStorage.removeItem("indexerchain_blocks_v1");
-                                    localStorage.removeItem("indexerchain_snapshots_meta_v1");
-                                    for (const k of Object.keys(localStorage)) {
-                                        if (k.startsWith("indexerchain_snapshot_v1_")) localStorage.removeItem(k);
-                                    }
-                                }
-                            } catch {}
-                            setTimeout(() => window.location.reload(), 50);
-                            return;
-                        }
-                    }
-                } catch {}
                 if (!triggeredRef.current && network > 0 && (network - local >= FAR_BEHIND)) {
                     triggeredRef.current = true;
                     // Ask peers for snapshot meta around target near tip
