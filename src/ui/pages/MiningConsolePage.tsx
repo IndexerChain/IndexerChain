@@ -465,6 +465,50 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return () => clearInterval(retry);
     }, [props.chainContext, props.p2pNode, peerCount]);
 
+    // Force warp/snapshot sync when local height is below signal window
+    useEffect(() => {
+        const ctx = props.chainContext as any;
+        const p2p = props.p2pNode as any;
+        if (!ctx || !p2p) return;
+        let triggered = false;
+        const tick = async () => {
+            try {
+                const local = ctx.storage.getTip()?.header.height || 0;
+                const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+                const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
+                if (!triggered && availableFrom > 0 && local < availableFrom && network > 0) {
+                    triggered = true;
+                    // Ask peers for snapshot meta around availableFrom-1
+                    try {
+                        if (p2p.peers) {
+                            for (const [peerId, peer] of p2p.peers) {
+                                if (peer?.connected && peer.dataChannel?.readyState === "open") {
+                                    p2p.sendToPeer?.(peerId, "REQUEST_SNAPSHOT_META", {
+                                        targetHeight: availableFrom - 1,
+                                        requestId: `warp_${Date.now()}_${availableFrom - 1}`
+                                    });
+                                }
+                            }
+                        }
+                    } catch {}
+                    // Force unified warp sync (will use window.snapshotDownloader if present)
+                    try {
+                        const { handleRootTipUpdate } = await import("../../core/unifiedSyncManager.js");
+                        await handleRootTipUpdate(ctx, p2p, {
+                            latestHeight: network,
+                            latestHeaderHash: (typeof window !== 'undefined' && (window as any).lastRootTipHash) || "",
+                            recentHeaders: [],
+                            latestSnapshotMeta: (typeof window !== 'undefined' && (window as any).lastRootTipSnapshotMeta) || null,
+                            stateCommitment: undefined
+                        }, false, (_msg: string) => {});
+                    } catch {}
+                }
+            } catch {}
+        };
+        const id = setInterval(tick, 1000);
+        return () => clearInterval(id);
+    }, [props.chainContext, props.p2pNode]);
+
     const formatAddress = (addr: string) => {
         if (!addr) return 'Loading...';
         return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
