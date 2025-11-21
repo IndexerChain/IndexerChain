@@ -563,8 +563,10 @@ export class MiningGuard {
         miningMode = "SAFE";
         logger.debug(`[Phase 35/36] Mainnet admission ready: Stage ${admissionStatus.stage}, Score ${admissionStatus.quorumScore} >= ${admissionStatus.requiredQuorumScore}, Independent peers ${admissionStatus.independentPeers} >= ${admissionStatus.requiredIndependentPeers}, State lock OK`);
       } else {
-        // Dev-friendly override: if at least 1 independent IP is present, allow GUARDED mining immediately
-        if (admissionStatus.independentPeers >= 1) {
+        // Dev-friendly override:
+        // - If至少有1个独立 IP -> 允许 GUARDED
+        // - 如果当前网络仅有单节点/同一 IP（peerCount <= 1）-> 也允许 GUARDED（单机启动/测试）
+        if (admissionStatus.independentPeers >= 1 || peerCount <= 1) {
           miningMode = "GUARDED";
         } else {
           // BLOCKED: Mainnet admission rules not satisfied
@@ -721,26 +723,8 @@ export class MiningGuard {
     // Check 5: Synchronization status (STRICT)
     // Enforce: must be fully synced to the latest known network height before mining
     {
-      const localHeightStrict = chainContext.storage.getTip()?.header.height ?? 0;
-      let networkHeightStrict = 0;
-      if (typeof window !== "undefined") {
-        try {
-          networkHeightStrict = (window as any).lastRootTipHeight || 0;
-        } catch {}
-      }
-      if (networkHeightStrict > 0 && localHeightStrict < networkHeightStrict) {
-        return {
-          ok: false,
-          mode: "BLOCKED",
-          code: "NOT_SYNCED",
-          reason: `Must sync to latest height before mining (local: ${localHeightStrict}, network: ${networkHeightStrict}, behind: ${networkHeightStrict - localHeightStrict})`,
-          details: {
-            localHeight: localHeightStrict,
-            networkHeight: networkHeightStrict,
-            peerCount,
-          },
-        };
-      }
+      // Allow mining while syncing: do NOT block on NOT_SYNCED; treat as GUARDED scenario.
+      // Intentionally no-op here so nodes can mine and sync concurrently.
     }
 
     // Check 5.1: Require at least one open data channel (ensures block propagation before mining)

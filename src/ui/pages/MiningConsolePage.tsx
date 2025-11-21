@@ -94,8 +94,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         setHookIsLiveFeedActive(newState);
     };
 
-    // Compute whether starting is allowed; and keep a human-readable reason when blocked
-    const canStartMining = (miningGuardResult?.ok ?? false) && !isMining && peerCount > 0 && networkHeight <= localHeight;
+    // Keep a human-readable guard reason (we no longer block start while syncing)
     useEffect(() => {
         if (isMining) {
             setGuardMessage('');
@@ -103,11 +102,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
         if (peerCount <= 0) {
             setGuardMessage('⚠️ No peers connected. Connect to network to start mining.');
-            return;
-        }
-        if (networkHeight > localHeight) {
-            const diff = networkHeight - localHeight;
-            setGuardMessage(`⚠️ Not synced (behind ${diff} blocks). Please catch up first.`);
             return;
         }
         if (miningGuardResult && !miningGuardResult.ok) {
@@ -497,12 +491,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                             id="toggle-mining"
                                             className={`${styles.btn} ${isMining ? styles.btnDanger : styles.btnStart}`}
                                             onClick={() => {
-                                                if (displayMining || canStartMining) {
-                                                    toggleMining();
-                                                }
+                                                // Optimistic UI update for immediate feedback
+                                                setDisplayMining(prev => !prev);
+                                                toggleMining();
                                             }}
-                                            disabled={!displayMining && !canStartMining}
-                                            title={!displayMining && !canStartMining ? guardMessage : ''}
+                                            disabled={false}
+                                            title={guardMessage || ''}
                                         >
                                             {displayMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
                                         </button>
