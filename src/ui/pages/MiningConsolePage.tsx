@@ -137,10 +137,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     const isMining = status === 'Mining';
 
     // Auto-start mining when ready and autoMining enabled
+    // Also stop mining immediately when autoMining is disabled
     useEffect(() => {
         if (!props.chainContext) return;
         if (autoMining && !isMining && miningGuardResult?.ok) {
             toggleMining(); // start mining
+        } else if (!autoMining && isMining) {
+            // Immediately stop mining when autoMining is disabled
+            toggleMining(); // stop mining
         }
     }, [autoMining, isMining, miningGuardResult?.ok]);
 
@@ -469,10 +473,15 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     }
                     // Also ask for bootstrap occasionally
                     p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {});
-                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 1000 });
+                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 1000, wantSnapshotMeta: true });
                     // 直接向信令端请求靠近 tip 的整段窗口，避免低高度被裁剪
                     p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: network || (startFrom + 2 * step) });
                     p2pNode.sendToSignalServer?.("GLOBAL_VIEW_REQUEST", {});
+                    // If gap is very large (>1000), also request snapshot meta from signal server
+                    if (network - local > 1000) {
+                        const target = Math.max(1, network - 1);
+                        p2pNode.sendToSignalServer?.("REQUEST_SNAPSHOT_META", { targetHeight: target });
+                    }
                 }
             } catch {}
         }, 1000);
@@ -545,6 +554,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         // CRITICAL: Apply snapshot state immediately so chain can continue from snapshot height
                                         try {
                                             const { IndexState } = await import("../../core/indexState.js");
+                                            const currentHeight = ctx.storage.getTip()?.header.height || 0;
+                                            const snapshotHeight = snapshotData.meta.height || 0;
+                                            
                                             if (snapshotData.indexState) {
                                                 const restoredState = IndexState.fromSnapshot(snapshotData.indexState);
                                                 const restoredInternalState = (restoredState as any).getInternalState();
@@ -562,6 +574,32 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                 }
                                                 if (restoredNullifiers) {
                                                     (ctx.indexState as any).nullifierSet = new Set(restoredNullifiers);
+                                                }
+                                                
+                                                // CRITICAL: If local height is less than snapshot height, reset chain to snapshot height
+                                                // This ensures we can continue from snapshot height
+                                                if (snapshotHeight > 0 && currentHeight < snapshotHeight) {
+                                                    try {
+                                                        const { performHardReorg } = await import("../../core/hardReorg.js");
+                                                        // Reset to snapshot height (will remove blocks above snapshot height)
+                                                        // But we want to keep blocks up to snapshot height, so we need to check if snapshot block exists
+                                                        const snapshotBlock = ctx.storage.getBlockByHeight(snapshotHeight);
+                                                        if (!snapshotBlock || snapshotBlock.hash !== snapshotData.meta.blockHash) {
+                                                            // Snapshot block doesn't exist or doesn't match, need to rewind to before snapshot
+                                                            // Then we'll rebuild from snapshot + replay blocks
+                                                            if (currentHeight > 0) {
+                                                                await performHardReorg(ctx, Math.max(0, snapshotHeight - 1));
+                                                            }
+                                                        } else {
+                                                            // Snapshot block exists and matches, just rewind to snapshot height
+                                                            if (currentHeight > snapshotHeight) {
+                                                                await performHardReorg(ctx, snapshotHeight);
+                                                            }
+                                                        }
+                                                    } catch (reorgError) {
+                                                        // If reorg fails, try to continue anyway
+                                                        console.warn('[MiningConsole] Failed to reorg after snapshot:', reorgError);
+                                                    }
                                                 }
                                             }
                                         } catch {}
