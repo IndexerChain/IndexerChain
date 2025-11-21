@@ -471,11 +471,22 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         const p2p = props.p2pNode as any;
         if (!ctx || !p2p) return;
         let triggered = false;
+        let reorgAttempted = false;
         const tick = async () => {
             try {
                 const local = ctx.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
                 const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
+                if (availableFrom > 0 && local < availableFrom && network > 0) {
+                    // If we've been stuck above genesis but still below window, try a one-time hard reorg to genesis
+                    if (!reorgAttempted && local > 0) {
+                        reorgAttempted = true;
+                        try {
+                            const { performHardReorg } = await import("../../core/hardReorg.js");
+                            await performHardReorg(ctx, 1);
+                        } catch {}
+                    }
+                }
                 if (!triggered && availableFrom > 0 && local < availableFrom && network > 0) {
                     triggered = true;
                     // Ask peers for snapshot meta around availableFrom-1
