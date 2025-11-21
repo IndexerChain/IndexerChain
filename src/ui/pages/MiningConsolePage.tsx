@@ -285,7 +285,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 } catch {}
             }); 
         } catch {}
-        // Handle BOOTSTRAP_BLOCKS (WS) → append blocks directly
+        // Handle BOOTSTRAP_BLOCKS (WS) → pass to sync pipeline (enables warp/snapshot)
         try {
             p2p.onMessage?.("BOOTSTRAP_BLOCKS", async (payload: any) => {
                 try {
@@ -297,19 +297,31 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     if (typeof payload?.availableToHeight === 'number') {
                         (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, payload.availableToHeight);
                     }
-                    // Append in ascending order
+                    // Process via sync manager to respect continuity and trigger warp/snapshot if needed
                     const sorted = list.slice().sort((a, b) => (a?.header?.height || 0) - (b?.header?.height || 0));
-                    for (const b of sorted) {
+                    const { handleReceivedBlock } = await import("../../core/sync.js");
+                    const local = ctx.storage.getTip()?.header.height || 0;
+                    const firstHeight = sorted[0]?.header?.height || 0;
+                    // If there is a large gap from local to first bootstrap height, proactively request snapshot meta
+                    if (firstHeight > local + 1) {
                         try {
-                            ctx.storage.appendBlock(b);
-                            ctx.indexState.applyBlock(b);
-                        } catch (e) {
-                            // ignore individual failures
-                        }
+                            const target = Math.max(1, firstHeight - 1);
+                            p2p.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 500, wantSnapshotMeta: true });
+                            // Ask connected peers for snapshot meta to enable warp sync
+                            if (p2p.peers) {
+                                for (const [peerId, peer] of p2p.peers) {
+                                    if (peer?.connected && peer.dataChannel?.readyState === "open") {
+                                        p2p.sendToPeer?.(peerId, "REQUEST_SNAPSHOT_META", {
+                                            targetHeight: target,
+                                            requestId: `warp_${Date.now()}_${target}`
+                                        });
+                                    }
+                                }
+                            }
+                        } catch {}
                     }
-                    const tip = ctx.storage.getTip();
-                    if (tip) {
-                        (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, tip.header.height);
+                    for (const b of sorted) {
+                        await handleReceivedBlock(b, ctx, p2p, "signal");
                     }
                 } catch {}
             });
