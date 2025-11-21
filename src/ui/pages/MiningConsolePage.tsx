@@ -444,6 +444,13 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     const effectiveFrom = availableFrom > Math.max(local + 1, fallbackFrom) ? availableFrom : fallbackFrom;
                     const startFrom = Math.max(local + 1, effectiveFrom);
                     const target = Math.max(network > 0 ? network : (startFrom + step), startFrom + step);
+                    // 1) 始终优先请求“顺序必需区间”：从 local+1 开始的一段，保证连续推进
+                    const seqFrom = local + 1;
+                    const seqTo = Math.min(seqFrom + step - 1, network || (seqFrom + step - 1));
+                    if (seqFrom <= seqTo) {
+                        p2pNode.broadcast?.("REQUEST_BLOCKS", { fromHeight: seqFrom, toHeight: seqTo });
+                        p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: seqFrom, to: seqTo });
+                    }
                     for (let from = startFrom; from <= target; from += step) {
                         const to = Math.min(from + step - 1, target);
                         p2pNode.broadcast?.("REQUEST_BLOCKS", { fromHeight: from, toHeight: to });
