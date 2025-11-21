@@ -40,10 +40,42 @@ export class SignalingRoom {
     this.bootstrapBlocksMeta = {
       availableFromHeight: 0,
       availableToHeight: 0,
-      // Raise default to cover early network quickly (dev-friendly)
-      maxStoredHeight: 20000, // Maximum height to store bootstrap blocks
+      // Allow very high ceiling and manage retention by a rolling window
+      maxStoredHeight: 1000000, // logical ceiling
+      windowSize: 50000,        // keep last 50k blocks for bootstrap by default
     };
     this.initialized = false;
+  }
+
+  /**
+   * Prune stored bootstrap blocks to keep a rolling window near tip.
+   */
+  async pruneBootstrapBlocksIfNeeded(latestHeight) {
+    try {
+      await this.loadBootstrapBlocksMeta();
+      const meta = this.bootstrapBlocksMeta;
+      if (!meta.windowSize || meta.windowSize <= 0) return;
+      const targetFrom = Math.max(1, latestHeight - meta.windowSize + 1);
+      // Only prune when range exceeds window by a margin
+      if (meta.availableFromHeight === 0 && meta.availableToHeight === 0) return;
+      if (meta.availableFromHeight >= targetFrom) return;
+      // Delete older keys below targetFrom
+      let deleted = 0;
+      for (let h = meta.availableFromHeight; h < targetFrom; h++) {
+        const key = `block:${h}`;
+        await this.state.storage.delete(key);
+        deleted++;
+      }
+      meta.availableFromHeight = targetFrom;
+      // Persist updated meta
+      await this.state.storage.put('bootstrapBlocksMeta', meta);
+      this.bootstrapBlocksMeta = meta;
+      if (deleted > 0) {
+        console.log(`[SignalingRoom] Pruned ${deleted} bootstrap blocks below height ${targetFrom}`);
+      }
+    } catch (e) {
+      console.warn('[SignalingRoom] pruneBootstrapBlocksIfNeeded failed:', e);
+    }
   }
 
   // Phase 51: Helpers for signals root
@@ -899,28 +931,24 @@ export class SignalingRoom {
             this.bootstrapState.latestSnapshotMeta = snapshotMeta;
           }
 
-          // Phase 48: Store bootstrap block if provided and height is within range
-          if (canonicalBlock && height > 0 && height <= this.bootstrapBlocksMeta.maxStoredHeight) {
+          // Phase 48: Store bootstrap block if provided (manage with rolling window)
+          if (canonicalBlock && height > 0) {
             try {
               const blockKey = `block:${height}`;
               await this.state.storage.put(blockKey, canonicalBlock);
               
               // Update available range
-              if (this.bootstrapBlocksMeta.availableFromHeight === 0) {
+              if (!this.bootstrapBlocksMeta.availableFromHeight || this.bootstrapBlocksMeta.availableFromHeight === 0) {
                 this.bootstrapBlocksMeta.availableFromHeight = height;
-              } else {
-                this.bootstrapBlocksMeta.availableFromHeight = Math.min(
-                  this.bootstrapBlocksMeta.availableFromHeight,
-                  height
-                );
               }
-              this.bootstrapBlocksMeta.availableToHeight = Math.max(
-                this.bootstrapBlocksMeta.availableToHeight,
-                height
-              );
+              this.bootstrapBlocksMeta.availableFromHeight = Math.min(this.bootstrapBlocksMeta.availableFromHeight, height);
+              this.bootstrapBlocksMeta.availableToHeight = Math.max(this.bootstrapBlocksMeta.availableToHeight, height);
               
               // Persist metadata
               await this.state.storage.put('bootstrapBlocksMeta', this.bootstrapBlocksMeta);
+              
+              // Rolling prune
+              await this.pruneBootstrapBlocksIfNeeded(height);
               
               console.log(`[SignalingRoom] Stored bootstrap block at height ${height} (range: ${this.bootstrapBlocksMeta.availableFromHeight}-${this.bootstrapBlocksMeta.availableToHeight})`);
             } catch (error) {
@@ -971,7 +999,7 @@ export class SignalingRoom {
             for (const block of blocks) {
               const height = block?.header?.height;
               if (typeof height !== 'number') continue;
-              if (height <= 0 || height > this.bootstrapBlocksMeta.maxStoredHeight) continue;
+              if (height <= 0) continue;
               const key = `block:${height}`;
               await this.state.storage.put(key, block);
               if (this.bootstrapBlocksMeta.availableFromHeight === 0) {
@@ -983,6 +1011,7 @@ export class SignalingRoom {
               stored++;
             }
             await this.state.storage.put('bootstrapBlocksMeta', this.bootstrapBlocksMeta);
+            await this.pruneBootstrapBlocksIfNeeded(this.bootstrapBlocksMeta.availableToHeight || 0);
             server.send(JSON.stringify({
               type: 'SEED_BOOTSTRAP_BLOCKS_ACK',
               ok: true,
