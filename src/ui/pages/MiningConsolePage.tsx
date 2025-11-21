@@ -270,6 +270,34 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         try { 
             p2p.onMessage?.("BOOTSTRAP_RESPONSE", async (payload: any) => {
                 try {
+                    // Detect mainnet genesis mismatch and auto-reset once
+                    try {
+                        const params = (ctx as any)?.params;
+                        const isMainnet = params?.networkId && params.networkId === "IXC_MAINNET_V1";
+                        if (isMainnet && !(window as any).__ixc_genesis_checked__) {
+                            (window as any).__ixc_genesis_checked__ = true;
+                            try {
+                                const { getMainnetGenesisHash } = await import("../../core/networkParams.js");
+                                const expectedGenesisHash = await getMainnetGenesisHash();
+                                const localGenesis = (ctx.storage.getBlockByHeight(0) as any)?.hash || "";
+                                if (localGenesis && expectedGenesisHash && localGenesis !== expectedGenesisHash) {
+                                    // Clear local chain and snapshots, then reload to re-init with correct genesis
+                                    try { ctx.storage.reset(); } catch {}
+                                    try { 
+                                        if (typeof localStorage !== "undefined") {
+                                            localStorage.removeItem("indexerchain_blocks_v1");
+                                            localStorage.removeItem("indexerchain_snapshots_meta_v1");
+                                            for (const k of Object.keys(localStorage)) {
+                                                if (k.startsWith("indexerchain_snapshot_v1_")) localStorage.removeItem(k);
+                                            }
+                                        }
+                                    } catch {}
+                                    setTimeout(() => window.location.reload(), 50);
+                                    return;
+                                }
+                            } catch {}
+                        }
+                    } catch {}
                     // Update hints
                     if (typeof window !== "undefined" && payload?.latestHeight > 0) {
                         (window as any).lastRootTipHeight = payload.latestHeight;
