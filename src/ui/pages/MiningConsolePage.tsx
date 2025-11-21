@@ -528,8 +528,23 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         snapshotId: String(best.height),
                                     });
                                 } catch {}
-                                await sd.downloadSnapshot(best, {}, (_p: any) => {});
-                                // After snapshot download, immediately request blocks from snapshotHeight+1
+                                const snapshotData: any = await sd.downloadSnapshot(best, {}, (_p: any) => {});
+                                // Persist snapshot to localStorage and update metadata, so chain can warp from this height
+                                try {
+                                    if (snapshotData && snapshotData.meta && typeof localStorage !== 'undefined') {
+                                        const SNAPSHOT_DATA_PREFIX = "indexerchain_snapshot_v1_";
+                                        const key = `${SNAPSHOT_DATA_PREFIX}${snapshotData.meta.height}`;
+                                        localStorage.setItem(key, JSON.stringify(snapshotData));
+                                        // Update metas list
+                                        const { loadAllSnapshotMeta, saveAllSnapshotMeta } = await import("../../core/snapshot.js");
+                                        const metas = loadAllSnapshotMeta().filter((m:any)=> m.height !== snapshotData.meta.height);
+                                        metas.push(snapshotData.meta);
+                                        saveAllSnapshotMeta(metas);
+                                        // Expose to window hint
+                                        (window as any).lastRootTipSnapshotMeta = snapshotData.meta;
+                                    }
+                                } catch {}
+                                // After snapshot saved, immediately request blocks from snapshotHeight+1
                                 try {
                                     const fromH = (best.height || 0) + 1;
                                     if (fromH > 1) {
