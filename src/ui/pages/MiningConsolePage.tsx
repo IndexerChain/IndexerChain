@@ -469,13 +469,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return () => clearInterval(retry);
     }, [props.chainContext, props.p2pNode, peerCount]);
 
-    // Force warp/snapshot sync when local height is below signal window
+    // Force warp/snapshot sync when far behind; persist flags across re-renders
     useEffect(() => {
         const ctx = props.chainContext as any;
         const p2p = props.p2pNode as any;
         if (!ctx || !p2p) return;
-        let triggered = false;
-        let reorgAttempted = false;
+        const triggeredRef = { current: false };
         const tick = async () => {
             try {
                 const local = ctx.storage.getTip()?.header.height || 0;
@@ -483,18 +482,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
                 // If we're far behind, consider warp even if availableFrom is low (e.g., 1)
                 const FAR_BEHIND = 500; // threshold to trigger snapshot warp
-                if ((network > 0 && network - local >= FAR_BEHIND) || (availableFrom > 0 && local < availableFrom && network > 0)) {
-                    // If we've been stuck above genesis but still below window, try a one-time hard reorg to genesis
-                    if (!reorgAttempted && local > 0) {
-                        reorgAttempted = true;
-                        try {
-                            const { performHardReorg } = await import("../../core/hardReorg.js");
-                            await performHardReorg(ctx, 1);
-                        } catch {}
-                    }
-                }
-                if (!triggered && network > 0 && (network - local >= FAR_BEHIND)) {
-                    triggered = true;
+                if (!triggeredRef.current && network > 0 && (network - local >= FAR_BEHIND)) {
+                    triggeredRef.current = true;
                     // Ask peers for snapshot meta around target near tip
                     try {
                         if (p2p.peers) {
