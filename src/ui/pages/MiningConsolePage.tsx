@@ -438,8 +438,11 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
                 if (peerCount > 0 && (network === 0 || local < network)) {
                     const step = 2000; // 更大的窗口，加速追赶
-                    const fallbackFrom = Math.max(1, (network > 0 ? (network - 5000 + 1) : 1));
-                    const startFrom = Math.max(local + 1, availableFrom > 0 ? availableFrom : fallbackFrom);
+                    const nearWindow = 50000;
+                    const fallbackFrom = Math.max(1, network > 0 ? (network - nearWindow + 1) : 1);
+                    // 优先选择靠近 tip 的窗口；当 availableFrom 过小（如=1）时，自动回退到 near-tip
+                    const effectiveFrom = availableFrom > Math.max(local + 1, fallbackFrom) ? availableFrom : fallbackFrom;
+                    const startFrom = Math.max(local + 1, effectiveFrom);
                     const target = Math.max(network > 0 ? network : (startFrom + step), startFrom + step);
                     for (let from = startFrom; from <= target; from += step) {
                         const to = Math.min(from + step - 1, target);
@@ -457,7 +460,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     // Also ask for bootstrap occasionally
                     p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {});
                     p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 1000 });
-                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: startFrom + 2 * step });
+                    // 直接向信令端请求靠近 tip 的整段窗口，避免低高度被裁剪
+                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: network || (startFrom + 2 * step) });
                     p2pNode.sendToSignalServer?.("GLOBAL_VIEW_REQUEST", {});
                 }
             } catch {}
@@ -499,6 +503,21 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         requestId: `warp_${Date.now()}_${availableFrom - 1}`
                                     });
                                 }
+                            }
+                        }
+                    } catch {}
+                    // 如果全局有 snapshotDownloader，则直接进行一次下载尝试（不等统一管理器）
+                    try {
+                        const sd: any = (typeof window !== 'undefined' && (window as any).snapshotDownloader) || null;
+                        if (sd) {
+                            // 先请求 meta，再挑选最接近 availableFrom-1 或 network 的快照下载
+                            const target = Math.max(1, availableFrom - 1) || network;
+                            const metas = await sd.requestSnapshotMeta(target);
+                            if (metas && metas.length > 0) {
+                                const best = metas
+                                  .filter((m: any) => m.height <= target)
+                                  .sort((a: any, b: any) => b.height - a.height)[0] || metas[0];
+                                await sd.downloadSnapshot(best, {}, (_p: any) => {});
                             }
                         }
                     } catch {}
