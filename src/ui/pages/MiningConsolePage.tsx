@@ -481,7 +481,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 const local = ctx.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
                 const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
-                if (availableFrom > 0 && local < availableFrom && network > 0) {
+                // If we're far behind, consider warp even if availableFrom is low (e.g., 1)
+                const FAR_BEHIND = 500; // threshold to trigger snapshot warp
+                if ((network > 0 && network - local >= FAR_BEHIND) || (availableFrom > 0 && local < availableFrom && network > 0)) {
                     // If we've been stuck above genesis but still below window, try a one-time hard reorg to genesis
                     if (!reorgAttempted && local > 0) {
                         reorgAttempted = true;
@@ -491,16 +493,17 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         } catch {}
                     }
                 }
-                if (!triggered && availableFrom > 0 && local < availableFrom && network > 0) {
+                if (!triggered && network > 0 && (network - local >= FAR_BEHIND)) {
                     triggered = true;
-                    // Ask peers for snapshot meta around availableFrom-1
+                    // Ask peers for snapshot meta around target near tip
                     try {
                         if (p2p.peers) {
                             for (const [peerId, peer] of p2p.peers) {
                                 if (peer?.connected && peer.dataChannel?.readyState === "open") {
+                                    const target = Math.max(1, (network - 1));
                                     p2p.sendToPeer?.(peerId, "REQUEST_SNAPSHOT_META", {
-                                        targetHeight: availableFrom - 1,
-                                        requestId: `warp_${Date.now()}_${availableFrom - 1}`
+                                        targetHeight: target,
+                                        requestId: `warp_${Date.now()}_${target}`
                                     });
                                 }
                             }
@@ -510,12 +513,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     try {
                         const sd: any = (typeof window !== 'undefined' && (window as any).snapshotDownloader) || null;
                         if (sd) {
-                            // 先请求 meta，再挑选最接近 availableFrom-1 或 network 的快照下载
-                            const target = Math.max(1, availableFrom - 1) || network;
+                            // 先请求 meta，再挑选最接近 network 的快照下载
+                            const target = Math.max(1, (network - 1));
                             const metas = await sd.requestSnapshotMeta(target);
                             if (metas && metas.length > 0) {
                                 const best = metas
-                                  .filter((m: any) => m.height <= target)
+                                  .filter((m: any) => m.height && m.height <= target)
                                   .sort((a: any, b: any) => b.height - a.height)[0] || metas[0];
                                 await sd.downloadSnapshot(best, {}, (_p: any) => {});
                             }
