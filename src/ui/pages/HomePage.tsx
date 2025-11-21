@@ -32,7 +32,8 @@ export function HomePage({
   const { t } = useI18n();
   const isP2PConnected = !!(p2pNode as any)?.isConnected;
   const localHeight = chainContext?.storage.getTip()?.header.height ?? 0;
-  const networkHeight = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+  const rawNetworkHeight = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
+  const networkHeight = rawNetworkHeight > 0 ? rawNetworkHeight : localHeight;
   const behindBy = Math.max(0, networkHeight - localHeight);
   const peerCount = (p2pNode && (p2pNode as any).getPeerCount) ? (p2pNode as any).getPeerCount() : 0;
 

@@ -33,6 +33,8 @@ import type { DriftAssessment } from "../core/types.js";
 import { verifyTxSignature } from "../core/signatures.js";
 import { verifyBlock } from "../core/verify.js";
 import { logger } from "../core/logger.js";
+import { getSlotIdentity, deriveRandSeed, selectLeader } from "../core/slotSchedule.js";
+import { hashBlockHeader } from "../core/crypto.js";
 import {
   getAverageBlockTime,
   getBlocksUntilAdjustment,
@@ -134,7 +136,7 @@ function App() {
   const [isMainnetMode, setIsMainnetMode] = useState<boolean>(persistedState.isMainnetMode ?? true);
   const [peerCount, setPeerCount] = useState<number>(0);
   const [isP2PConnected, setIsP2PConnected] = useState<boolean>(false);
-  const [nodeAddress, setNodeAddress] = useState<string>("");
+  const [nodeAddress, setNodeAddress] = useState<string | null>(null);
   const [isSigning, setIsSigning] = useState<boolean>(false);
   
   // Phase 42: Referral system - pending invite address
@@ -467,7 +469,6 @@ function App() {
       }
     }
   }, [chainContext, finalityStats, localCoordinator, localStateCoordinator]);
-  
   // Phase 29: Initialize LocalStateCoordinator
   useEffect(() => {
     if (!chainContext) return;
@@ -526,7 +527,7 @@ function App() {
   const [txOpType, setTxOpType] = useState<"PUT" | "APPEND" | "DELETE">("PUT");
 
   const p2pNodeRef = useRef<BrowserP2PNode | null>(null);
-  const lastSeedTsRef = useRef<number>(0);
+  // removed unused lastSeedTsRef
   
   // Phase 40: Shadow Node for mobile persistence
   const shadowNodeRef = useRef<ShadowNodeClient | null>(null);
@@ -683,6 +684,7 @@ function App() {
         // Phase 5: Load node address
         const address = await getOrCreateNodeAddress();
         setNodeAddress(address);
+        try { (window as any).nodeAddress = address; } catch {}
         
         // Phase 19: Initialize delegator manager with params
         const nodeId = getOrCreateBrowserNodeId();
@@ -745,7 +747,6 @@ function App() {
       // Snapshot downloader/seeder don't have destroy methods yet
     };
   }, []);
-
   // PWA: Keepalive and Wake Lock support for mobile lock screen persistence
   useEffect(() => {
     let keepaliveInterval: number | null = null;
@@ -941,6 +942,40 @@ function App() {
       }
     }
   }, [chainContext, isP2PConnected, gsnEnabled, snapshotSeeder]);
+  // All-Light-Node Chain: Check for signal server reset on page load
+  const resetCheckDoneRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!chainContext || loading || resetCheckDoneRef.current) return;
+    
+    const localTip = chainContext.storage.getTip();
+    const localHeight = localTip?.header.height ?? 0;
+    
+    // Check if we have old data but signal server might be reset
+    if (localHeight > 1) {
+      // Check window.lastRootTipHeight - if it's 0, signal server was reset
+      const rootTipHeight = (window as any).lastRootTipHeight;
+      if (rootTipHeight === 0) {
+        logger.info(`[ResetCheck] Signal server reset detected on page load: rootTip=0, local=${localHeight}. Auto-clearing...`);
+        resetCheckDoneRef.current = true;
+        (async () => {
+          try {
+            chainContext.storage.reset();
+            const { clearAllSnapshots } = await import("../core/snapshot.js");
+            clearAllSnapshots();
+            // Clear localStorage keys
+            Object.keys(localStorage)
+              .filter(k => k.startsWith("indexerchain_"))
+              .forEach(k => localStorage.removeItem(k));
+            // Reload page
+            setTimeout(() => window.location.reload(), 1000);
+          } catch (error) {
+            logger.error(`[ResetCheck] Failed to clear local storage:`, error);
+          }
+        })();
+      }
+    }
+    resetCheckDoneRef.current = true;
+  }, [chainContext, loading]);
 
   // Auto-connect to P2P network on mount
   // Always attempts to connect automatically when page loads (first-time users included)
@@ -1015,31 +1050,58 @@ function App() {
   }, [chainContext, loading]); // Only run when chainContext becomes available
 
   // Auto-mining: Start mining automatically when chain is ready
+  // All-Light-Node Chain: Check mining guard before starting
   const autoMiningStartedRef = useRef<boolean>(false);
   useEffect(() => {
     // Only start once when autoMining is enabled and conditions are met
     if (autoMining && chainContext && !isMining && !clusterMining && !autoMiningStartedRef.current) {
       const tip = chainContext.storage.getTip();
       if (tip) {
-        autoMiningStartedRef.current = true;
-        // Small delay to ensure everything is initialized
-        const timer = setTimeout(() => {
-          handleStartMining();
-          // Reset flag after starting to allow restart if needed
-          setTimeout(() => {
-            autoMiningStartedRef.current = false;
-          }, 2000);
-        }, 1000);
-        return () => {
-          clearTimeout(timer);
-          autoMiningStartedRef.current = false;
+        // Check mining guard before starting
+        const checkMiningGuard = async () => {
+          try {
+            const { MiningGuard } = await import("../core/miningGuard.js");
+            const guardResult = await MiningGuard.canMineNow(
+              chainContext,
+              p2pNodeRef.current,
+              localCoordinator,
+              "LEADER"
+            );
+            
+            if (guardResult.ok) {
+              autoMiningStartedRef.current = true;
+              // Small delay to ensure everything is initialized
+              setTimeout(() => {
+                handleStartMining();
+                // Reset flag after starting to allow restart if needed
+                setTimeout(() => {
+                  autoMiningStartedRef.current = false;
+                }, 2000);
+              }, 1000);
+            } else {
+              // Mining guard blocked, log reason but don't start
+              logger.debug(`[AutoMining] Mining guard blocked: ${guardResult.reason || guardResult.code}`);
+              // Retry after a delay
+              setTimeout(() => {
+                autoMiningStartedRef.current = false;
+              }, 5000);
+            }
+          } catch (error) {
+            logger.error(`[AutoMining] Failed to check mining guard:`, error);
+            // Retry after a delay
+            setTimeout(() => {
+              autoMiningStartedRef.current = false;
+            }, 5000);
+          }
         };
+        
+        checkMiningGuard();
       }
     } else if (!autoMining) {
       // Reset flag when auto-mining is disabled
       autoMiningStartedRef.current = false;
     }
-  }, [autoMining, chainContext, isMining, clusterMining]);
+  }, [autoMining, chainContext, isMining, clusterMining, localCoordinator]);
 
   // Phase 13: Background periodic snapshot verification
   useEffect(() => {
@@ -1234,7 +1296,6 @@ function App() {
       (window as any).snapshotDownloader = snapshotDownloader;
     }
   }, [chainContext, snapshotDownloader]);
-
   // Setup P2P message handlers
   useEffect(() => {
     if (!chainContext || !chainContext.p2p) return;
@@ -1666,7 +1727,6 @@ function App() {
         setIsP2PConnected(false);
       }
     }, 1000);
-
     // Phase 28: Auto-sync check - periodically check if we're behind and request blocks
     // This helps keep nodes in sync automatically
     const autoSyncInterval = setInterval(async () => {
@@ -2030,7 +2090,6 @@ function App() {
         ipHash: data.ipHash,
       });
     });
-
     // Phase 30: Handle GLOBAL_VIEW_RESPONSE
     let lastKnownNetworkHeight = -1; // Track network height for auto-sync
     p2p.onMessage("GLOBAL_VIEW_RESPONSE", async (payload: any, sender: string) => {
@@ -2434,7 +2493,6 @@ function App() {
         }
       }
     });
-
     // Phase 32: Handle BOOTSTRAP_RESPONSE from signal server
     p2p.onMessage("BOOTSTRAP_RESPONSE", async (payload: any, sender: string) => {
       logger.debug(`[Phase 32] Received BOOTSTRAP_RESPONSE from ${sender}`, {
@@ -2447,8 +2505,9 @@ function App() {
       
       // Phase 37: Store rootTip info for debug overlay
       // Phase 38: Also store snapshot meta for later use
-      if (typeof window !== "undefined" && payload.latestHeight > 0) {
-        (window as any).lastRootTipHeight = payload.latestHeight;
+      // All-Light-Node Chain: Store even if latestHeight is 0 (for reset detection)
+      if (typeof window !== "undefined") {
+        (window as any).lastRootTipHeight = payload.latestHeight || 0;
         (window as any).lastRootTipHash = payload.latestHeaderHash || "";
         (window as any).lastBootstrapResponseTime = Date.now();
         (window as any).lastRootTipTrustLevel = payload.trustLevel || 'root-only';
@@ -2657,12 +2716,36 @@ function App() {
         
         logger.info(`[Phase 46] BOOTSTRAP_RESPONSE received: local=${localHeight}, network=${networkHeight}, peers=${peerCount}, hasHeader=${!!payload.latestHeader}, hasRecentHeaders=${!!payload.recentHeaders?.length}, hasSnapshotMeta=${!!payload.latestSnapshotMeta}`);
         
+        // All-Light-Node Chain: Auto-detect signal server reset
+        // If rootTip is at genesis (height 0) but local has old data, auto-clear local storage
+        if (networkHeight === 0 && localHeight > 1) {
+          logger.info(`[Phase 46] Signal server reset detected: rootTip=0, local=${localHeight}. Auto-clearing local storage...`);
+          try {
+            chainContext.storage.reset();
+            const { clearAllSnapshots } = await import("../core/snapshot.js");
+            clearAllSnapshots();
+            // Clear localStorage keys
+            if (typeof window !== "undefined") {
+              Object.keys(localStorage)
+                .filter(k => k.startsWith("indexerchain_"))
+                .forEach(k => localStorage.removeItem(k));
+            }
+            // Reload page to reinitialize
+            setTimeout(() => window.location.reload(), 1000);
+            return;
+          } catch (error) {
+            logger.error(`[Phase 46] Failed to clear local storage:`, error);
+          }
+        }
+        
         // Phase 47: Special handling for genesis nodes (height 0)
         if (localHeight === 0 && networkHeight > 0) {
           logger.info(`[Phase 47] 🚀 Genesis node detected in BOOTSTRAP_RESPONSE: local=0, network=${networkHeight}, forcing warp sync`);
         }
         
-        if (networkHeight > 0 && p2pNodeRef.current) {
+        // All-Light-Node Chain: Always call handleRootTipUpdate to trigger reset detection
+        // Even if networkHeight is 0, we need to check if local has old data
+        if (p2pNodeRef.current) {
           logger.info(`[Phase 46] 🚀 Processing BOOTSTRAP_RESPONSE via UnifiedSyncManager: local=${localHeight}, network=${networkHeight}, peers=${peerCount}`);
           
           const { handleRootTipUpdate } = await import("../core/unifiedSyncManager.js");
@@ -2856,7 +2939,6 @@ function App() {
         logger.warn(`[Phase 46+] Error processing ROOT_TIP_GOSSIP:`, error);
       }
     });
-
     // Phase 46: Handle ROOT_TIP_UPDATE using Unified Sync Manager
     p2p.onMessage("ROOT_TIP_UPDATE", async (payload: any, _sender: string) => {
       logger.info(`[Phase 46] 🔔 ROOT_TIP_UPDATE received from ${_sender.substring(0, 16)}...`);
@@ -2901,7 +2983,8 @@ function App() {
       }
       
       // Phase 37: Store rootTip info for debug overlay
-      if (typeof window !== "undefined" && rootHeight > 0) {
+      // All-Light-Node Chain: Store even if rootHeight is 0 (for reset detection)
+      if (typeof window !== "undefined") {
         (window as any).lastRootTipHeight = rootHeight;
         (window as any).lastRootTipHash = rootHeaderHash || "";
         (window as any).lastBootstrapResponseTime = Date.now();
@@ -3187,7 +3270,6 @@ function App() {
       }
     };
   }, [chainContext, mempool, globalSentinel]);
-
   // Phase 30: Check mining readiness periodically
   useEffect(() => {
     if (!chainContext || !chainContext.p2p) {
@@ -3200,7 +3282,7 @@ function App() {
         const { MiningGuard } = await import("../core/miningGuard.js");
         const walletStore = getMultiWalletStore();
         const miningWallet = walletStore.getMiningWallet();
-        const minerAddr = miningWallet ? miningWallet.address : nodeAddress;
+        const minerAddr = miningWallet ? miningWallet.address : (nodeAddress ?? undefined);
         const result = await MiningGuard.canMineNow(
           chainContext,
           chainContext.p2p || null,
@@ -3244,7 +3326,6 @@ function App() {
     const interval = setInterval(updateStats, 2000);
     return () => clearInterval(interval);
   }, [isMining, clusterMining]);
-
   // Connect to P2P network
   const handleConnectP2P = async () => {
     if (!chainContext) {
@@ -3710,7 +3791,6 @@ function App() {
         (p2pNode as any).cleanupFunctions = [];
       }
       (p2pNode as any).cleanupFunctions.push(cleanupGsn);
-      
       setIsP2PConnected(true);
       setError(""); // Clear any previous errors
       
@@ -3969,7 +4049,6 @@ function App() {
       setPeerCount(0);
     }
   };
-
   // Create and submit transaction
   const handleCreateTx = async () => {
     if (!chainContext) return;
@@ -3985,6 +4064,7 @@ function App() {
       // Phase 5: Get node address for operation owner
       const address = await getOrCreateNodeAddress();
       setNodeAddress(address); // Update displayed address
+      try { (window as any).nodeAddress = address; } catch {}
 
       const op: Operation = {
         type: txOpType,
@@ -4021,7 +4101,6 @@ function App() {
       setIsSigning(false);
     }
   };
-
   // Phase 18: Start cluster mining
   // Phase 27: Check if this instance can mine (must be LEADER)
   // Phase 30: Add mining guard checks
@@ -4030,10 +4109,15 @@ function App() {
     if (!chainContext) return;
     
     // Phase 38: Check onboarding for first-time users
-    // Phase 39: Use ref to check immediately (avoids async state update issue)
+    // All-Light-Node Chain: Do not block mining at genesis or when auto-mining is enabled
     if (!onboardingCompletedRef.current && !isMining && !clusterMining) {
-      setShowOnboarding(true);
-      return;
+      const localH = chainContext.storage.getTip()?.header.height ?? 0;
+      const isSignalConnected = chainContext.p2p?.isConnected ?? false;
+      // If not at genesis and no auto-mining, show onboarding
+      if (!(localH === 0 && isSignalConnected) && !autoMining) {
+        setShowOnboarding(true);
+        return;
+      }
     }
     
     // Prevent multiple simultaneous starts
@@ -4041,15 +4125,11 @@ function App() {
       return;
     }
     
-    // Phase 27: Only LEADER can mine
-    if (!localCoordinator.canMine()) {
+    // Phase 27: Only LEADER can mine (relaxed for single-tab independent mode)
+    if (localCoordinator && !localCoordinator.canMine()) {
       const leaderId = leaderInfo?.instanceId || "unknown";
-      setError(
-        locale === "zh"
-          ? `⚠️ 本机已有一个挖矿实例：${leaderId}，当前实例为只读模式。如需在本实例挖矿，请先在其他实例中关闭挖矿或关闭页面。`
-          : `⚠️ This machine already has a mining instance: ${leaderId}. Current instance is read-only. To mine on this instance, please stop mining on other instances or close their pages.`
-      );
-      return;
+      // Warn but do not block mining in single-tab independent mode
+      logger.warn(`[Mining] Local coordinator indicates follower/read-only (leaderId=${leaderId}). Proceeding due to independent mode.`);
     }
     
     // Phase 42: Register referral if pending invite address exists
@@ -4213,6 +4293,15 @@ function App() {
               // Update context (use functional update to avoid unnecessary re-renders)
               setChainContext((prev) => prev ? { ...prev } : prev);
               setError("");
+
+              // Update network height/hash locally to reflect new tip immediately
+              try {
+                if (typeof window !== "undefined") {
+                  (window as any).lastRootTipHeight = block.header.height;
+                  (window as any).lastRootTipHash = block.hash;
+                  (window as any).lastBootstrapResponseTime = Date.now();
+                }
+              } catch {}
             } else {
               // Don't show error for stale blocks (race condition is normal)
               if (!result.error?.includes("stale")) {
@@ -4428,7 +4517,6 @@ function App() {
       setAutoMining(false);
     }
   };
-
   // Phase 8: Start mining using Worker (single worker mode)
   // Phase 27: Check if this instance can mine (must be LEADER)
   // Phase 30: Add mining guard checks
@@ -4436,58 +4524,226 @@ function App() {
   // Phase 42: Add multi-device mining protection
   const handleStartMining = async () => {
     if (!chainContext) return;
-    // Light-mode proving behavior: do not build or mine blocks in light node mode
-    try {
-      const mode = typeof localStorage !== 'undefined' ? localStorage.getItem('indexer_node_mode') : null;
-      if (mode === 'light') {
-        setError(locale === "zh" ? "当前为轻节点（Proving 模式），不执行本地出块。" : "Light mode (Proving) is active; local block production is disabled.");
-        return;
-      }
-    } catch {}
-    // Enforce mining on network tip: if local is behind, trigger fast sync and delay start
-    try {
-      const localH = chainContext.storage.getTip()?.header.height ?? 0;
-      const networkH = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-      if (networkH > 0 && localH < networkH) {
-        // Proactively request a large window to catch up before mining
-        const p2p = p2pNodeRef.current;
-        const step = 2000;
-        const from = Math.max(1, networkH - 5000);
-        p2p?.broadcast?.("GLOBAL_VIEW_REQUEST", {});
-        p2p?.broadcast?.("REQUEST_BOOTSTRAP", {});
-        p2p?.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 1000 });
-        p2p?.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from, to: networkH });
-        for (let f = from; f <= networkH; f += step) {
-          const t = Math.min(f + step - 1, networkH);
-          p2p?.broadcast?.("REQUEST_BLOCKS", { fromHeight: f, toHeight: t });
+    
+    // Light-node slot-proving: bypass PoW and produce header on leader slots
+    // If proposer enforcement is enabled, we deterministically select leader and only propose when we are leader.
+    const { isProposerEnforceEnabled } = await import("../core/featureFlags.js");
+    const proposerMode = isProposerEnforceEnabled();
+    try { console.log("[UI] Start Mining clicked. proposerMode=", proposerMode); } catch {}
+    if (proposerMode) {
+      try {
+        // Ensure header alignment to root tip before starting the loop (light-node semantics)
+        try {
+          const ctx = chainContextRef.current || chainContext;
+          const localTip = ctx?.storage.getTip();
+          const localHash = localTip?.hash || "";
+          const rootHash = (window as any).lastRootTipHash || "";
+          if (rootHash && localHash && localHash !== rootHash) {
+            (p2pNodeRef.current as any)?.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 512 });
+            // Wait briefly for headers to arrive
+            await new Promise(r => setTimeout(r, 400));
+          }
+        } catch {}
+        
+        setIsMining(true);
+        setError("");
+        // Start per-slot loop
+        const loopKey = "lightSlotLoop";
+        (window as any)[loopKey] && clearInterval((window as any)[loopKey]);
+        try { console.log("[LightSlot] loop starting"); } catch {}
+        (window as any)[loopKey] = window.setInterval(async () => {
+          try {
+            if (!chainContextRef.current || !isMiningRef.current) return;
+            const ctx = chainContextRef.current;
+            if (isProposingRef.current) return;
+            const tip = ctx.storage.getTip();
+            if (!tip) return;
+            try { console.log("[LightSlot] tip", tip.header.height, tip.hash.substring(0, 12)); } catch {}
+            // Track latest observed tip to avoid re-proposing same height
+            if (tip.header.height > lastProposedHeightRef.current) {
+              lastProposedHeightRef.current = tip.header.height;
+            }
+            // Prevent proposing same height repeatedly
+            const expectedHeight = (tip.header.height || 0) + 1;
+            if (lastProposedHeightRef.current >= expectedHeight) {
+              return;
+            }
+            // Prevent duplicate attempts for same parent+height in fast loops
+            const attemptKey = `${tip.hash}:${expectedHeight}`;
+            if (lastAttemptKeyRef.current === attemptKey) {
+              return;
+            }
+            isProposingRef.current = true;
+            const walletStore = getMultiWalletStore();
+            const miningWallet = walletStore.getMiningWallet();
+            const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+            // Gather candidates from previous coinbase recipients (fallback to single miner)
+            const recipients: string[] = [];
+            const prevCoinbase = tip.txs?.[0];
+            if (prevCoinbase && prevCoinbase.ownerAddress === "idc_system") {
+              for (const op of prevCoinbase.ops) {
+                if (op.type === "TRANSFER" && op.to && typeof op.to === "string" && op.to.startsWith("idc_")) {
+                  if (!recipients.includes(op.to)) recipients.push(op.to);
+                }
+              }
+            }
+            if (!recipients.includes(minerAddr)) recipients.push(minerAddr);
+            const nowMs = Date.now();
+            const { epochId, slotIndex } = getSlotIdentity(nowMs);
+            // Skip if we've already proposed in this slot
+            const slotKey = `${epochId}:${slotIndex}`;
+            if (lastProposedSlotKeyRef.current === slotKey) {
+              isProposingRef.current = false;
+              return;
+            }
+            const seed = await deriveRandSeed(tip.hash, epochId, slotIndex);
+            const candidates = recipients.map((a) => ({ address: a, weight: 1 }));
+            const leader = await selectLeader(epochId, slotIndex, seed, candidates);
+            try { console.log("[LightSlot] epoch", epochId, "slot", slotIndex, "leader", leader === minerAddr ? "ME" : leader?.slice(0, 12)); } catch {}
+            if (leader !== minerAddr) { isProposingRef.current = false; return; } // not leader for this slot
+            // Build candidate block (coinbase-only), then set proposer metadata
+            const pendingTxs = mempool.getAll();
+            const allBlocks = ctx.storage.getAllBlocks();
+            try { console.log("[LightSlot] buildCandidate for next height", tip.header.height + 1); } catch {}
+            const candidateBlock = await buildCandidateBlock(
+              pendingTxs,
+              tip,
+              allBlocks,
+              ctx.params,
+              minerAddr as any,
+              ctx.indexState,
+              ctx.p2p || undefined,
+              ctx
+            );
+            try { console.log("[LightSlot] candidate prevHash", candidateBlock.header.prevHash?.substring(0, 12), "height", candidateBlock.header.height); } catch {}
+            // Inject proposer metadata for verification rule
+            (candidateBlock.header as any).proposer = minerAddr;
+            (candidateBlock.header as any).epoch = epochId;
+            (candidateBlock.header as any).slot = slotIndex;
+            (candidateBlock.header as any).randSeed = seed;
+            // Compute final hash and append (difficulty checks are skipped in light mode)
+            const finalHash = await hashBlockHeader(candidateBlock.header);
+            const blockToAppend = { ...candidateBlock, hash: finalHash };
+            const verification = await verifyBlock(blockToAppend as any, tip, allBlocks, ctx.params);
+            try { console.log("[LightSlot] verify", verification.valid, verification.error || "ok"); } catch {}
+            if (!verification.valid) {
+              // In proposer mode, skip PoW; verification should pass after difficulty checks were relaxed
+              try { console.log("[LightSlot] verify failed:", verification.error); } catch {}
+              isProposingRef.current = false;
+              return;
+            }
+            const result = await appendMinedBlock(blockToAppend as any, ctx);
+            if (result.success) {
+              try { console.log("[LightSlot] appended height", blockToAppend.header.height); } catch {}
+              lastProposedHeightRef.current = blockToAppend.header.height;
+              lastProposedSlotKeyRef.current = slotKey;
+              lastAttemptKeyRef.current = attemptKey;
+              // Accumulate local expected reward from this block's coinbase (for UI pending display)
+              try {
+                const miner = minerAddr;
+                const coinbase = blockToAppend.txs?.[0];
+                if (coinbase && coinbase.ops) {
+                  let addIDC = 0;
+                  for (const op of coinbase.ops) {
+                    if (op.type === "TRANSFER" && op.to === miner && typeof op.amount === "number") {
+                      addIDC += op.amount;
+                    }
+                  }
+                  if (addIDC > 0) {
+                    const w: any = window as any;
+                    w.expectedPendingIDC = (w.expectedPendingIDC ?? 0) + addIDC;
+                  }
+                }
+              } catch {}
+              // Update immediate UI counters
+              const newTip = ctx.storage.getTip();
+              if (newTip && typeof window !== "undefined") {
+                (window as any).lastRootTipHeight = newTip.header.height;
+                (window as any).lastRootTipHash = newTip.hash;
+                
+                // Phase 52: Optimistic tip update for UI (immediate reflection)
+                if (chainContextRef.current) {
+                  // Force update chain context ref to trigger re-renders in child components immediately
+                  // This bypasses the slow signal server round-trip
+                  chainContextRef.current = { ...chainContextRef.current };
+                  setChainContext(chainContextRef.current);
+                }
+              }
+              // Locally dispatch NEW_BLOCK/NEW_BLOCK_HEADER to UI listeners (mirror worker path)
+              try {
+                const p2pAny = p2pNodeRef.current as any;
+                const mh = p2pAny?.messageHandlers;
+                if (mh && typeof mh.get === "function") {
+                  const headerLike = {
+                    height: blockToAppend.header.height,
+                    hash: blockToAppend.hash,
+                    timestamp: blockToAppend.header.timestamp,
+                    proposer: (blockToAppend.header as any)?.proposer || undefined,
+                  };
+                  const hdrHandlers = mh.get("NEW_BLOCK_HEADER");
+                  if (hdrHandlers && hdrHandlers.forEach) {
+                    hdrHandlers.forEach((h: any) => {
+                      try { h(headerLike, "self"); } catch {}
+                    });
+                  }
+                  const blkHandlers = mh.get("NEW_BLOCK");
+                  if (blkHandlers && blkHandlers.forEach) {
+                    blkHandlers.forEach((h: any) => {
+                      try { h(blockToAppend, "self"); } catch {}
+                    });
+                  }
+                }
+              } catch {}
+              // Request latest state root and immediate balance proof for this address
+              try {
+                const p2pAny = p2pNodeRef.current as any;
+                const target = (newTip?.header?.height ?? blockToAppend.header.height);
+                p2pAny?.sendToSignalServer?.("REQUEST_STATE_ROOT", { targetHeight: target });
+                if (minerAddr) {
+                  p2pAny?.sendToSignalServer?.("REQUEST_BALANCE_PROOF", { address: minerAddr, targetHeight: target });
+                }
+              } catch {}
+              // Force rerender to refresh balance from local IndexState immediately
+              try { setChainContext({ ...ctx }); } catch {}
+            } else {
+              try { console.log("[LightSlot] append failed:", result.error); } catch {}
+            }
+            isProposingRef.current = false;
+          } catch (e) {
+            try { console.log("[LightSlot] loop error:", e instanceof Error ? e.message : String(e)); } catch {}
+            isProposingRef.current = false;
+          }
+        }, 50);
+        // Also start/minimize heartbeat
+        if (shadowNodeRef.current) {
+          const shadowNode = shadowNodeRef.current;
+          const sessionId = shadowNode.getSessionId();
+          const nodeId = p2pNodeRef.current?.nodeId || await getOrCreateNodeAddress();
+          const minerId = sessionId ? `${sessionId}-${nodeId}` : nodeId;
+          if (activeMinerHeartbeatRef.current) clearInterval(activeMinerHeartbeatRef.current);
+          activeMinerHeartbeatRef.current = window.setInterval(() => {
+            shadowNodeRef.current?.heartbeatActiveMiner(minerId).catch(() => {});
+          }, 5000);
         }
-        setError(locale === "zh"
-          ? `⏳ 正在追赶到网络高度 ${networkH} 后再启动挖矿…`
-          : `⏳ Fast syncing to network height ${networkH} before starting mining…`);
+        return;
+      } catch (e) {
+        setIsMining(false);
+      }
+    }
+    // Phase 38: Check onboarding for first-time users
+    // All-Light-Node Chain: Do not block mining at genesis or when auto-mining is enabled
+    if (!onboardingCompletedRef.current && !isMining && !clusterMining) {
+      const localH = chainContext.storage.getTip()?.header.height ?? 0;
+      const isSignalConnected = chainContext.p2p?.isConnected ?? false;
+      // If not at genesis and no auto-mining, show onboarding
+      if (!(localH === 0 && isSignalConnected) && !autoMining) {
+        setShowOnboarding(true);
         return;
       }
-    } catch {}
-    
-    // Phase 38: Check onboarding for first-time users
-    // Phase 39: Use ref to check immediately (avoids async state update issue)
-    if (!onboardingCompletedRef.current && !isMining && !clusterMining) {
-      setShowOnboarding(true);
-      return;
-    }
-    
-    // Phase 27: Only LEADER can mine
-    if (!localCoordinator.canMine()) {
-      const leaderId = leaderInfo?.instanceId || "unknown";
-      setError(
-        locale === "zh"
-          ? `⚠️ 本机已有一个挖矿实例：${leaderId}，当前实例为只读模式。如需在本实例挖矿，请先在其他实例中关闭挖矿或关闭页面。`
-          : `⚠️ This machine already has a mining instance: ${leaderId}. Current instance is read-only. To mine on this instance, please stop mining on other instances or close their pages.`
-      );
-      return;
     }
     
     // Phase 42: Multi-device mining protection
-    if (shadowNodeRef.current) {
+    if (shadowNodeRef.current && shadowNodeRef.current.getConnected && shadowNodeRef.current.getConnected()) {
       const shadowNode = shadowNodeRef.current;
       const sessionId = shadowNode.getSessionId();
       const nodeId = p2pNodeRef.current?.nodeId || await getOrCreateNodeAddress();
@@ -4514,8 +4770,7 @@ function App() {
               if (contentType && contentType.includes('application/json')) {
                 data = JSON.parse(text);
               } else {
-                // Non-JSON response, skip
-                return;
+                // Non-JSON response, proceed without gating
               }
               setActiveMinerInfo({
                 activeMinerId: data.activeMinerId,
@@ -4544,7 +4799,7 @@ function App() {
             return;
           } else {
             setError(claimResult.error || "Failed to claim active miner");
-            return;
+            // Do not block mining if claim failed for non-conflict reason
           }
         }
       }
@@ -4569,18 +4824,33 @@ function App() {
       const { MiningGuard: Guard } = await import("../core/miningGuard.js");
       const message = Guard.getStatusMessage(guardResult, locale);
       
-      // Don't show error for NOT_SYNCED if we're at height 0 (new chain) or bootstrap is not complete
-      // These are normal states during initial sync, not errors
+      // All-Light-Node Chain: At genesis (height 0), allow mining if Signal is connected
+      // Don't block mining at genesis if Signal is connected, even if bootstrap is not complete
       const localTip = chainContext.storage.getTip();
-      if (guardResult.code === "NOT_SYNCED" && (localTip?.header.height === 0 || !bootstrapComplete)) {
-        // Production: No console logs
-        // Don't set error - this is informational, not an error
-        // The mining button will be disabled based on miningGuardResult
+      const localHeight = localTip?.header.height ?? 0;
+      const isSignalConnected = chainContext.p2p?.isConnected ?? false;
+      
+      // At genesis (height 0), allow mining if Signal is connected
+      if (localHeight === 0 && isSignalConnected && guardResult.code === "NOT_SYNCED") {
+        // Allow mining at genesis even if bootstrap is not complete
+        logger.info(`[Mining] Allowing mining at genesis (height 0) with Signal connection`);
+        // Continue with mining
+      } else if (guardResult.code === "NOT_SYNCED" && (localHeight === 0 || !bootstrapComplete)) {
+        // Don't show error for NOT_SYNCED if we're at height 0 (new chain) or bootstrap is not complete
+        // These are normal states during initial sync, not errors
+        // But still allow mining if Signal is connected
+        if (isSignalConnected) {
+          logger.info(`[Mining] Allowing mining with Signal connection despite NOT_SYNCED`);
+          // Continue with mining
+        } else {
+          // No Signal connection, block mining
+          return;
+        }
+      } else {
+        // Other errors - block mining
+        setError(message);
         return;
       }
-      
-      setError(message);
-      return;
     }
     
     // Allow mining even without pending transactions (coinbase only blocks are valid)
@@ -4634,9 +4904,9 @@ function App() {
           }
         }, 5000);
       }
-
       // Phase 8: Start mining with Worker
       // Phase 26: Pass duty cycle to miner client
+      logger.info(`[Mining] Starting minerClient.startMining: height=${candidateBlock.header.height}, difficulty=${candidateBlock.header.difficulty}, dutyCycle=${dutyCycle}`);
       minerClient.startMining({
         candidateBlock,
         difficulty: candidateBlock.header.difficulty,
@@ -4651,8 +4921,13 @@ function App() {
             hashRate,
             elapsedTime: elapsed,
           }));
+          // Log progress every 1000 hashes to confirm mining is running
+          if (event.hashesTried % 1000 === 0) {
+            logger.debug(`[Mining] Progress: ${event.hashesTried} hashes, ${hashRate?.toFixed(0) || 0} H/s`);
+          }
         },
         onFound: async (event) => {
+          logger.info(`[Mining] Block found! nonce=${event.nonce}, hash=${event.hash.substring(0, 16)}...`);
           // Phase 37-C: Reconstruct full block from nonce
           const foundBlock: Block = {
             ...candidateBlock,
@@ -4696,52 +4971,57 @@ function App() {
               const newTip = chainContext.storage.getTip();
               if (newTip) {
                 lastHeightRef.current = newTip.header.height;
+                
+                // Update window.lastRootTipHeight immediately for UI display
+                if (typeof window !== "undefined") {
+                  (window as any).lastRootTipHeight = newTip.header.height;
+                  (window as any).lastRootTipHash = newTip.hash;
+                }
+                // Immediately request state root and balance proof for this miner address
+                try {
+                  const p2pAny = p2pNodeRef.current as any;
+                  const target = newTip.header.height;
+                  p2pAny?.sendToSignalServer?.("REQUEST_STATE_ROOT", { targetHeight: target });
+                  if (minerAddr) {
+                    p2pAny?.sendToSignalServer?.("REQUEST_BALANCE_PROOF", { address: minerAddr, targetHeight: target });
+                  }
+                } catch {}
               }
 
               // Don't update chainContext here - let the useEffect handle it
               setError("");
 
-              // NEW: Seed signal server with canonical block to help bootstrap new nodes
+              // Locally dispatch NEW_BLOCK/NEW_BLOCK_HEADER to UI listeners (no peers => no loopback)
               try {
-                const payload = {
-                  type: "UPDATE_ROOT_TIP",
-                  payload: {
-                    latestHeight: foundBlock.header.height,
-                    latestHeader: foundBlock.header,
-                    latestHeaderHash: foundBlock.hash,
-                    canonicalBlock: foundBlock,
-                    stateCommitment: foundBlock.header.stateCommitment,
-                    recentHeaders: undefined,
-                  },
-                };
-                const p2p = p2pNodeRef.current;
-                p2p?.sendToSignalServer?.("UPDATE_ROOT_TIP", payload.payload);
-                // Throttled seeding of recent window of blocks
-                const now = Date.now();
-                if (!lastSeedTsRef.current || now - lastSeedTsRef.current > 15000) {
-                  lastSeedTsRef.current = now;
-                  const tipH = chainContext.storage.getTip()?.header.height || foundBlock.header.height;
-                  const span = 512;
-                  const from = Math.max(1, tipH - span + 1);
-                  const blocks: any[] = [];
-                  for (let h = from; h <= tipH; h++) {
-                    const b = chainContext.storage.getBlockByHeight(h);
-                    if (b) blocks.push(b);
+                const p2pAny = p2pNodeRef.current as any;
+                const mh = p2pAny?.messageHandlers;
+                if (mh && typeof mh.get === "function") {
+                  const headerLike = {
+                    height: foundBlock.header.height,
+                    hash: foundBlock.hash,
+                    timestamp: foundBlock.header.timestamp,
+                    proposer: (foundBlock.header as any)?.proposer || undefined,
+                  };
+                  const hdrHandlers = mh.get("NEW_BLOCK_HEADER");
+                  if (hdrHandlers && hdrHandlers.forEach) {
+                    hdrHandlers.forEach((h: any) => {
+                      try { h(headerLike, "self"); } catch {}
+                    });
                   }
-                  if (blocks.length > 0) {
-                    p2p?.sendToSignalServer?.("SEED_BOOTSTRAP_BLOCKS", { blocks });
+                  const blkHandlers = mh.get("NEW_BLOCK");
+                  if (blkHandlers && blkHandlers.forEach) {
+                    blkHandlers.forEach((h: any) => {
+                      try { h(foundBlock, "self"); } catch {}
+                    });
                   }
                 }
-              } catch (e) {
-                // ignore
-              }
+              } catch {}
 
-              // NEW: Persist index state snapshot to localStorage for balance continuity on refresh
-              try {
-                const snap = chainContext.indexState.exportSnapshot();
-                localStorage.setItem("indexer_state_snapshot", JSON.stringify(snap));
-              } catch (e) {
-                // ignore
+              // Auto-restart single-worker mining when enabled
+              if (autoMining || isMining) {
+                setTimeout(() => {
+                  try { handleStartMining(); } catch {}
+                }, 200);
               }
             } else {
               // Phase 30: Record rejected block
@@ -4752,7 +5032,11 @@ function App() {
               } catch (e) {
                 // Stats tracker not available, ignore
               }
-              setError(result.error || "Failed to append block");
+              // Don't show error for stale blocks (race condition is normal)
+              if (!result.error?.includes("stale")) {
+                setError(result.error || "Failed to append block");
+              }
+              // If block is stale, don't restart - tip change detection will handle it
             }
           } else {
             // Phase 30: Record rejected block
@@ -4808,8 +5092,15 @@ function App() {
   // Phase 8: Stop mining
   // Phase 42: Release active miner when stopping
   const handleStopMining = () => {
-    minerClient.stopMining("user");
+    try { minerClient.stopMining("user"); } catch {}
     setIsMining(false);
+    try {
+      const loopKey = "lightSlotLoop";
+      if ((window as any)[loopKey]) {
+        clearInterval((window as any)[loopKey]);
+        (window as any)[loopKey] = null;
+      }
+    } catch {}
     
     // Phase 42: Release active miner
     if (shadowNodeRef.current && activeMinerHeartbeatRef.current) {
@@ -4837,6 +5128,10 @@ function App() {
   const isMiningRef = useRef<boolean>(isMining);
   const autoMiningRef = useRef<boolean>(autoMining);
   const clusterMiningRef = useRef<boolean>(clusterMining); // Track cluster mining state
+  const lastProposedHeightRef = useRef<number>(0);
+  const lastProposedSlotKeyRef = useRef<string>("");
+  const isProposingRef = useRef<boolean>(false);
+  const lastAttemptKeyRef = useRef<string>("");
   
   // Update refs when values change
   useEffect(() => {
@@ -4999,7 +5294,6 @@ function App() {
       setError(claimResult.error || "Failed to take over mining");
     }
   };
-
   // Console Page - Full Screen Override (completely separate from main app)
   if (activeTab === "console") {
     // Detect mobile (simple width-based detection)
@@ -5041,7 +5335,6 @@ function App() {
       )
     );
   }
-
   return (
     <div className="app">
       {/* Phase 42: Hard Reorg Banner */}
@@ -5505,9 +5798,7 @@ function App() {
             </div>
           </div>
         )}
-
         {/* Daily Info Bar moved to HomePage */}
-
         {/* Tab Navigation */}
         <div className="tab-container" style={{ display: "grid", gridTemplateColumns: "240px 1fr", alignItems: "start", gap: "1rem" }}>
           <div className="tab-nav desktop-only" style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignSelf: "start" }}>
@@ -5979,7 +6270,6 @@ function App() {
                   </div>
                 </div>
               )}
-
               {/* Quick Stats Grid */}
               <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
                 {/* Chain Status Card */}
@@ -6398,6 +6688,7 @@ function App() {
                   onWalletChanged={async () => {
                     const address = await getOrCreateNodeAddress();
                     setNodeAddress(address);
+                    try { (window as any).nodeAddress = address; } catch {}
                   }}
                   onError={(err) => {
                     setError(err);
@@ -6414,6 +6705,7 @@ function App() {
                   onImportSuccess={async () => {
                     const address = await getOrCreateNodeAddress();
                     setNodeAddress(address);
+                    try { (window as any).nodeAddress = address; } catch {}
                     setError(t("wallet.importSuccess"));
                     setTimeout(() => setError(""), 5000);
                   }}
@@ -6424,7 +6716,6 @@ function App() {
               </AccordionCard>
             </div>
           )}
-
           {/* Mining Tab */}
           {activeTab === "mining" && (
             <div className="tab-content active">
@@ -6825,7 +7116,6 @@ function App() {
                         : t("app.showAdvancedSettings")}
                     </button>
                   </div>
-
                   {/* Phase 38: Advanced Settings Panel */}
                   {showAdvanced && chainContext && (
                     <div className="status-card" style={{ marginBottom: "1.5rem" }}>
@@ -7097,7 +7387,6 @@ function App() {
               {/* These are now handled by Phase 38 components (MiningMainCard, MiningLiveStatsCard, MiningAdvancedPanel) */}
             </div>
           )}
-
           {/* Transactions Tab */}
           {activeTab === "transactions" && (
             <div className="tab-content active">
@@ -7273,7 +7562,6 @@ function App() {
                   )}
                 </div>
               </div>
-
               {/* Create Transaction Form */}
               <div className="status-card">
                 <h2>{t("transactions.createIndexOp")}</h2>
@@ -7622,7 +7910,6 @@ function App() {
               )}
             </div>
           )}
-
           {/* Storage Tab */}
           {activeTab === "storage" && (
             <div className="tab-content active">
@@ -8077,7 +8364,6 @@ function App() {
               )}
             </div>
           )}
-
           {/* Advanced Tab */}
           {activeTab === "advanced" && (
             <div className="tab-content active">
@@ -8454,7 +8740,6 @@ function App() {
               )}
             </div>
           )}
-
           {/* Token Model Tab */}
           {activeTab === "token" && (
             <div className="tab-content active">
@@ -8707,7 +8992,6 @@ function App() {
               />
             </div>
           )}
-
           {/* Tools Tab */}
           {activeTab === "tools" && (
             <div className="tab-content active">
@@ -8948,7 +9232,6 @@ function App() {
                     </div>
                   </div>
                 </div>
-
                 {/* Storage Cleanup */}
                 <div style={{ marginBottom: "2rem" }}>
                   <h3 style={{ marginBottom: "1rem" }}>

@@ -633,7 +633,7 @@ export function MiningMainCard({
             <div>
               <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("miningMain.baseRewardIDC")}</div>
               <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>
-                {uIDCToIDC(getBlockRewardRaw((chainContext?.storage.getTip()?.header.height ?? 0) + 1)).toFixed(6)}
+                {uIDCToIDC(getBlockRewardRaw((chainContext?.storage.getTip()?.header.height ?? 0) + 1)).toFixed(12)}
               </div>
             </div>
             <div>
@@ -713,7 +713,7 @@ export function MiningMainCard({
                     : scale === "hour" ? t("miningMain.perHour")
                     : scale === "day" ? t("miningMain.perDay")
                     : t("miningMain.perWeek");
-                  return `${value.toFixed(6)} IDC (${label})`;
+                  return `${value.toFixed(12)} IDC (${label})`;
                 } catch {
                   return `0.000000 IDC (${t("miningMain.perBlock")})`;
                 }

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useMiningData } from '../../features/miner-dashboard/hooks/useMiningData';
+import { LiveBlockFeed } from '../components/LiveBlockFeed';
+import { WalletSummaryCard } from '../wallet/WalletSummaryCard';
 import { ChainContext } from '../../core/chain';
 import { MinerClient } from '../../core/minerClient';
 import styles from '../../features/miner-dashboard/styles/miner-console.module.css';
@@ -729,7 +731,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     const effectiveFrom = snapshotFrom > withAvail ? snapshotFrom : withAvail;
                     const startFrom = Math.max(local + 1, effectiveFrom);
                     const target = Math.max(network > 0 ? network : (startFrom + step), startFrom + step);
-                    // 1) 始终优先请求“顺序必需区间”：从 local+1 开始的一段，保证连续推进
+                    // 1) 始终优先请求"顺序必需区间"：从 local+1 开始的一段，保证连续推进
                     const seqFrom = local + 1;
                     const seqTo = Math.min(seqFrom + step - 1, network || (seqFrom + step - 1));
                     if (seqFrom <= seqTo) {
@@ -995,7 +997,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             <div className={styles.balanceInfo}>
                                 <span className={styles.balanceLabel}>Current Balance (IDC):</span>
                                 <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance">
-                                    {(nodeMode === 'light' && lightVerifiedBalance !== null ? lightVerifiedBalance : balance).toFixed(2)}
+                                    {(nodeMode === 'light' && lightVerifiedBalance !== null ? lightVerifiedBalance : balance).toFixed(12)}
                                 </span>
                             </div>
                         </div>
@@ -1048,7 +1050,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             {/* Light Validator Info - Pool Mining Architecture */}
                             {nodeMode === 'light' && (
                                 <div className={styles.card} style={{ background: '#0f1520', borderColor: '#30363d' }}>
-                                    <div style={{ fontWeight: 600, marginBottom: 6 }}>Light Validator (Header + ZK) - Pool Mining Mode</div>
+                                    <div style={{ fontWeight: 600, marginBottom: 6 }}>All-Light-Node Chain (Header + ZK)</div>
                                     <div style={{ color: '#8b949e', fontSize: 13 }}>
                                         轻节点不存储本地区块，仅通过区块头与余额证明展示余额。池化挖矿模式：所有节点共享区块奖励，按权重分配。当你开始证明时，会自动拉取并应用最新快照以具备世界状态。
                                     </div>
@@ -1122,233 +1124,112 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         </div>
                                     )}
                                 </div>
-                                {/* Pool Rewards (Proof) */}
-                                <div className={styles.card} style={{ marginTop: 12 }}>
-                                    <h3>Pool Rewards (Proof)</h3>
-                                    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
-                                        验证你在指定区块高度获得的池化奖励。输入区块高度，获取并验证你的奖励 Merkle 证明。
-                                    </div>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                        <label className={styles.dataLabel} style={{ minWidth: 60 }}>Height:</label>
-                                        <input
-                                            type="number"
-                                            value={payoutHeight}
-                                            onChange={(e) => setPayoutHeight(Math.max(0, Number(e.target.value) || 0))}
-                                            style={{ background: '#0d1117', color: '#c9d1d9', border: '1px solid #30363d', borderRadius: 6, padding: '4px 8px', width: 140 }}
-                                            placeholder="Block height"
-                                        />
-                                        <button
-                                            className={styles.btn}
-                                            onClick={() => {
-                                                try {
-                                                    const p2p: any = props.p2pNode;
-                                                    const addr = props.nodeAddress || '';
-                                                    const h = payoutHeight || (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-                                                    p2p?.sendToSignalServer?.('REQUEST_PAYOUT_PROOF', { address: addr, height: h });
-                                                } catch {}
-                                            }}
-                                        >
-                                            Get My Proof
-                                        </button>
-                                    </div>
-                                    {payoutProof && (
-                                        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #30363d' }}>
-                                            <div className={styles.dataLabel} style={{ marginBottom: 8, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>Proof Result</div>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, lineHeight: 1.6 }}>
-                                                <div>
-                                                    <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Verified:</span>{' '}
-                                                    <span className={styles.dataValue} style={{ color: payoutProof.verified ? '#4ee672' : '#da3633' }}>
-                                                        {payoutProof.verified ? 'Yes ✅' : (payoutProof.ok ? 'No ❌' : `Error: ${payoutProof.error}`)}
-                                                    </span>
-                                                </div>
-                                                {payoutProof.entry && (
-                                                    <div>
-                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Entry:</span>{' '}
-                                                        <span className={styles.dataValue} style={{ fontSize: '0.9em', wordBreak: 'break-all' }}>{payoutProof.entry}</span>
-                                                    </div>
-                                                )}
-                                                {payoutProof.root && (
-                                                    <div>
-                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Root:</span>{' '}
-                                                        <span className={styles.dataValue} style={{ fontSize: '0.9em', fontFamily: 'monospace' }} title={payoutProof.root}>
-                                                            {payoutProof.root.slice(0, 18)}...
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                {typeof payoutProof.height === 'number' && (
-                                                    <div>
-                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Height:</span>{' '}
-                                                        <span className={`${styles.dataValue} ${styles.numeric}`}>{payoutProof.height.toLocaleString()}</span>
-                                                    </div>
-                                                )}
-                                                {payoutProof.siblings && (
-                                                    <div>
-                                                        <span className={styles.dataLabel} style={{ display: 'inline-block', minWidth: 80 }}>Siblings:</span>{' '}
-                                                        <span className={styles.dataValue}>{payoutProof.siblings.length}</span>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Slot Card */}
-                                {nodeMode !== 'light' && (
-                                <div className={`${styles.card} ${styles.slotCard}`}>
-                                    <h3>Slot 领导者轮换 (50ms Slot)</h3>
-                                    
-                                    <p>
-                                        <span className={styles.dataLabel}>当前 Epoch / Slot:</span> 
-                                        <span className={`${styles.dataValue} ${styles.numeric}`} id="current-epoch">E: {currentEpoch}</span> / <span className={`${styles.dataValue} ${styles.numeric}`} id="current-slot">S: {currentSlot}</span>
-                                    </p>
-                                    
-                                    <p>
-                                        <span className={styles.dataLabel}>预计 Leader (Next Slot):</span> 
-                                        <span className={styles.dataValue} id="predicted-leader" style={{ color: '#4ee672' }}>{nextLeader}</span>
-                                    </p>
-
-                                    <p className={styles.dataLabel} style={{ marginTop: 15 }}>下一 5 个 Slot 预览:</p>
-                                    <div className={styles.slotPreview} id="slot-preview">
-                                        {slotPreview.map((slot, i) => (
-                                            <span 
-                                                key={i}
-                                                className={`${styles.slotItem} ${slot.isSelf ? styles.slotItemYou : ''}`}
-                                            >
-                                                {slot.isSelf ? 'You' : slot.leader}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                                )}
-
-                                {/* Weight Card */}
-                                {nodeMode !== 'light' && (
-                                <div className={`${styles.card} ${styles.weightCard}`}>
-                                    <h3>奖励预估与权重 (Pooled Rewards)</h3>
-                                    
-                                    <p>
-                                        <span className={styles.dataLabel}>我的有效权重:</span> 
-                                        <span className={`${styles.dataValueLg} ${styles.numeric}`} id="effective-weight">{effectiveWeight.toFixed(2)}</span>
-                                    </p>
-                                    <p>
-                                        <span className={styles.dataLabel}>预估日奖励 (IDC):</span> 
-                                        <span className={`${styles.dataValue} ${styles.numeric}`} id="projected-reward">≈ {projectedReward.toFixed(2)} IDC</span>
-                                    </p>
-                                    <hr style={{ border: 0, borderTop: '1px solid #30363d', margin: '15px 0' }} />
-                                    
-                                    <p className={styles.smallInfo}>
-                                        <span className={styles.dataLabel}>Online Score:</span> 
-                                        <span className={styles.dataValue} style={{ fontSize: '1em', color: '#4ee672' }}>{onlineScore}%</span>
-                                    </p>
-                                </div>
-                                )}
+                                <WalletSummaryCard chainContext={props.chainContext} address={props.nodeAddress || null} locale={'en'} />
                             </div>
 
                             {/* Right Panel */}
                             <div className={styles.rightPanel}>
-                                {/* Blocks Card */}
-                                <div className={`${styles.card} ${styles.blocksCard}`}>
-                                    <h3>
-                                        <span>实时区块列表 (Live Block Feed)</span>
-                                        <button 
-                                            id="toggle-live-feed" 
-                                            className={`${styles.liveToggleBtn} ${isLiveFeedActive ? styles.liveToggleLive : styles.liveTogglePaused}`}
-                                            onClick={handleToggleLiveFeed}
-                                        >
-                                            {isLiveFeedActive ? '暂停 (Pause) ⏸️' : '实时 (Live) 🟢'}
-                                        </button>
-                                    </h3>
-                                    <div className={styles.liveFeedContainer} id="live-feed-container">
-                                        <table className={styles.liveTable}>
-                                            <thead>
-                                                <tr>
-                                                    <th>Height</th>
-                                                    <th>Hash</th>
-                                                    <th>Slot</th>
-                                                    <th>Proposer</th>
-                                                    <th>ZK Proof</th>
-                                                    <th>ZK Root</th>
-                                                    <th>Time</th>
-                                                    <th>Pool Reward</th>
-                                                    <th>Details</th>
-                                                    <th>Recipients</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="live-block-feed-body">
-                                                {blocks.map((block, idx) => (
-                                                    <React.Fragment key={`${block.hash}-${idx}`}>
-                                                        <tr className={styles.tableRow}>
-                                                            <td>{block.height.toLocaleString()}</td>
-                                                            <td title={block.fullHash}>{shortHash(block.fullHash || block.hash, 12)}</td>
-                                                            <td>{block.slot ?? '--'}</td>
-                                                            <td>
-                                                                <span style={{ color: block.isSelf ? '#4ee672' : '#c9d1d9' }}>
-                                                                    {humanLeader(block.leader)}
-                                                                </span>
-                                                            </td>
-                                                            <td>{(block.zkFinalized ?? ((typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight >= block.height))) ? '✓' : '⏳'}</td>
-                                                            <td title={block.zkRoot || (typeof window !== 'undefined' && (window as any).lastZkStateRoot) || ''}>
-                                                                {block.zkRoot ? shortHash(String(block.zkRoot), 10) : ((window as any)?.lastZkStateRoot ? shortHash(String((window as any).lastZkStateRoot), 10) : '--')}
-                                                            </td>
-                                                            <td>{block.time}</td>
-                                                            <td>{typeof block.poolRewardIDC === 'number' ? block.poolRewardIDC.toFixed(2) : '--'}</td>
-                                                            <td>
-                                                                <details>
-                                                                    <summary style={{ cursor: 'pointer' }}>View</summary>
-                                                                    <div style={{ paddingTop: 6, color: '#8b949e' }}>
-                                                                        <div title={block.payoutRoot || ''}><span className={styles.dataLabel}>payoutRoot:</span> <span className={styles.dataValue}>{block.payoutRoot ? shortHash(block.payoutRoot, 18) : '--'}</span></div>
-                                                                        <div title={block.zkProofHash || ''}><span className={styles.dataLabel}>zkProofHash:</span> <span className={styles.dataValue}>{block.zkProofHash ? shortHash(block.zkProofHash, 18) : '--'}</span></div>
-                                                                    </div>
-                                                                </details>
-                                                            </td>
-                                                            <td>{block.recipients}</td>
-                                                        </tr>
-                                                    </React.Fragment>
-                                                ))}
-                                                {blocks.length === 0 && (
-                                                    <tr>
-                                                        <td colSpan={10} style={{ textAlign: 'center', padding: 20, color: '#8b949e' }}>
-                                                            No blocks yet...
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                {/* Live Block Feed Component */}
+                                <LiveBlockFeed 
+                                  chainContext={props.chainContext} 
+                                  locale={'en'} 
+                                  maxItems={15} 
+                                  myAddress={props.nodeAddress || undefined}
+                                />
                                 
-                                {/* Proving Panel under Live Block Feed (right column) - Pool Mining Architecture */}
+                                {/* Proving Panel (Pool Mining) */}
                                 <div className={styles.card}>
                                     <h3>Proving Panel (Pool Mining)</h3>
                                     <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
                                         池化挖矿模式：所有参与者按权重共享区块奖励
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                        <div>
-                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Leader</div>
-                                            <div className={styles.dataValue} id="leader-this-slot" title={leaderThisSlot || ''} style={{ fontSize: '0.95em', wordBreak: 'break-all' }}>
-                                                {humanLeader(leaderThisSlot || '--')}
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Leader of this Slot</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`} style={{ wordBreak: 'break-all' }}>
+                                                  {leaderThisSlot === props.nodeAddress ? 
+                                                    <span style={{color: '#2ea043', fontWeight: 'bold', fontSize: '1.1em'}}>✨ YOU ✨</span> : 
+                                                    humanLeader(leaderThisSlot)}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>My Weight</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ?? 0).toFixed(6)}</div>
                                             </div>
                                         </div>
-                                        <div>
-                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>My Weight</div>
-                                            <div className={`${styles.dataValueLg} ${styles.numeric}`} id="my-weight" style={{ fontSize: '1.2em', color: '#4ee672' }}>
-                                                {effectiveWeight.toFixed(2)}
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Block</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ? (12.0 * effectiveWeight / 100.0) : 0).toFixed(6)} IDC</div>
                                             </div>
-                                        </div>
-                                        <div>
-                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward/Block</div>
-                                            <div className={`${styles.dataValue} ${styles.numeric}`} id="est-reward-block" style={{ fontSize: '1em' }}>
-                                                ≈ {(projectedReward / ((24 * 60 * 60) / (props.chainContext?.params?.targetBlockTime || 10))).toFixed(4)} IDC
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward/Day</div>
-                                            <div className={`${styles.dataValue} ${styles.numeric}`} id="est-reward-day" style={{ fontSize: '1em' }}>
-                                                ≈ {projectedReward.toFixed(2)} IDC
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Day</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ? (12.0 * effectiveWeight / 100.0 * 17280) : 0).toFixed(6)} IDC</div>
                                             </div>
                                         </div>
                                     </div>
+                                </div>
+
+                                {/* Pool Rewards (Proof) */}
+                                <div className={styles.card}>
+                                    <h3>Pool Rewards (Proof)</h3>
+                                    <div style={{ marginBottom: 12, fontSize: 13, color: '#8b949e' }}>
+                                        输入区块高度查询该块的 Merkle 奖励证明，验证您的收益确实已包含在链上。
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                                        <input 
+                                            type="number" 
+                                            placeholder="Block Height"
+                                            style={{ 
+                                                background: '#0d1117', 
+                                                border: '1px solid #30363d', 
+                                                color: '#c9d1d9', 
+                                                padding: '6px 12px',
+                                                borderRadius: 6,
+                                                flex: 1
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    const h = parseInt((e.target as HTMLInputElement).value);
+                                                    if (h > 0) {
+                                                        setPayoutProof(null);
+                                                        // Trigger proof request
+                                                        props.p2pNode?.sendToSignalServer('REQUEST_PAYOUT_PROOF', { height: h, address: props.nodeAddress });
+                                                    }
+                                                }
+                                            }}
+                                        />
+                                        <button 
+                                            className={styles.btn}
+                                            style={{ padding: '6px 12px' }}
+                                            onClick={() => {
+                                                const input = document.querySelector('input[placeholder="Block Height"]') as HTMLInputElement;
+                                                const h = parseInt(input?.value);
+                                                if (h > 0) {
+                                                    setPayoutProof(null);
+                                                    props.p2pNode?.sendToSignalServer('REQUEST_PAYOUT_PROOF', { height: h, address: props.nodeAddress });
+                                                }
+                                            }}
+                                        >
+                                            Verify
+                                        </button>
+                                    </div>
+                                    {payoutProof && (
+                                        <div style={{ fontSize: 12, background: payoutProof.ok ? 'rgba(46, 160, 67, 0.1)' : 'rgba(218, 54, 51, 0.1)', padding: 8, borderRadius: 4 }}>
+                                            {payoutProof.ok ? (
+                                                <>
+                                                    <div style={{ color: '#2ea043', fontWeight: 'bold', marginBottom: 4 }}>✓ Verified</div>
+                                                    <div>Merkle Root: {shortHash(payoutProof.root)}</div>
+                                                    <div>Leaf: {shortHash(payoutProof.entry)}</div>
+                                                </>
+                                            ) : (
+                                                <div style={{ color: '#da3633' }}>
+                                                    ✗ Verification Failed: {payoutProof.error || 'Unknown error'}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -1363,7 +1244,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         <div className={styles.walletCard}>
                             <h2>当前 IDC 余额</h2>
                             <div className={styles.balanceDisplay}>
-                                <span id="wallet-summary-balance">{balance.toFixed(2)}</span> <span style={{ fontSize: '0.6em', color: '#c9d1d9' }}>IDC</span>
+                                <span id="wallet-summary-balance">{balance.toFixed(12)}</span> <span style={{ fontSize: '0.6em', color: '#c9d1d9' }}>IDC</span>
                             </div>
                                     {nodeMode === 'light' && (
                                         <div style={{ marginTop: 8 }}>

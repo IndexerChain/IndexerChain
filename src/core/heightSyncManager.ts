@@ -281,32 +281,20 @@ export class HeightSyncManager {
       }
     }
 
-    // Determine sync status
-    if (recommendedHeight > localHeight) {
-      // Check if we're on a fork
-      if (this.signalRootTip && localTipHash) {
-        const recentHeaders = this.signalRootTip.recentHeaders || [];
-        const isInRecentHeaders = recentHeaders.some(h => h.hash === localTipHash);
-        if (!isInRecentHeaders && localHeight > 0) {
-          syncStatus = "fork_detected";
-        } else {
-          syncStatus = "syncing";
-        }
+    // Determine sync status (Light-node semantics: prefer header hash alignment over height)
+    if (this.signalRootTip) {
+      if (this.signalRootTip.tipHash === localTipHash && this.signalRootTip.tipHash) {
+        syncStatus = "aligned";
       } else {
+        // Header mismatch: still "syncing" (headers will arrive), not fork unless explicit conflict
         syncStatus = "syncing";
       }
-    } else if (recommendedHeight < localHeight) {
-      // Local is ahead - might be on a fork
-      syncStatus = "fork_detected";
     } else {
-      // Heights match - check if state commitments match
-      const recommendedSourceObj = sources.find(s => s.type === recommendedSource);
-      if (recommendedSourceObj && recommendedSourceObj.stateCommitment && localStateCommitment) {
-        if (recommendedSourceObj.stateCommitment !== localStateCommitment) {
-          syncStatus = "fork_detected";
-        } else {
-          syncStatus = "aligned";
-        }
+      // Fallback to height-based heuristic when no signal info
+      if (recommendedHeight > localHeight) {
+        syncStatus = "syncing";
+      } else if (recommendedHeight < localHeight) {
+        syncStatus = "fork_detected";
       } else {
         syncStatus = "aligned";
       }

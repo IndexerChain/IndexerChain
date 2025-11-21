@@ -46,7 +46,54 @@ export class SignalingRoom {
     };
     // Snapshot storage (compressed, chunked on demand)
     this.snapshotsIndex = []; // array of metas sorted asc by height
+    // Phase 52: Balance proof cache (Map<blockHeight, { root, tree }>
+    this.balanceProofCache = new Map();
     this.initialized = false;
+  }
+
+  /**
+   * Phase 52: Build and cache balance Merkle tree for a snapshot.
+   * Returns root hash.
+   */
+  async getOrBuildBalanceTree(height, balances) {
+    if (this.balanceProofCache.has(height)) {
+      return this.balanceProofCache.get(height);
+    }
+    // Build tree
+    const entries = Object.entries(balances).filter(([_, v]) => String(v) !== '0');
+    entries.sort((a, b) => a[0].localeCompare(b[0]));
+    
+    // Helper for fast sha256
+    const sha256 = async (str) => {
+      const buf = new TextEncoder().encode(str);
+      const h = await crypto.subtle.digest('SHA-256', buf);
+      return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2,'0')).join('');
+    };
+
+    const leaves = [];
+    for (const [addr, bal] of entries) {
+      const hash = await sha256(`leaf|${addr}|${String(bal)}`);
+      leaves.push({ addr, bal: String(bal), hash });
+    }
+
+    // Compute root
+    let acc = await sha256("0x00".repeat(1));
+    for (const leaf of leaves) {
+      const min = acc < leaf.hash ? acc : leaf.hash;
+      const max = acc < leaf.hash ? leaf.hash : acc;
+      acc = await sha256(min + max);
+    }
+
+    const cacheEntry = { root: acc, leaves };
+    this.balanceProofCache.set(height, cacheEntry);
+    
+    // Prune cache if too large
+    if (this.balanceProofCache.size > 50) {
+      const keys = Array.from(this.balanceProofCache.keys()).sort((a, b) => a - b);
+      this.balanceProofCache.delete(keys[0]);
+    }
+    
+    return cacheEntry;
   }
 
   /**
@@ -979,19 +1026,9 @@ export class SignalingRoom {
               return;
             }
             const balances = snapshotJson.indexState.data.balances || {};
-            // Compute a simple "balances root" by hashing sorted entries (server-side mirror of light proof root)
-            // root = sha256(fold(sorted([addr:bal] as sha256(`leaf|addr|bal`))))
-            const entries = Object.entries(balances).filter(([_, v]) => String(v) !== '0');
-            entries.sort((a, b) => a[0].localeCompare(b[0]));
-            async function sha256(str){const buf=new TextEncoder().encode(str);const h=await crypto.subtle.digest('SHA-256',buf);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');}
-            let acc = await sha256("0x00".repeat(1));
-            for (const [addr, bal] of entries) {
-              const leaf = await sha256(`leaf|${addr}|${String(bal)}`);
-              const min = acc < leaf ? acc : leaf;
-              const max = acc < leaf ? leaf : acc;
-              acc = await sha256(min + max);
-            }
-            server.send(JSON.stringify({ type: 'STATE_ROOT', ok: true, root: acc, height: best.height }));
+            // Phase 52: Use cached tree builder
+            const tree = await this.getOrBuildBalanceTree(best.height, balances);
+            server.send(JSON.stringify({ type: 'STATE_ROOT', ok: true, root: tree.root, height: best.height }));
           } catch (error) {
             server.send(JSON.stringify({ type: 'STATE_ROOT', ok: false, reason: 'INTERNAL_ERROR' }));
           }
@@ -1028,6 +1065,10 @@ export class SignalingRoom {
               return;
             }
             const balances = snapshotJson.indexState.data.balances || {};
+            
+            // Phase 52: Use cached tree builder
+            const tree = await this.getOrBuildBalanceTree(best.height, balances);
+            
             const value = String(balances[address] ?? "0");
             // Provide a lightweight proof object compatible with client verifier (smt-sha256-v1 shape)
             // For now, siblings are omitted (default zeros), client computes same default tree; root returned separately.
@@ -1035,21 +1076,12 @@ export class SignalingRoom {
             const keyHash = await sha256(address);
             const siblings = []; // implicit zeros
             const depth = 256;
-            // Compute root mirror (must match STATE_ROOT for consistency)
-            const entries = Object.entries(balances).filter(([_, v]) => String(v) !== '0');
-            entries.sort((a, b) => a[0].localeCompare(b[0]));
-            let acc = await sha256("0x00".repeat(1));
-            for (const [addr, bal] of entries) {
-              const leaf = await sha256(`leaf|${addr}|${String(bal)}`);
-              const min = acc < leaf ? acc : leaf;
-              const max = acc < leaf ? leaf : acc;
-              acc = await sha256(min + max);
-            }
+            
             server.send(JSON.stringify({
               type: 'BALANCE_PROOF',
               ok: true,
               height: best.height,
-              root: acc,
+              root: tree.root,
               address,
               value,
               proof: { algorithm: 'smt-sha256-v1', keyHash, value, siblings, depth }
@@ -1159,8 +1191,7 @@ export class SignalingRoom {
           }
 
           // Phase 37: Persist to storage
-          await this.saveRootTip();
-          
+          // Async broadcast first for speed
           // Broadcast ROOT_TIP_UPDATE to all connected peers
           const tipUpdate = {
             type: 'ROOT_TIP_UPDATE',
@@ -1181,16 +1212,21 @@ export class SignalingRoom {
             timestamp: Date.now(),
           };
           
-          console.log(`[SignalingRoom] Broadcasting ROOT_TIP_UPDATE to ${this.peers.size} peer(s)`);
-          for (const [id, peer] of this.peers.entries()) {
-            if (peer.readyState === WebSocket.READY_STATE_OPEN) {
-              try {
-                peer.send(JSON.stringify(tipUpdate));
-              } catch (error) {
-                console.error(`[SignalingRoom] Failed to send ROOT_TIP_UPDATE to ${id.substring(0, 16)}...:`, error);
+          // Send broadcast immediately (fire and forget)
+          // This ensures millisecond-level propagation to other nodes
+          setTimeout(() => {
+            for (const [id, peer] of this.peers.entries()) {
+              if (peer.readyState === WebSocket.READY_STATE_OPEN) {
+                try {
+                  peer.send(JSON.stringify(tipUpdate));
+                } catch (error) {
+                  // ignore
+                }
               }
             }
-          }
+          }, 0);
+
+          await this.saveRootTip();
         } else if (data.type === 'SEED_BOOTSTRAP_BLOCKS') {
           // Allow clients to seed a small rolling window of recent blocks (no auth)
           try {

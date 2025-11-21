@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ChainContext } from "../../core/chain.js";
-import { uIDCToIDC } from "../../core/idcEmission.js";
+// Balance in IndexState is stored as IDC (number)
 
 interface WalletSummaryCardProps {
   chainContext: ChainContext | null;
@@ -11,6 +11,7 @@ interface WalletSummaryCardProps {
 export function WalletSummaryCard({ chainContext, address, locale }: WalletSummaryCardProps) {
   const isZh = locale === "zh";
   const [balance, setBalance] = useState<number>(0);
+  const [expectedIDC, setExpectedIDC] = useState<number>(0);
 
   useEffect(() => {
     try {
@@ -19,12 +20,22 @@ export function WalletSummaryCard({ chainContext, address, locale }: WalletSumma
         return;
       }
       const raw = chainContext.indexState.getBalance(address as any);
-      // getBalance returns bigint of uIDC
-      setBalance(uIDCToIDC(raw as unknown as bigint));
+      setBalance(typeof raw === "number" ? raw : 0);
     } catch {
       setBalance(0);
     }
   }, [chainContext, address]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      try {
+        const w: any = window as any;
+        const pending: number = w.expectedPendingIDC || 0;
+        setExpectedIDC(pending);
+      } catch {}
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div className="status-card" style={{ marginBottom: "1.5rem" }}>
@@ -40,12 +51,16 @@ export function WalletSummaryCard({ chainContext, address, locale }: WalletSumma
         </div>
         <div>
           <div style={{ color: "#666", fontSize: "0.85rem", marginBottom: "0.25rem" }}>
-            {isZh ? "余额" : "Balance"}
+            {isZh ? "最终余额 (ZK Proof)" : "Final Balance (ZK Proof)"}
           </div>
           <div style={{ fontWeight: "bold", fontSize: "1.2rem" }}>
-            {balance.toFixed(6)} IDC
+            {balance.toFixed(12)} IDC
           </div>
         </div>
+      </div>
+      <div style={{ marginTop: "0.5rem", color: "#555", fontSize: "0.9rem" }}>
+        {isZh ? "预期挖矿收益（本地估算，12位精度）" : "Expected Reward (12 decimals, local)"}
+        : <span style={{ fontFamily: "monospace", fontWeight: "bold" }}>{expectedIDC.toFixed(12)} IDC</span>
       </div>
       <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem" }}>
         <button

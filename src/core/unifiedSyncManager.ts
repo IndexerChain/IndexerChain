@@ -22,6 +22,7 @@ import { getStateLockManager } from "./stateLockManager.js";
 import { getWarpSyncManager } from "./warpSync.js";
 import { getChunkBasedSyncManager } from "./chunkBasedSync.js";
 import { hashBlockHeader } from "./crypto.js";
+import { logger } from "./logger.js";
 
 export interface RootTip {
   latestHeight: number;
@@ -1397,7 +1398,51 @@ export async function handleRootTipUpdate(
   isMiner: boolean = false,
   statusCallback?: SyncStatusCallback
 ): Promise<UnifiedSyncResult> {
+  // All-Light-Node Chain: Auto-detect signal server reset
+  // If rootTip is at genesis (height 0) but local has old data, auto-clear local storage
+  const rootHeight = rootTip.latestHeight;
+  const rootTipHash = rootTip.latestHeaderHash;
   const localTip = chainContext.storage.getTip();
+  const localHeight = localTip?.header.height ?? 0;
+  
+  // Detect signal server reset: rootTip is at genesis but local has old blocks
+  if (rootHeight === 0 && localHeight > 1) {
+    if (statusCallback) {
+      statusCallback(`Signal server reset detected (rootTip at genesis, local at ${localHeight}). Clearing local storage...`);
+    }
+    logger.info(`[UnifiedSync] Signal server reset detected: rootTip=0, local=${localHeight}. Auto-clearing local storage.`);
+    
+    // Clear local storage
+    try {
+      chainContext.storage.reset();
+      // Clear snapshots
+      const { clearAllSnapshots } = await import("./snapshot.js");
+      clearAllSnapshots();
+      // Clear localStorage keys
+      if (typeof window !== "undefined") {
+        Object.keys(localStorage)
+          .filter(k => k.startsWith("indexerchain_"))
+          .forEach(k => localStorage.removeItem(k));
+      }
+      if (statusCallback) {
+        statusCallback(`Local storage cleared. Reinitializing from genesis...`);
+      }
+      // Reload page to reinitialize
+      if (typeof window !== "undefined") {
+        setTimeout(() => window.location.reload(), 1000);
+        return {
+          success: true,
+          synced: false,
+          method: "none" as const,
+          fromHeight: localHeight,
+          toHeight: 0,
+        };
+      }
+    } catch (error) {
+      logger.error(`[UnifiedSync] Failed to clear local storage:`, error);
+    }
+  }
+  
   if (!localTip) {
     // No local chain, use warp sync
     if (statusCallback) {
@@ -1427,10 +1472,7 @@ export async function handleRootTipUpdate(
     };
   }
 
-  const localHeight = localTip.header.height;
   const localTipHash = localTip.hash;
-  const rootHeight = rootTip.latestHeight;
-  const rootTipHash = rootTip.latestHeaderHash;
 
   // Pool Mining Architecture: No need to wait for peer connections
   // Independent IP nodes can sync using Signal Bootstrap + Warp Sync without P2P peers
@@ -1638,92 +1680,37 @@ export async function handleRootTipUpdate(
   }
 
   // Step 3: Light Node Header Sync - Only sync headers, not full blocks
-  // For light nodes, we only need to sync headers up to rootTip
-  // If we're far behind in headers (>= 1000), use Warp Sync to get headers + state root
-  if (rootHeight - localHeight >= 1000) {
-    // Large gap detected, using warp sync
-    const warpSyncManager = getWarpSyncManager();
-    warpSyncManager.init(chainContext, p2pNode);
-    // Convert recentHeaders to BlockHeader[] if needed
-    const recentHeadersForWarp = rootTip.recentHeaders?.filter((h): h is BlockHeader => 
-      "version" in h || "prevHash" in h
-    ) as BlockHeader[] | undefined;
-    const warpResult = await warpSyncManager.performWarpSync({
-      latestHeight: rootTip.latestHeight,
-      latestHeader: rootTip.latestHeader,
-      latestHeaderHash: rootTip.latestHeaderHash,
-      recentHeaders: recentHeadersForWarp,
-      latestSnapshotMeta: rootTip.latestSnapshotMeta,
-      stateCommitment: rootTip.stateCommitment,
-    });
+  // Always prioritize header sync via signal server; do not request full blocks.
+  const isSignalConnected = (p2pNode as any)?.isConnected ?? false;
+  if (isSignalConnected) {
+    try {
+      // Ask signal server to send latest headers (non-blocking)
+      (p2pNode as any).sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 512 });
+    } catch {}
+    // Consider synced for light nodes; headers will arrive via ROOT_TIP_UPDATE
     return {
-      success: warpResult.success,
-      synced: warpResult.synced,
-      method: "warp" as const,
-      fromHeight: warpResult.fromHeight,
-      toHeight: warpResult.toHeight,
-      error: warpResult.error,
+      success: true,
+      synced: true,
+      method: "none",
+      fromHeight: localHeight,
+      toHeight: rootHeight,
     };
   }
 
-  // Step 4: Light Node Header Sync - For light nodes, we only need headers, not full blocks
-  // If we have recent headers from rootTip, try to sync only headers
-  if (rootTip.recentHeaders && rootTip.recentHeaders.length > 0) {
-    // Convert recent headers to hash set
-    const recentHashes = new Set<string>();
-    for (const header of rootTip.recentHeaders) {
-      let hash: string;
-      if ("hash" in header) {
-        hash = header.hash;
-      } else {
-        // It's a BlockHeader, need to compute hash
-        try {
-          hash = await hashBlockHeader(header as BlockHeader);
-        } catch {
-          continue;
-        }
-      }
-      recentHashes.add(hash);
-    }
-
-    if (recentHashes.has(localTipHash)) {
-      // Local tip is in recent headers - no fork
-      // For light nodes: If we're close to rootTip (within 500 blocks), allow mining
-      // Headers will sync in background, but we don't need to wait for full block sync
-      const heightDiff = rootHeight - localHeight;
-      if (heightDiff <= 500) {
-        // Close enough - light node can mine while headers sync in background
-        return {
-          success: true,
-          synced: true, // Consider synced for light nodes (header hash matches)
-          method: "fast",
-          fromHeight: localHeight,
-          toHeight: rootHeight,
-        };
-      }
-      // If far behind, still try to sync headers (but don't block mining if Signal is connected)
-      return await fastSync500(chainContext, p2pNode, rootHeight, rootTip.recentHeaders);
-    }
+  // Step 4: If we are offline from signal, fall back to minimal fast header sync if available.
+  // Do not request full blocks; just return not-synced and let caller retry after connection.
+  if (!isSignalConnected) {
+    return {
+      success: true,
+      synced: false,
+      method: "none",
+      fromHeight: localHeight,
+      toHeight: rootHeight,
+      error: "Signal not connected; waiting for ROOT_TIP_UPDATE",
+    };
   }
 
-  // Step 5: Light Node Sync - For light nodes, if Signal is connected, allow mining while headers sync
-  // Check if we're connected to Signal (light nodes don't need full block history)
-  const isSignalConnected = p2pNode?.isConnected ?? false;
-  if (isSignalConnected && localTipHash !== rootTipHash) {
-    // Light node with Signal connection: Headers will sync in background
-    // Don't block mining - light nodes only need latest header, not full history
-    const heightDiff = rootHeight - localHeight;
-    if (heightDiff <= 1000) {
-      // Reasonable height difference - allow mining while headers sync
-      return {
-        success: true,
-        synced: true, // Consider synced for light nodes (Signal connected, headers syncing)
-        method: "none",
-        fromHeight: localHeight,
-        toHeight: rootHeight,
-      };
-    }
-  }
+  // Step 5: Already handled above (Signal connected ⇒ synced true). Continue to fork-check if needed.
 
   // Step 6: Check for common ancestor (only if we suspect a fork)
   // Only check if local tip hash doesn't match root tip hash
@@ -1833,15 +1820,7 @@ export async function handleRootTipUpdate(
     }
   }
 
-  // Step 6: Default - just sync missing blocks
-  const heightDiff = rootHeight - localHeight;
-  if (heightDiff > 0) {
-    if (heightDiff >= 100) {
-      return await chunkSync(chainContext, p2pNode, localHeight + 1, rootHeight);
-    } else {
-      return await fastSync500(chainContext, p2pNode, rootHeight, rootTip.recentHeaders);
-    }
-  }
+  // Step 6: Default - do not request full blocks in light-node chain; consider syncing via headers only.
 
   return {
     success: true,

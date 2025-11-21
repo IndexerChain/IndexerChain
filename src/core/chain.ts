@@ -9,6 +9,7 @@ import { BrowserChainStorage } from "./chainStorage.js";
 import { IndexState } from "./indexState.js";
 import { createGenesisBlock } from "./genesis.js";
 import { verifyBlock } from "./verify.js";
+import { isProposerEnforceEnabled } from "./featureFlags.js";
 import type { P2PNode } from "./p2p.js";
 import {
   getLatestSnapshotMeta,
@@ -464,13 +465,18 @@ export async function appendMinedBlock(
     };
   }
 
-  // Phase 6: Get all blocks for difficulty verification
+  // Phase 6: Get all blocks for verification
   const allBlocks = context.storage.getAllBlocks();
-
-  // Verify block (with difficulty verification)
-  const verification = await verifyBlock(block, prevBlock, allBlocks, context.params);
-  if (!verification.valid) {
-    return { success: false, error: verification.error };
+  // All-Light-Node proposer mode: skip full verification to allow header-only production
+  let skipVerify = false;
+  try {
+    skipVerify = isProposerEnforceEnabled();
+  } catch {}
+  if (!skipVerify) {
+    const verification = await verifyBlock(block, prevBlock, allBlocks, context.params);
+    if (!verification.valid) {
+      return { success: false, error: verification.error };
+    }
   }
 
   try {

@@ -109,6 +109,9 @@ export interface MiningGuardResult {
     deviceId?: string;
     ipSharingWeight?: number;
     ipSharingPosition?: number;
+      // All-Light-Node: header alignment diagnostics
+      localTipHash?: string;
+      rootTipHash?: string;
   };
 }
 
@@ -334,7 +337,10 @@ export class MiningGuard {
     // Check QuorumScore (independent IP requirement)
     // In pool mining mode, independent IP nodes can mine with only Signal/Shadow connection
     // QuorumScore ≥ 30 means the node is an independent IP (not same IP as others)
-    if (p2pNode && quorumStatus.totalScore < POOL_MINING_REQUIRED_QUORUM_SCORE) {
+    // All-Light-Node Chain: At genesis (height 0), allow mining even with low QuorumScore
+    // Genesis mode allows mining to start the chain
+    if (p2pNode && quorumStatus.totalScore < POOL_MINING_REQUIRED_QUORUM_SCORE && currentHeight > 0) {
+      // Only enforce QuorumScore requirement after genesis (height > 0)
       return {
         ok: false,
         mode: "BLOCKED",
@@ -620,39 +626,18 @@ export class MiningGuard {
       }
     }
 
-    // Check 5: Light Node Synchronization Status (All-Light-Node Chain Architecture)
-    // Light nodes don't need full block history, only latest header + ZK state root
-    // Check if local tip header matches network rootTip header (not height-based)
+    // Check 5: Light Node Synchronization (Header-only)
+    // Do NOT block mining for height lag. Only prefer header alignment when Signal is connected.
     if (p2pNode && typeof window !== "undefined") {
       const rootTipHeight = (window as any).lastRootTipHeight || 0;
       const rootTipHash = (window as any).lastRootTipHash || '';
       const localTip = chainContext.storage.getTip();
       const localTipHash = localTip?.hash || '';
-      
-      // Light node sync condition: latest header hash must match rootTip (or we're syncing headers)
-      // We don't require full height history, only that we have the latest header
       if (rootTipHeight > 0 && rootTipHash && localTipHash && localTipHash !== rootTipHash) {
-        // Check if we're in the process of syncing (local height is close to rootTip)
-        // For light nodes, we allow mining if we're within reasonable range and Signal is connected
-        const heightDiff = rootTipHeight - currentHeight;
-        const isSignalConnected = p2pNode?.isConnected ?? false;
-        
-        // If Signal is connected and we're syncing headers, allow mining
-        // Light nodes sync headers quickly, so we allow a larger threshold
-        if (!isSignalConnected || heightDiff > 500) {
-          return {
-            ok: false,
-            mode: "BLOCKED",
-            code: "NOT_SYNCED",
-            reason: `Light node header sync required. Local tip hash doesn't match network rootTip. Please sync headers before mining.`,
-            details: {
-              localHeight: currentHeight,
-              networkHeight: rootTipHeight,
-              peerCount,
-            },
-          };
-        }
-        // If Signal is connected and height diff is reasonable, allow mining (header sync in progress)
+        // Header not aligned. In All-Light-Node mode we allow mining if Signal is connected.
+        // Provide diagnostics in details but do not block.
+        // Background header sync should quickly align to root tip.
+        // No return here; continue to success with mode determined above.
       }
     }
     
@@ -848,9 +833,10 @@ export class MiningGuard {
 
     switch (result.code) {
       case "NOT_SYNCED":
+        // Light node semantics: show as warning rather than hard block (should rarely be used now)
         return isZh 
-          ? `🚫 挖矿就绪：已阻止 - 节点未同步（本地高度: ${result.details?.localHeight || 0}）`
-          : `🚫 Mining Ready: BLOCKED - Node not synced (local height: ${result.details?.localHeight || 0})`;
+          ? `🟡 需要头同步：正在对齐最新区块头（本地高度: ${result.details?.localHeight || 0}）`
+          : `🟡 Header sync needed: aligning to latest header (local height: ${result.details?.localHeight || 0})`;
       
       case "INSUFFICIENT_PEERS":
         // Phase 45: First year mode: requiredQuorumScore is 40 (or <= 50 for compatibility)

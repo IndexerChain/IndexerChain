@@ -72,7 +72,7 @@ export function MiningWeightCard({ chainContext, p2pNode, nodeAddress, locale }:
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
         <div style={{ background: "#f8f9fa", padding: "0.75rem", borderRadius: "6px" }}>
           <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.25rem" }}>{isZh ? "余额" : "Balance"}</div>
-          <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>{balanceIDC.toFixed(6)} IDC</div>
+          <div style={{ fontSize: "1.1rem", fontWeight: "bold" }}>{balanceIDC.toFixed(12)} IDC</div>
         </div>
         <div style={{ background: "#f8f9fa", padding: "0.75rem", borderRadius: "6px" }}>
           <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.25rem" }}>{isZh ? "在线评分" : "Online Score"}</div>

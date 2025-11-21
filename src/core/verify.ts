@@ -103,22 +103,24 @@ export async function verifyBlock(
     };
   }
 
-  // Verify difficulty requirement (hash must satisfy difficulty)
-  if (!checkDifficulty(block.hash, block.header.difficulty)) {
-    return {
-      valid: false,
-      error: `Block hash does not satisfy difficulty requirement (${block.header.difficulty} leading zeros)`,
-    };
-  }
-
-  // Phase 6: Verify difficulty value matches expected
-  if (allBlocks && params && prevBlock) {
-    const expectedDifficulty = getNextDifficulty(allBlocks, params);
-    if (block.header.difficulty !== expectedDifficulty) {
+  // In All-Light-Node proposer mode, skip PoW difficulty checks
+  if (!isProposerEnforceEnabled()) {
+    // Verify difficulty requirement (hash must satisfy difficulty)
+    if (!checkDifficulty(block.hash, block.header.difficulty)) {
       return {
         valid: false,
-        error: `Difficulty mismatch: expected ${expectedDifficulty}, got ${block.header.difficulty}`,
+        error: `Block hash does not satisfy difficulty requirement (${block.header.difficulty} leading zeros)`,
       };
+    }
+    // Phase 6: Verify difficulty value matches expected
+    if (allBlocks && params && prevBlock) {
+      const expectedDifficulty = getNextDifficulty(allBlocks, params);
+      if (block.header.difficulty !== expectedDifficulty) {
+        return {
+          valid: false,
+          error: `Difficulty mismatch: expected ${expectedDifficulty}, got ${block.header.difficulty}`,
+        };
+      }
     }
   }
 

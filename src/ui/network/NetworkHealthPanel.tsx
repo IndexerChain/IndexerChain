@@ -632,8 +632,8 @@ export function NetworkHealthPanel({
                   >
                     <div style={{ fontSize: "0.85rem", color: "#856404" }}>
                       {isZh
-                        ? `⚠️ 需要同步: 本地高度 ${localHeight} < Signal Server 高度 ${rootTipHeight}`
-                        : `⚠️ Sync needed: Local height ${localHeight} < Signal Server height ${rootTipHeight}`}
+                        ? `🟡 轻节点头同步中：本地头 ${localHeight} ⇢ 信号高度 ${rootTipHeight}（无需区块体）`
+                        : `🟡 Light-node header sync: local header ${localHeight} ⇢ signal height ${rootTipHeight} (no block bodies needed)`}
                     </div>
                     {(window as any).pendingBootstrapBlockRequest && (
                       <div style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "#856404" }}>
