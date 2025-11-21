@@ -44,6 +44,8 @@ export class SignalingRoom {
       maxStoredHeight: 1000000, // logical ceiling
       windowSize: 50000,        // keep last 50k blocks for bootstrap by default
     };
+    // Snapshot storage (compressed, chunked on demand)
+    this.snapshotsIndex = []; // array of metas sorted asc by height
     this.initialized = false;
   }
 
@@ -863,6 +865,85 @@ export class SignalingRoom {
           
           console.log(`[SignalingRoom] Sending BOOTSTRAP_RESPONSE: height=${response.latestHeight}, hasHeader=${!!response.latestHeader}, recentHeaders=${response.recentHeaders?.length || 0}, trustLevel=${response.trustLevel}`);
           server.send(JSON.stringify(response));
+        } else if (data.type === 'SEED_SNAPSHOT') {
+          // Accept compressed snapshot from miner node (meta + base64 data)
+          try {
+            const meta = data.meta;
+            const base64Data = data.data;
+            if (!meta || typeof meta.height !== 'number' || !base64Data || typeof base64Data !== 'string') {
+              server.send(JSON.stringify({ type: 'SEED_SNAPSHOT_ACK', ok: false, reason: 'INVALID_PAYLOAD' }));
+              return;
+            }
+            const height = meta.height;
+            // Persist snapshot data
+            await this.state.storage.put(`snapshot:${height}`, { meta, compressed: true, data: base64Data, full: true });
+            // Update snapshots index (keep unique by height)
+            const list = (await this.state.storage.get('snapshotsIndex')) || [];
+            const exists = Array.isArray(list) ? list.some((m) => m?.height === height) : false;
+            const newList = Array.isArray(list) ? (exists ? list.map((m) => (m?.height === height ? meta : m)) : [...list, meta]) : [meta];
+            newList.sort((a, b) => (a.height || 0) - (b.height || 0));
+            await this.state.storage.put('snapshotsIndex', newList);
+            this.snapshotsIndex = newList;
+            // Update rootTip snapshot hint
+            if (!this.bootstrapState.latestSnapshotMeta || height >= (this.bootstrapState.latestSnapshotMeta.height || 0)) {
+              this.bootstrapState.latestSnapshotMeta = meta;
+              await this.saveRootTip();
+            }
+            server.send(JSON.stringify({ type: 'SEED_SNAPSHOT_ACK', ok: true, height }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'SEED_SNAPSHOT_ACK', ok: false, reason: 'INTERNAL_ERROR' }));
+          }
+        } else if (data.type === 'REQUEST_SNAPSHOT_META') {
+          try {
+            // Return available metas at or below targetHeight (or all if none specified)
+            const target = typeof data.targetHeight === 'number' ? data.targetHeight : Number.MAX_SAFE_INTEGER;
+            const list = (await this.state.storage.get('snapshotsIndex')) || this.snapshotsIndex || [];
+            const metas = (Array.isArray(list) ? list : []).filter((m) => (m?.height || 0) <= target);
+            server.send(JSON.stringify({ type: 'SNAPSHOT_META', metas }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'SNAPSHOT_META', metas: [] }));
+          }
+        } else if (data.type === 'REQUEST_SNAPSHOT') {
+          try {
+            const height = data.height;
+            const snapshotId = String(data.snapshotId || height);
+            if (typeof height !== 'number') {
+              server.send(JSON.stringify({ type: 'SNAPSHOT_DONE', snapshotId }));
+              return;
+            }
+            const snap = await this.state.storage.get(`snapshot:${height}`);
+            if (!snap || !snap.data) {
+              server.send(JSON.stringify({ type: 'SNAPSHOT_DONE', snapshotId }));
+              return;
+            }
+            // Chunk and stream via WS
+            const CHUNK_SIZE = 32 * 1024;
+            const dataString = snap.data;
+            const bytes = Uint8Array.from(atob(dataString), c => c.charCodeAt(0));
+            const totalSize = bytes.length;
+            const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+            for (let i = 0; i < totalChunks; i++) {
+              const start = i * CHUNK_SIZE;
+              const end = Math.min(start + CHUNK_SIZE, totalSize);
+              const chunk = bytes.slice(start, end);
+              // Simple checksum
+              let hash = 0;
+              for (let j = 0; j < chunk.length; j++) { hash = ((hash << 5) - hash) + chunk[j]; hash |= 0; }
+              const checksum = Math.abs(hash).toString(16).padStart(16, "0");
+              server.send(JSON.stringify({
+                type: 'SNAPSHOT_CHUNK',
+                snapshotId,
+                chunkIndex: i,
+                totalChunks,
+                // Encode chunk as base64 string for transport; client will decode
+                data: btoa(String.fromCharCode(...chunk)),
+                checksum,
+              }));
+            }
+            server.send(JSON.stringify({ type: 'SNAPSHOT_DONE', snapshotId }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'SNAPSHOT_DONE', snapshotId: String(data.snapshotId || data.height || '') }));
+          }
         } else if (data.type === 'GLOBAL_VIEW_REQUEST') {
           // Respond with a minimal global view from signal server (fallback when peers unavailable)
           const resp = {

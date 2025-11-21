@@ -851,6 +851,23 @@ export class BrowserP2PNode implements P2PNode {
           }
         }
         break;
+      
+      // Forward SNAPSHOT_* messages from signal server to handlers (Global Snapshot via signaling fallback)
+      case "SNAPSHOT_META":
+      case "SNAPSHOT_CHUNK":
+      case "SNAPSHOT_DONE":
+        {
+          const type = message.type as "SNAPSHOT_META" | "SNAPSHOT_CHUNK" | "SNAPSHOT_DONE";
+          const handlers = this.messageHandlers.get(type as any);
+          if (handlers && handlers.size > 0) {
+            for (const handler of handlers) {
+              handler(message, "signal-server");
+            }
+          } else {
+            logger.debug(`[Phase 48] No handlers registered for ${type} (ok if relying on pure P2P)`);
+          }
+        }
+        break;
 
       default:
         logger.warn("Unknown signaling message type:", message.type);

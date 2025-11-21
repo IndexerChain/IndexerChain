@@ -586,6 +586,31 @@ export async function appendMinedBlock(
       } catch (error) {
         // Don't fail block append if snapshot fails
       }
+      // Phase 50: Seed snapshot to signal server for bootstrap
+      try {
+        if (context.p2p && (context.p2p as any).sendToSignalServer) {
+          if (typeof localStorage !== "undefined") {
+            const key = `indexerchain_snapshot_v1_${height}`;
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const meta = { id: `snap_${String(height).padStart(7, "0")}`, height, createdAt: Date.now(), version: 1 };
+              // Prefer metadata from snapshot module if available
+              try {
+                const { loadAllSnapshotMeta } = await import("./snapshot.js");
+                const allMetas = loadAllSnapshotMeta();
+                const m = allMetas.find((x: any) => x.height === height);
+                if (m) {
+                  (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta: m, data: JSON.parse(raw).data || JSON.parse(raw).delta || null });
+                } else {
+                  (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta, data: JSON.parse(raw).data || JSON.parse(raw).delta || null });
+                }
+              } catch {
+                (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta, data: JSON.parse(raw).data || JSON.parse(raw).delta || null });
+              }
+            }
+          }
+        }
+      } catch {}
     }
 
     // Phase 10: Auto-prune old blocks (light node mode)
