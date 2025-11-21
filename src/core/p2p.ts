@@ -853,21 +853,52 @@ export class BrowserP2PNode implements P2PNode {
         break;
       
       // Forward SNAPSHOT_* messages from signal server to handlers (Global Snapshot via signaling fallback)
-      case "SNAPSHOT_META":
-      case "SNAPSHOT_CHUNK":
-      case "SNAPSHOT_DONE":
-        {
-          const type = message.type as "SNAPSHOT_META" | "SNAPSHOT_CHUNK" | "SNAPSHOT_DONE";
-          const handlers = this.messageHandlers.get(type as any);
-          if (handlers && handlers.size > 0) {
-            for (const handler of handlers) {
-              handler(message, "signal-server");
-            }
-          } else {
-            logger.debug(`[Phase 48] No handlers registered for ${type} (ok if relying on pure P2P)`);
+      case "SNAPSHOT_META": {
+        const handlers = this.messageHandlers.get("SNAPSHOT_META" as any);
+        if (handlers && handlers.size > 0) {
+          for (const handler of handlers) {
+            handler(message, "signal-server");
           }
+        } else {
+          logger.debug(`[Phase 48] No handlers registered for SNAPSHOT_META (ok if relying on pure P2P)`);
         }
         break;
+      }
+      case "SNAPSHOT_CHUNK": {
+        // Transform base64 chunk from signal server into Uint8Array expected by downloader
+        let transformed = message;
+        try {
+          const dataField = (message as any)?.data;
+          if (typeof dataField === "string" && typeof atob === "function") {
+            const bin = atob(dataField);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            transformed = { ...message, data: bytes };
+          }
+        } catch {
+          // keep original on failure
+        }
+        const handlers = this.messageHandlers.get("SNAPSHOT_CHUNK" as any);
+        if (handlers && handlers.size > 0) {
+          for (const handler of handlers) {
+            handler(transformed, "signal-server");
+          }
+        } else {
+          logger.debug(`[Phase 48] No handlers registered for SNAPSHOT_CHUNK (ok if relying on pure P2P)`);
+        }
+        break;
+      }
+      case "SNAPSHOT_DONE": {
+        const handlers = this.messageHandlers.get("SNAPSHOT_DONE" as any);
+        if (handlers && handlers.size > 0) {
+          for (const handler of handlers) {
+            handler(message, "signal-server");
+          }
+        } else {
+          logger.debug(`[Phase 48] No handlers registered for SNAPSHOT_DONE (ok if relying on pure P2P)`);
+        }
+        break;
+      }
 
       default:
         logger.warn("Unknown signaling message type:", message.type);

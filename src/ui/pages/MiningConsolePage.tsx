@@ -503,6 +503,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 }
                             }
                         }
+                        // Also request snapshot meta from signaling (WS path)
+                        const target = Math.max(1, (network - 1));
+                        p2p.sendToSignalServer?.("REQUEST_SNAPSHOT_META", { targetHeight: target });
                     } catch {}
                     // 如果全局有 snapshotDownloader，则直接进行一次下载尝试（不等统一管理器）
                     try {
@@ -515,6 +518,13 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 const best = metas
                                   .filter((m: any) => m.height && m.height <= target)
                                   .sort((a: any, b: any) => b.height - a.height)[0] || metas[0];
+                                // Ask signaling to stream snapshot chunks as well (WS), in parallel with P2P
+                                try {
+                                    p2p.sendToSignalServer?.("REQUEST_SNAPSHOT", {
+                                        height: best.height,
+                                        snapshotId: String(best.height),
+                                    });
+                                } catch {}
                                 await sd.downloadSnapshot(best, {}, (_p: any) => {});
                             }
                         }
