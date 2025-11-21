@@ -4652,6 +4652,25 @@ function App() {
 
               // Don't update chainContext here - let the useEffect handle it
               setError("");
+
+              // NEW: Seed signal server with canonical block to help bootstrap new nodes
+              try {
+                const payload = {
+                  type: "UPDATE_ROOT_TIP",
+                  payload: {
+                    latestHeight: foundBlock.header.height,
+                    latestHeader: foundBlock.header,
+                    latestHeaderHash: foundBlock.hash,
+                    canonicalBlock: foundBlock,
+                    stateCommitment: foundBlock.header.stateCommitment,
+                    recentHeaders: undefined,
+                  },
+                };
+                const p2p = p2pNodeRef.current;
+                p2p?.sendToSignalServer?.("UPDATE_ROOT_TIP", payload.payload);
+              } catch (e) {
+                // ignore
+              }
             } else {
               // Phase 30: Record rejected block
               try {

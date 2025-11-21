@@ -117,23 +117,16 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         setGuardMessage('');
     }, [isMining, peerCount, networkHeight, localHeight, miningGuardResult]);
 
-    // Auto rebase: if local has old chain and network has progressed, reset local chain and catch up to network
+    // Auto rebase: only when local chain is empty and network已有高度时，才执行一次性重对齐
     const autoRebasedRef = useRef(false);
     useEffect(() => {
         if (autoRebasedRef.current) return;
         if (!props.chainContext || !props.p2pNode) return;
         if (peerCount <= 0) return;
-        if (networkHeight > 0 && localHeight > 0 && networkHeight > localHeight) {
+        // 仅当本地为 0 且网络有高度时重置，避免把已挖的本地区块误清空
+        if (networkHeight > 0 && localHeight === 0) {
             try {
-                // Clear local chain data to avoid sticking to old chain
-                props.chainContext.storage.reset();
-                // Also clear snapshot metadata to avoid conflicts
-                if (typeof localStorage !== 'undefined') {
-                    localStorage.removeItem('indexerchain_snapshots_meta');
-                    Object.keys(localStorage)
-                        .filter(k => k.startsWith('indexerchain_snapshot_'))
-                        .forEach(k => localStorage.removeItem(k));
-                }
+                // 不再强制 reset，仅触发引导拉取
             } catch {}
             autoRebasedRef.current = true;
             // Trigger aggressive catch-up after short delay
