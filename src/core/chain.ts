@@ -326,10 +326,34 @@ export async function getDefaultChainParams(): Promise<ChainParams> {
   // Phase 30: Check if we should use mainnet params
   // In production, this should default to mainnet
   // For development, you can set MAINNET_MODE=false in environment
-  const useMainnet = typeof window !== "undefined" && 
-    (window.location.hostname === "indexerchain.com" || 
-     window.location.hostname === "www.indexerchain.com" ||
-     localStorage.getItem("indexerchain_force_mainnet") === "true");
+  let useMainnet = false;
+  if (typeof window !== "undefined") {
+    try {
+      // Hostname rule
+      if (window.location.hostname === "indexerchain.com" || window.location.hostname === "www.indexerchain.com") {
+        useMainnet = true;
+      }
+      // Explicit flag
+      if (!useMainnet && localStorage.getItem("indexerchain_force_mainnet") === "true") {
+        useMainnet = true;
+      }
+      // Bootstrap URL rule: if persisted bootstrapUrl points to signal.indexerchain.com, force mainnet
+      if (!useMainnet) {
+        const saved = localStorage.getItem("indexerchain_app_state");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const url: string | undefined = parsed?.bootstrapUrl;
+            if (typeof url === "string" && url.includes("signal.indexerchain.com")) {
+              useMainnet = true;
+              // Persist explicit flag for subsequent loads
+              localStorage.setItem("indexerchain_force_mainnet", "true");
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
   
   if (useMainnet) {
     const { MAINNET_PARAMS } = await import("./networkParams.js");
