@@ -4,6 +4,57 @@ import { ChainContext } from '../../core/chain';
 import { MinerClient } from '../../core/minerClient';
 import styles from '../../features/miner-dashboard/styles/miner-console.module.css';
 
+// Mining Guard card - memoized to avoid refresh; only changes on explicit prop changes (clicks)
+const MiningGuardCard = React.memo((props: {
+    displayMining: boolean;
+    guardMessage: string;
+    autoMining: boolean;
+    onToggleMining: () => void;
+    onToggleAutoMining: (checked: boolean) => void;
+}) => {
+    const { displayMining, guardMessage, autoMining, onToggleMining, onToggleAutoMining } = props;
+    return (
+        <div className={`${styles.card} ${styles.controlCard}`}>
+            <h3>挖矿控制与状态 (Mining Guard)</h3>
+            <div className={styles.controlCardTop}>
+                <button
+                    id="toggle-mining"
+                    className={`${styles.btn} ${displayMining ? styles.btnDanger : styles.btnStart}`}
+                    onClick={onToggleMining}
+                    title={guardMessage || ''}
+                >
+                    {displayMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
+                </button>
+                <div id="mining-status-badge" className={`${styles.miningStatusBadge} ${displayMining ? styles.statusReady : styles.statusSyncing}`}>
+                    {displayMining ? '✅ Active Mining' : '✅ Synced / Waiting'}
+                </div>
+            </div>
+            <div
+                id="error-alert"
+                className={styles.errorAlert}
+                style={{ display: !displayMining && guardMessage ? 'block' : 'none' }}
+            >
+                {guardMessage}
+            </div>
+            <div style={{ marginTop: 10 }}>
+                <input
+                    type="checkbox"
+                    id="auto-mining-toggle"
+                    checked={autoMining}
+                    onChange={(e) => onToggleAutoMining(e.target.checked)}
+                />
+                <label htmlFor="auto-mining-toggle" style={{ fontSize: '0.9em', marginLeft: 8 }}>
+                    Auto-Mining Toggle (链就绪时自动开始)
+                </label>
+            </div>
+        </div>
+    );
+}, (prev, next) => (
+    prev.displayMining === next.displayMining &&
+    prev.autoMining === next.autoMining &&
+    prev.guardMessage === next.guardMessage
+));
+
 interface MiningConsolePageProps {
     chainContext: ChainContext | null;
     minerClient: MinerClient;
@@ -44,7 +95,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         peerCount,
         blocks,
         isLiveFeedActive: hookIsLiveFeedActive,
-        syncRate,
         effectiveWeight,
         projectedReward,
         onlineScore,
@@ -77,7 +127,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
     }, [hookIsLiveFeedActive]);
 
-    const isCatchingUp = status === 'CatchingUp' || status === 'Syncing';
     const isMining = status === 'Mining';
 
     // Auto-start mining when ready and autoMining enabled
@@ -274,14 +323,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
     };
 
-    const getSyncMode = () => {
-        const diff = networkHeight - localHeight;
-        if (diff > 1000) return 'Warp Sync';
-        if (diff > 100) return 'Chunk Sync';
-        if (diff > 0) return 'FastSync500';
-        return 'Synced';
-    };
-
     // Smooth visual state for mining button to avoid flicker during auto restarts
     const [displayMining, setDisplayMining] = useState<boolean>(false);
     const lastOkTsRef = useRef<number>(0);
@@ -305,21 +346,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
     }, [isMining, autoMining, miningGuardResult?.ok, peerCount, localHeight, networkHeight]);
 
-    const getStatusBadgeText = () => {
-        if (displayMining) return '✅ Active Mining';
-        if (isCatchingUp) {
-            const diff = networkHeight - localHeight;
-            return `Catching Up (${diff.toFixed(0)})`;
-        }
-        return '✅ Synced / Waiting';
-    };
-
-    const getStatusBadgeClass = () => {
-        if (displayMining) return styles.statusReady;
-        if (isCatchingUp) return styles.statusSyncing;
-        return styles.statusReady;
-    };
-    
     // One-click Catch-up: aggressively request missing blocks
     const handleCatchUp = async () => {
         const { chainContext, p2pNode } = props;
@@ -496,72 +522,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         <div className={styles.dashboardGrid}>
                             {/* Left Panel */}
                             <div className={styles.leftPanel}>
-                                {/* Control Card */}
-                                <div className={`${styles.card} ${styles.controlCard}`}>
-                                    <h3>挖矿控制与状态 (Mining Guard)</h3>
-
-                                    <div className={styles.controlCardTop}>
-                                        <button
-                                            id="toggle-mining"
-                                            className={`${styles.btn} ${isMining ? styles.btnDanger : styles.btnStart}`}
-                                            onClick={() => {
-                                                // Optimistic UI update for immediate feedback
-                                                setDisplayMining(prev => !prev);
-                                                toggleMining();
-                                            }}
-                                            disabled={miningGuardResult?.code === 'NOT_ACTIVE_MINER'}
-                                            title={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? '同一设备/浏览器仅允许一个活动矿工会话' : (guardMessage || '')}
-                                        >
-                                            {displayMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
-                                        </button>
-
-                                        <div id="mining-status-badge" className={`${styles.miningStatusBadge} ${getStatusBadgeClass()}`}>
-                                            {isCatchingUp && <span className={styles.spinner}>⏳</span>}
-                                            {getStatusBadgeText()}
-                                        </div>
-                                    </div>
-
-                                    <div
-                                      id="error-alert"
-                                      className={styles.errorAlert}
-                                      style={{ display: !isMining && guardMessage ? 'block' : 'none' }}
-                                    >
-                                      {guardMessage}
-                                    </div>
-
-                                    <div style={{ marginTop: 10 }}>
-                                        <input 
-                                            type="checkbox" 
-                                            id="auto-mining-toggle" 
-                                            checked={autoMining}
-                                            onChange={(e) => setAutoMining(e.target.checked)}
-                                        />
-                                        <label htmlFor="auto-mining-toggle" style={{ fontSize: '0.9em', marginLeft: 8 }}>
-                                            Auto-Mining Toggle (链就绪时自动开始)
-                                        </label>
-                                    </div>
-
-                                    <button 
-                                        id="catch-up-btn" 
-                                        className={styles.btn}
-                                        style={{ 
-                                            background: '#58a6ff', 
-                                            color: 'white',
-                                            marginTop: 15,
-                                            width: '100%'
-                                        }}
-                                        disabled={!isCatchingUp || peerCount <= 0}
-                                        onClick={handleCatchUp}
-                                    >
-                                        {isCatchingUp ? `Catching Up (${(networkHeight - localHeight).toFixed(0)} blocks left)` : 'Synced'}
-                                    </button>
-
-                                    {/* Secondary force-start button removed to avoid confusion */}
-
-                                    <p style={{ fontSize: '0.8em', color: '#58a6ff', marginTop: 5 }}>
-                                        Sync Mode: <span id="sync-mode">{getSyncMode()}</span> | Rate: <span id="sync-rate">{syncRate > 0 ? `${syncRate.toFixed(1)} blocks/s` : '-- blocks/s'}</span>
-                                    </p>
-                                </div>
+                                {/* Control Card - memoized, no refresh */}
+                                <MiningGuardCard
+                                    displayMining={displayMining}
+                                    guardMessage={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? '⚠️ 同一设备/浏览器仅允许一个活动矿工会话' : guardMessage}
+                                    autoMining={autoMining}
+                                    onToggleMining={() => { setDisplayMining(prev => !prev); toggleMining(); }}
+                                    onToggleAutoMining={setAutoMining}
+                                />
 
                                 {/* Slot Card */}
                                 <div className={`${styles.card} ${styles.slotCard}`}>
