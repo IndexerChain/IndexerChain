@@ -69,7 +69,14 @@ interface MiningConsolePageProps {
 
 export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     const [activePage, setActivePage] = useState<'mining' | 'wallet'>('mining');
-    const [autoMining, setAutoMining] = useState(true);
+    const [autoMining, setAutoMining] = useState<boolean>(() => {
+        try {
+            const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_auto_mining') : null;
+            if (saved === '1') return true;
+            if (saved === '0') return false;
+        } catch {}
+        return true;
+    });
     const [isLiveFeedActive, setIsLiveFeedActive] = useState(true);
 
     // Override body background when Console is active
@@ -142,6 +149,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         setDisplayMining(isMining || autoMining);
     }, [autoMining, isMining]);
 
+    // Persist auto-mining toggle across refresh
+    useEffect(() => {
+        try {
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('indexer_auto_mining', autoMining ? '1' : '0');
+            }
+        } catch {}
+    }, [autoMining]);
     const handleToggleLiveFeed = () => {
         const newState = !isLiveFeedActive;
         setIsLiveFeedActive(newState);
@@ -505,15 +520,15 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             
                             <div className={styles.balanceInfo}>
                                 <span className={styles.balanceLabel}>Current Balance (IDC):</span>
-                                <span className={styles.balanceAmount} id="current-balance">{balance.toFixed(2)}</span>
+                                <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance">{balance.toFixed(2)}</span>
                             </div>
                         </div>
 
                         {/* Address Bar */}
                         <div className={styles.addressBar}>
                             <span>
-                                Local Height: <span className={styles.dataValue} id="local-height-bar">{localHeight.toLocaleString()}</span> | 
-                                Network Height: <span className={styles.dataValue} id="network-height-bar">{networkHeight.toLocaleString()}</span> | 
+                                Local Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar">{localHeight.toLocaleString()}</span> | 
+                                Network Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar">{networkHeight.toLocaleString()}</span> | 
                                 Peers: <span className={styles.dataValue} id="peer-count-bar">{peerCount}</span>
                             </span>
                         </div>
@@ -537,7 +552,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     
                                     <p>
                                         <span className={styles.dataLabel}>当前 Epoch / Slot:</span> 
-                                        <span className={styles.dataValue} id="current-epoch">E: {currentEpoch}</span> / <span className={styles.dataValue} id="current-slot">S: {currentSlot}</span>
+                                        <span className={`${styles.dataValue} ${styles.numeric}`} id="current-epoch">E: {currentEpoch}</span> / <span className={`${styles.dataValue} ${styles.numeric}`} id="current-slot">S: {currentSlot}</span>
                                     </p>
                                     
                                     <p>
@@ -564,11 +579,11 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     
                                     <p>
                                         <span className={styles.dataLabel}>我的有效权重:</span> 
-                                        <span className={styles.dataValueLg} id="effective-weight">{effectiveWeight.toFixed(2)}</span>
+                                        <span className={`${styles.dataValueLg} ${styles.numeric}`} id="effective-weight">{effectiveWeight.toFixed(2)}</span>
                                     </p>
                                     <p>
                                         <span className={styles.dataLabel}>预估日奖励 (IDC):</span> 
-                                        <span className={styles.dataValue} id="projected-reward">≈ {projectedReward.toFixed(2)} IDC</span>
+                                        <span className={`${styles.dataValue} ${styles.numeric}`} id="projected-reward">≈ {projectedReward.toFixed(2)} IDC</span>
                                     </p>
                                     <hr style={{ border: 0, borderTop: '1px solid #30363d', margin: '15px 0' }} />
                                     
