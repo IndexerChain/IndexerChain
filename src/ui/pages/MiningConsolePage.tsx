@@ -504,18 +504,43 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return () => clearInterval(retry);
     }, [props.chainContext, props.p2pNode, peerCount]);
 
-    // Force warp/snapshot sync when far behind; persist flags across re-renders
+    // Force warp/snapshot sync when far behind; persist flags across re-renders and auto-repair if stuck
     useEffect(() => {
         const ctx = props.chainContext as any;
         const p2p = props.p2pNode as any;
         if (!ctx || !p2p) return;
         const triggeredRef = { current: false };
+        const lastHeightRef = { h: 0, t: Date.now() };
         const tick = async () => {
             try {
                 const local = ctx.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
                 // If we're far behind, consider warp even if availableFrom is low (e.g., 1)
                 const FAR_BEHIND = 500; // threshold to trigger snapshot warp
+                // One-time auto-repair: if stuck for >20s and gap >= 2000, clear local chain to resolve fork lock
+                try {
+                    const now = Date.now();
+                    if (local !== lastHeightRef.h) {
+                        lastHeightRef.h = local;
+                        lastHeightRef.t = now;
+                    } else if (network > 0 && network - local >= 2000 && now - lastHeightRef.t > 20000) {
+                        if (!(window as any).__ixc_auto_repair_done__) {
+                            (window as any).__ixc_auto_repair_done__ = true;
+                            try { ctx.storage.reset(); } catch {}
+                            try { 
+                                if (typeof localStorage !== "undefined") {
+                                    localStorage.removeItem("indexerchain_blocks_v1");
+                                    localStorage.removeItem("indexerchain_snapshots_meta_v1");
+                                    for (const k of Object.keys(localStorage)) {
+                                        if (k.startsWith("indexerchain_snapshot_v1_")) localStorage.removeItem(k);
+                                    }
+                                }
+                            } catch {}
+                            setTimeout(() => window.location.reload(), 50);
+                            return;
+                        }
+                    }
+                } catch {}
                 if (!triggeredRef.current && network > 0 && (network - local >= FAR_BEHIND)) {
                     triggeredRef.current = true;
                     // Ask peers for snapshot meta around target near tip
