@@ -899,6 +899,28 @@ export class BrowserP2PNode implements P2PNode {
         }
         break;
       }
+      case "STATE_ROOT": {
+        const handlers = this.messageHandlers.get("STATE_ROOT" as any);
+        if (handlers && handlers.size > 0) {
+          for (const handler of handlers) {
+            handler(message, "signal-server");
+          }
+        } else {
+          logger.debug(`[LightNode] No handlers registered for STATE_ROOT`);
+        }
+        break;
+      }
+      case "BALANCE_PROOF": {
+        const handlers = this.messageHandlers.get("BALANCE_PROOF" as any);
+        if (handlers && handlers.size > 0) {
+          for (const handler of handlers) {
+            handler(message, "signal-server");
+          }
+        } else {
+          logger.debug(`[LightNode] No handlers registered for BALANCE_PROOF`);
+        }
+        break;
+      }
 
       default:
         logger.warn("Unknown signaling message type:", message.type);

@@ -944,6 +944,115 @@ export class SignalingRoom {
           } catch (error) {
             server.send(JSON.stringify({ type: 'SNAPSHOT_DONE', snapshotId: String(data.snapshotId || data.height || '') }));
           }
+        } else if (data.type === 'REQUEST_STATE_ROOT') {
+          // Returns a balances stateRoot (derived from latest available snapshot <= targetHeight)
+          try {
+            const target = typeof data.targetHeight === 'number' ? data.targetHeight : Number.MAX_SAFE_INTEGER;
+            const list = (await this.state.storage.get('snapshotsIndex')) || this.snapshotsIndex || [];
+            const metas = (Array.isArray(list) ? list : []).filter((m) => (m?.height || 0) <= target);
+            if (metas.length === 0) {
+              server.send(JSON.stringify({ type: 'STATE_ROOT', ok: false, reason: 'NO_SNAPSHOT' }));
+              return;
+            }
+            const best = metas[metas.length - 1];
+            const snap = await this.state.storage.get(`snapshot:${best.height}`);
+            if (!snap || !snap.data) {
+              server.send(JSON.stringify({ type: 'STATE_ROOT', ok: false, reason: 'SNAPSHOT_MISSING' }));
+              return;
+            }
+            // Try to decode snapshot JSON (base64 -> json). If compressed binary, this may fail.
+            let snapshotJson = null;
+            try {
+              const jsonStr = atob(snap.data);
+              snapshotJson = JSON.parse(jsonStr);
+            } catch (e) {
+              snapshotJson = null;
+            }
+            if (!snapshotJson || !snapshotJson.indexState || !snapshotJson.indexState.data || !snapshotJson.indexState.data.balances) {
+              // Fallback to meta stateCommitment if provided
+              const stateRoot = best.stateHash || best.stateCommitment || null;
+              server.send(JSON.stringify({ type: 'STATE_ROOT', ok: !!stateRoot, root: stateRoot, height: best.height }));
+              return;
+            }
+            const balances = snapshotJson.indexState.data.balances || {};
+            // Compute a simple "balances root" by hashing sorted entries (server-side mirror of light proof root)
+            // root = sha256(fold(sorted([addr:bal] as sha256(`leaf|addr|bal`))))
+            const entries = Object.entries(balances).filter(([_, v]) => String(v) !== '0');
+            entries.sort((a, b) => a[0].localeCompare(b[0]));
+            async function sha256(str){const buf=new TextEncoder().encode(str);const h=await crypto.subtle.digest('SHA-256',buf);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+            let acc = await sha256("0x00".repeat(1));
+            for (const [addr, bal] of entries) {
+              const leaf = await sha256(`leaf|${addr}|${String(bal)}`);
+              const min = acc < leaf ? acc : leaf;
+              const max = acc < leaf ? leaf : acc;
+              acc = await sha256(min + max);
+            }
+            server.send(JSON.stringify({ type: 'STATE_ROOT', ok: true, root: acc, height: best.height }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'STATE_ROOT', ok: false, reason: 'INTERNAL_ERROR' }));
+          }
+        } else if (data.type === 'REQUEST_BALANCE_PROOF') {
+          // Returns a minimal balance proof for an address at latest snapshot <= targetHeight
+          try {
+            const address = data.address;
+            if (!address || typeof address !== 'string') {
+              server.send(JSON.stringify({ type: 'BALANCE_PROOF', ok: false, reason: 'INVALID_ADDRESS' }));
+              return;
+            }
+            const target = typeof data.targetHeight === 'number' ? data.targetHeight : Number.MAX_SAFE_INTEGER;
+            const list = (await this.state.storage.get('snapshotsIndex')) || this.snapshotsIndex || [];
+            const metas = (Array.isArray(list) ? list : []).filter((m) => (m?.height || 0) <= target);
+            if (metas.length === 0) {
+              server.send(JSON.stringify({ type: 'BALANCE_PROOF', ok: false, reason: 'NO_SNAPSHOT' }));
+              return;
+            }
+            const best = metas[metas.length - 1];
+            const snap = await this.state.storage.get(`snapshot:${best.height}`);
+            if (!snap || !snap.data) {
+              server.send(JSON.stringify({ type: 'BALANCE_PROOF', ok: false, reason: 'SNAPSHOT_MISSING' }));
+              return;
+            }
+            let snapshotJson = null;
+            try {
+              const jsonStr = atob(snap.data);
+              snapshotJson = JSON.parse(jsonStr);
+            } catch (e) {
+              snapshotJson = null;
+            }
+            if (!snapshotJson || !snapshotJson.indexState || !snapshotJson.indexState.data || !snapshotJson.indexState.data.balances) {
+              server.send(JSON.stringify({ type: 'BALANCE_PROOF', ok: false, reason: 'SNAPSHOT_UNAVAILABLE' }));
+              return;
+            }
+            const balances = snapshotJson.indexState.data.balances || {};
+            const value = String(balances[address] ?? "0");
+            // Provide a lightweight proof object compatible with client verifier (smt-sha256-v1 shape)
+            // For now, siblings are omitted (default zeros), client computes same default tree; root returned separately.
+            async function sha256(str){const buf=new TextEncoder().encode(str);const h=await crypto.subtle.digest('SHA-256',buf);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+            const keyHash = await sha256(address);
+            const siblings = []; // implicit zeros
+            const depth = 256;
+            // Compute root mirror (must match STATE_ROOT for consistency)
+            const entries = Object.entries(balances).filter(([_, v]) => String(v) !== '0');
+            entries.sort((a, b) => a[0].localeCompare(b[0]));
+            let acc = await sha256("0x00".repeat(1));
+            for (const [addr, bal] of entries) {
+              const leaf = await sha256(`leaf|${addr}|${String(bal)}`);
+              const min = acc < leaf ? acc : leaf;
+              const max = acc < leaf ? leaf : acc;
+              acc = await sha256(min + max);
+            }
+            server.send(JSON.stringify({
+              type: 'BALANCE_PROOF',
+              ok: true,
+              height: best.height,
+              root: acc,
+              address,
+              value,
+              proof: { algorithm: 'smt-sha256-v1', keyHash, value, siblings, depth }
+            }));
+          } catch (error) {
+            server.send(JSON.stringify({ type: 'BALANCE_PROOF', ok: false, reason: 'INTERNAL_ERROR' }));
+          }
         } else if (data.type === 'GLOBAL_VIEW_REQUEST') {
           // Respond with a minimal global view from signal server (fallback when peers unavailable)
           const resp = {

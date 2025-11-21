@@ -95,6 +95,7 @@ import "./index.css";
 import { WalletSummaryCard } from "./wallet/WalletSummaryCard.js";
 import { LiveBlockFeed } from "./components/LiveBlockFeed.js";
 import { MiningConsolePage } from "./pages/MiningConsolePage.js";
+import { MobileMinerPage } from "./pages/MobileMinerPage.js";
 
 /**
  * Main App Component
@@ -4988,24 +4989,43 @@ function App() {
 
   // Console Page - Full Screen Override (completely separate from main app)
   if (activeTab === "console") {
+    // Detect mobile (simple width-based detection)
+    const isMobile = typeof window !== "undefined" ? window.innerWidth <= 768 : false;
     return (
-      <MiningConsolePage
-        chainContext={chainContext}
-        minerClient={minerClient}
-        nodeAddress={nodeAddress}
-        isMining={isMining}
-        onToggleMining={() => {
-          if (isMining) {
-            handleStopMining();
-          } else {
-            handleStartMining();
-          }
-        }}
-        p2pNode={chainContext?.p2p || null}
-        finalityManager={finalityManager}
-        localRole={localRole}
-        bootstrapComplete={bootstrapComplete}
-      />
+      isMobile ? (
+        <MobileMinerPage
+          chainContext={chainContext}
+          minerClient={minerClient}
+          nodeAddress={nodeAddress}
+          isMining={isMining}
+          onToggleMining={() => {
+            if (isMining) {
+              handleStopMining();
+            } else {
+              handleStartMining();
+            }
+          }}
+          p2pNode={chainContext?.p2p || null}
+        />
+      ) : (
+        <MiningConsolePage
+          chainContext={chainContext}
+          minerClient={minerClient}
+          nodeAddress={nodeAddress}
+          isMining={isMining}
+          onToggleMining={() => {
+            if (isMining) {
+              handleStopMining();
+            } else {
+              handleStartMining();
+            }
+          }}
+          p2pNode={chainContext?.p2p || null}
+          finalityManager={finalityManager}
+          localRole={localRole}
+          bootstrapComplete={bootstrapComplete}
+        />
+      )
     );
   }
 

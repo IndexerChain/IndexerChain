@@ -77,6 +77,13 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         } catch {}
         return true;
     });
+    const [nodeMode, setNodeMode] = useState<'full' | 'light'>(() => {
+        try {
+            const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_node_mode') : null;
+            if (saved === 'light' || saved === 'full') return saved as any;
+        } catch {}
+        return 'full';
+    });
     const [isLiveFeedActive, setIsLiveFeedActive] = useState(true);
 
     // Override body background when Console is active
@@ -126,6 +133,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
 
     // Show guard reason / user feedback
     const [guardMessage, setGuardMessage] = useState<string>("");
+    const [lightVerifiedBalance, setLightVerifiedBalance] = useState<number | null>(null);
 
     // Sync local state with hook state
     useEffect(() => {
@@ -161,6 +169,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             }
         } catch {}
     }, [autoMining]);
+    // Persist node mode across refresh
+    useEffect(() => {
+        try {
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('indexer_node_mode', nodeMode);
+            }
+        } catch {}
+    }, [nodeMode]);
     const handleToggleLiveFeed = () => {
         const newState = !isLiveFeedActive;
         setIsLiveFeedActive(newState);
@@ -193,6 +209,49 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         setGuardMessage('');
     }, [isMining, peerCount, networkHeight, localHeight, miningGuardResult]);
 
+    // Light node: request state root and balance proof and verify
+    useEffect(() => {
+        if (nodeMode !== 'light') return;
+        if (!props.p2pNode || !props.nodeAddress) return;
+        const p2p = props.p2pNode as any;
+        let latestRoot: string | null = null;
+        let latestHeight = 0;
+        const onRoot = (msg: any) => {
+            if (msg?.type === 'STATE_ROOT' && msg.ok) {
+                latestRoot = String(msg.root || '');
+                latestHeight = Number(msg.height || 0) || latestHeight;
+            }
+        };
+        const onProof = async (msg: any) => {
+            if (msg?.type !== 'BALANCE_PROOF' || !msg.ok) return;
+            try {
+                const { verifyBalanceProof } = await import('../../core/stateTree.js');
+                const root = String(msg.root || latestRoot || '');
+                const address = String(msg.address || props.nodeAddress);
+                const valueStr = String(msg.value || '0');
+                const ok = root && await verifyBalanceProof(root, address, valueStr, msg.proof);
+                if (ok) {
+                    const val = Number(valueStr);
+                    if (Number.isFinite(val)) {
+                        setLightVerifiedBalance(val);
+                    }
+                }
+            } catch {}
+        };
+        try { p2p.onMessage?.('STATE_ROOT' as any, onRoot); } catch {}
+        try { p2p.onMessage?.('BALANCE_PROOF' as any, onProof); } catch {}
+        const timer = setInterval(() => {
+            try {
+                const tip = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+                const target = Math.max(1, Number(tip) || 1);
+                p2p.sendToSignalServer?.('REQUEST_STATE_ROOT', { targetHeight: target });
+                if (props.nodeAddress) {
+                    p2p.sendToSignalServer?.('REQUEST_BALANCE_PROOF', { address: props.nodeAddress, targetHeight: target });
+                }
+            } catch {}
+        }, 1500);
+        return () => clearInterval(timer);
+    }, [nodeMode, props.p2pNode, props.nodeAddress]);
     // Auto rebase: only when local chain is empty and network已有高度时，才执行一次性重对齐
     const autoRebasedRef = useRef(false);
     useEffect(() => {
@@ -435,6 +494,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     useEffect(() => {
         const { chainContext, p2pNode } = props;
         if (!chainContext || !p2pNode) return;
+        if (nodeMode === 'light') return; // Light node: skip block downloads
         const retry = setInterval(() => {
             try {
                 const local = chainContext.storage.getTip()?.header.height || 0;
@@ -486,13 +546,15 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             } catch {}
         }, 1000);
         return () => clearInterval(retry);
-    }, [props.chainContext, props.p2pNode]); // Removed peerCount dependency - sync works via signal server even with 0 peers
+    }, [props.chainContext, props.p2pNode, nodeMode]); // Removed peerCount dependency - sync works via signal server even with 0 peers
 
     // Force warp/snapshot sync when far behind; persist flags across re-renders and auto-repair if stuck
     useEffect(() => {
         const ctx = props.chainContext as any;
         const p2p = props.p2pNode as any;
         if (!ctx || !p2p) return;
+        // Light node: allow warp/snapshot when mining以便具备最新状态出块
+        if (nodeMode === 'light' && status !== 'Mining') return;
         const triggeredRef = { current: false };
         const tick = async () => {
             try {
@@ -713,7 +775,21 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             
                             <div className={styles.balanceInfo}>
                                 <span className={styles.balanceLabel}>Current Balance (IDC):</span>
-                                <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance">{balance.toFixed(2)}</span>
+                                <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance">
+                                    {(nodeMode === 'light' && lightVerifiedBalance !== null ? lightVerifiedBalance : balance).toFixed(2)}
+                                </span>
+                            </div>
+                            
+                            <div className={styles.balanceInfo} style={{ gap: 8 }}>
+                                <span className={styles.balanceLabel}>Node Mode:</span>
+                                <select
+                                    value={nodeMode}
+                                    onChange={(e) => setNodeMode(e.target.value as any)}
+                                    style={{ background: '#161b22', color: '#c9d1d9', border: '1px solid #30363d', borderRadius: 6, padding: '4px 8px' }}
+                                >
+                                    <option value="full">Full/Pruned</option>
+                                    <option value="light">Light (Header+Proof)</option>
+                                </select>
                             </div>
                         </div>
 

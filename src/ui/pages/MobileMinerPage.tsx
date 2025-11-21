@@ -1,0 +1,185 @@
+import React, { useEffect, useMemo, useState } from 'react';
+
+interface MobileMinerPageProps {
+  chainContext: any;
+  minerClient: any;
+  nodeAddress: string | null;
+  isMining: boolean;
+  onToggleMining: () => void;
+  p2pNode: any;
+}
+
+export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
+  const [autoMining, setAutoMining] = useState<boolean>(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_auto_mining') : null;
+      if (saved === '1') return true;
+      if (saved === '0') return false;
+    } catch {}
+    return true;
+  });
+  const [balanceVerified, setBalanceVerified] = useState<number | null>(null);
+  const address = props.nodeAddress || '';
+  const shortAddr = useMemo(() => address ? `${address.slice(0, 10)}...${address.slice(-6)}` : '' , [address]);
+
+  // Force light node mode on mobile
+  useEffect(() => {
+    try {
+      localStorage.setItem('indexer_node_mode', 'light');
+    } catch {}
+  }, []);
+
+  // Persist auto-mining
+  useEffect(() => {
+    try {
+      localStorage.setItem('indexer_auto_mining', autoMining ? '1' : '0');
+    } catch {}
+  }, [autoMining]);
+
+  // Auto-start/stop based on autoMining
+  useEffect(() => {
+    if (!props.chainContext) return;
+    if (autoMining && !props.isMining) {
+      props.onToggleMining();
+    } else if (!autoMining && props.isMining) {
+      props.onToggleMining();
+    }
+  }, [autoMining, props.isMining, props.chainContext]);
+
+  // Light node: poll stateRoot + balance proof and verify locally
+  useEffect(() => {
+    const p2p = props.p2pNode;
+    if (!p2p || !props.nodeAddress) return;
+    let latestRoot: string | null = null;
+    let cleanup: any[] = [];
+
+    const onRoot = (msg: any) => {
+      if (msg?.type === 'STATE_ROOT' && msg.ok) {
+        latestRoot = String(msg.root || '');
+      }
+    };
+    const onProof = async (msg: any) => {
+      if (msg?.type !== 'BALANCE_PROOF' || !msg.ok) return;
+      try {
+        const { verifyBalanceProof } = await import('../../core/stateTree.js');
+        const root = String(msg.root || latestRoot || '');
+        const address = String(msg.address || props.nodeAddress);
+        const valueStr = String(msg.value || '0');
+        const ok = root && await verifyBalanceProof(root, address, valueStr, msg.proof);
+        if (ok) {
+          const val = Number(valueStr);
+          if (Number.isFinite(val)) setBalanceVerified(val);
+        }
+      } catch {}
+    };
+    try { p2p.onMessage?.('STATE_ROOT' as any, onRoot); cleanup.push(['STATE_ROOT', onRoot]); } catch {}
+    try { p2p.onMessage?.('BALANCE_PROOF' as any, onProof); cleanup.push(['BALANCE_PROOF', onProof]); } catch {}
+
+    const timer = setInterval(() => {
+      try {
+        const tip = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+        const target = Math.max(1, Number(tip) || 1);
+        p2p.sendToSignalServer?.('REQUEST_STATE_ROOT', { targetHeight: target });
+        p2p.sendToSignalServer?.('REQUEST_BALANCE_PROOF', { address: props.nodeAddress, targetHeight: target });
+      } catch {}
+    }, 1500);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [props.p2pNode, props.nodeAddress]);
+
+  // When mining in light mode, pull latest snapshot to have IndexState for block production
+  useEffect(() => {
+    const ctx = props.chainContext as any;
+    const p2p = props.p2pNode as any;
+    if (!ctx || !p2p) return;
+    if (!props.isMining) return;
+    let triggered = false;
+    const id = setInterval(async () => {
+      try {
+        const local = ctx.storage.getTip()?.header.height || 0;
+        const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+        if (!triggered && network > 0 && network - local >= 500) {
+          triggered = true;
+          const target = Math.max(1, network - 1);
+          p2p.sendToSignalServer?.('REQUEST_SNAPSHOT_META', { targetHeight: target });
+          const sd: any = (typeof window !== 'undefined' && (window as any).snapshotDownloader) || null;
+          if (sd) {
+            const metas = await sd.requestSnapshotMeta(target);
+            if (Array.isArray(metas) && metas.length > 0) {
+              const best = metas.filter((m:any)=>m.height && m.height<=target).sort((a:any,b:any)=>b.height-a.height)[0] || metas[0];
+              p2p.sendToSignalServer?.('REQUEST_SNAPSHOT', { height: best.height, snapshotId: String(best.height) });
+              const snapshotData: any = await sd.downloadSnapshot(best, {}, ()=>{});
+              try {
+                if (snapshotData && snapshotData.meta && typeof localStorage !== 'undefined') {
+                  const SNAPSHOT_DATA_PREFIX = 'indexerchain_snapshot_v1_';
+                  localStorage.setItem(`${SNAPSHOT_DATA_PREFIX}${snapshotData.meta.height}`, JSON.stringify(snapshotData));
+                  const { loadAllSnapshotMeta, saveAllSnapshotMeta } = await import('../../core/snapshot.js');
+                  const metas2 = loadAllSnapshotMeta().filter((m:any)=> m.height !== snapshotData.meta.height);
+                  metas2.push(snapshotData.meta);
+                  saveAllSnapshotMeta(metas2);
+                  (window as any).lastRootTipSnapshotMeta = snapshotData.meta;
+                  // Apply IndexState immediately
+                  try {
+                    const { IndexState } = await import('../../core/indexState.js');
+                    const restored = IndexState.fromSnapshot(snapshotData.indexState);
+                    const restoredInternal = (restored as any).getInternalState();
+                    const currentInternal = (ctx.indexState as any).getInternalState();
+                    currentInternal.clear();
+                    for (const [ns, kv] of restoredInternal) {
+                      const newMap = new Map(kv);
+                      currentInternal.set(ns, newMap);
+                    }
+                  } catch {}
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch {}
+    }, 1000);
+    return () => clearInterval(id);
+  }, [props.chainContext, props.p2pNode, props.isMining]);
+
+  const displayBalance = (balanceVerified ?? (props.chainContext?.indexState?.getBalance?.(address) || 0));
+
+  return (
+    <div style={{ background: '#0d1117', color: '#c9d1d9', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', padding: '16px', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontWeight: 700 }}>IndexerChain Mobile Miner</div>
+        <div style={{ fontSize: '12px', color: '#8b949e' }}>{shortAddr}</div>
+      </div>
+
+      <div style={{ marginTop: 24, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 16 }}>
+        <div style={{ fontSize: 12, color: '#8b949e' }}>Current Balance (IDC)</div>
+        <div style={{ fontSize: 28, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>{displayBalance.toFixed(2)}</div>
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 12 }}>
+        <label style={{ fontSize: 14 }}>Auto-Mining</label>
+        <input type="checkbox" checked={autoMining} onChange={(e) => setAutoMining(e.target.checked)} />
+      </div>
+
+      <div style={{ marginTop: 24, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <button
+          onClick={props.onToggleMining}
+          style={{
+            width: '100%',
+            maxWidth: 480,
+            padding: '18px 16px',
+            background: props.isMining ? '#da3633' : '#238636',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 14,
+            fontSize: 18,
+            fontWeight: 700
+          }}
+        >
+          {props.isMining ? '停止挖矿 (Stop)' : '启动挖矿 (Start)'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
