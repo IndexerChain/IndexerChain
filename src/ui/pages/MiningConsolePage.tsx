@@ -291,6 +291,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 try {
                     const list: any[] = Array.isArray(payload?.blocks) ? payload.blocks : [];
                     if (!ctx || list.length === 0) return;
+                    if (typeof payload?.availableFromHeight === 'number') {
+                        (window as any).lastAvailableFromHeight = payload.availableFromHeight;
+                    }
+                    if (typeof payload?.availableToHeight === 'number') {
+                        (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, payload.availableToHeight);
+                    }
                     // Append in ascending order
                     const sorted = list.slice().sort((a, b) => (a?.header?.height || 0) - (b?.header?.height || 0));
                     for (const b of sorted) {

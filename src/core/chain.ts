@@ -347,7 +347,7 @@ export async function getDefaultChainParams(): Promise<ChainParams> {
     blockReward: 10, // Phase 7: Block reward in IDC
     snapshotInterval: 50, // Phase 9: Create snapshot every 50 blocks
     maxSnapshotCount: 5, // Phase 9: Keep maximum 5 snapshots
-    lightNodeWindow: 200, // Phase 10: Keep only recent 200 blocks (light node mode)
+    lightNodeWindow: 0, // Keep all blocks by default so每个节点可全量重放
     fullSnapshotInterval: 5, // Phase 12: Create full snapshot every 5 snapshots
     maxBlockSizeBytes: 1_000_000,
     // Phase 13: Snapshot verification parameters
