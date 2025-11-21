@@ -677,8 +677,8 @@ export async function appendMinedBlock(
           // Snapshot not available, continue without it
         }
         
-        // Phase 37: Send UPDATE_ROOT_TIP to signal server (if LEADER and signal server available)
-        if (coordinator.getRole() === "LEADER" && (context.p2p as any).sendToSignalServer) {
+        // Phase 37: Send UPDATE_ROOT_TIP to signal server (allow on any instance to keep rootTip fresh)
+        if ((context.p2p as any).sendToSignalServer) {
           const updatePayload: any = {
             header: block.header,
             headerHash: block.hash,

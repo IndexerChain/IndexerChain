@@ -436,12 +436,15 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 const local = chainContext.storage.getTip()?.header.height || 0;
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
                 const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
-                if (peerCount > 0 && (network === 0 || local < network)) {
+                const snapshotFrom = (typeof window !== 'undefined' && (window as any).lastRootTipSnapshotMeta?.height + 1) || 0;
+                if (network === 0 || local < network) {
                     const step = 2000; // 更大的窗口，加速追赶
                     const nearWindow = 50000;
                     const fallbackFrom = Math.max(1, network > 0 ? (network - nearWindow + 1) : 1);
                     // 优先选择靠近 tip 的窗口；当 availableFrom 过小（如=1）时，自动回退到 near-tip
-                    const effectiveFrom = availableFrom > Math.max(local + 1, fallbackFrom) ? availableFrom : fallbackFrom;
+                    const baseFrom = Math.max(local + 1, fallbackFrom);
+                    const withAvail = availableFrom > baseFrom ? availableFrom : baseFrom;
+                    const effectiveFrom = snapshotFrom > withAvail ? snapshotFrom : withAvail;
                     const startFrom = Math.max(local + 1, effectiveFrom);
                     const target = Math.max(network > 0 ? network : (startFrom + step), startFrom + step);
                     // 1) 始终优先请求“顺序必需区间”：从 local+1 开始的一段，保证连续推进
@@ -526,6 +529,19 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     });
                                 } catch {}
                                 await sd.downloadSnapshot(best, {}, (_p: any) => {});
+                                // After snapshot download, immediately request blocks from snapshotHeight+1
+                                try {
+                                    const fromH = (best.height || 0) + 1;
+                                    if (fromH > 1) {
+                                        p2p.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: fromH, to: Math.max(fromH + 10000, network || fromH + 10000) });
+                                        p2p.broadcast?.("REQUEST_BLOCKS", { fromHeight: fromH, toHeight: (network || fromH + 5000) });
+                                    }
+                                    // Hint availableFrom for the retry loop
+                                    if (typeof window !== 'undefined') {
+                                        (window as any).lastAvailableFromHeight = Math.max((window as any).lastAvailableFromHeight || 0, fromH);
+                                        (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, network || fromH);
+                                    }
+                                } catch {}
                             }
                         }
                     } catch {}
