@@ -88,6 +88,11 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         }
     }, [autoMining, isMining, miningGuardResult?.ok]);
 
+    // Reflect autoMining immediately in button visual state
+    useEffect(() => {
+        setDisplayMining(isMining || autoMining);
+    }, [autoMining, isMining]);
+
     const handleToggleLiveFeed = () => {
         const newState = !isLiveFeedActive;
         setIsLiveFeedActive(newState);
@@ -105,6 +110,15 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             return;
         }
         if (miningGuardResult && !miningGuardResult.ok) {
+            // Special messaging for same device/IP single-active restriction
+            if (miningGuardResult.code === 'NOT_ACTIVE_MINER') {
+                setGuardMessage('⚠️ 当前设备/浏览器已有活动矿工会话，禁止并行挖矿。如需切换，请先在正在挖矿的标签页停止。');
+                return;
+            }
+            if (miningGuardResult.code === 'FOLLOWER_MODE') {
+                setGuardMessage('⚠️ 本实例为 FOLLOWER，仅 LEADER 实例可启动挖矿。');
+                return;
+            }
             setGuardMessage(`⚠️ ${miningGuardResult.reason || 'Mining guard blocked.'}`);
             return;
         }
@@ -495,8 +509,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                 setDisplayMining(prev => !prev);
                                                 toggleMining();
                                             }}
-                                            disabled={false}
-                                            title={guardMessage || ''}
+                                            disabled={miningGuardResult?.code === 'NOT_ACTIVE_MINER'}
+                                            title={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? '同一设备/浏览器仅允许一个活动矿工会话' : (guardMessage || '')}
                                         >
                                             {displayMining ? '停止挖矿 (Stop Mining)' : '启动挖矿 (Start Mining)'}
                                         </button>
