@@ -394,53 +394,42 @@ export class IndexState {
     return this.state;
   }
 
-  /**
-   * Export current index state snapshot to a JSON-serializable object.
-   * Only includes deterministic key-value spaces used for balances and commitments.
-   */
-  exportSnapshot(): any {
-    const obj: Record<string, Record<string, string>> = {};
-    for (const [ns, nsMap] of this.state.entries()) {
-      obj[ns] = {};
-      for (const [k, v] of nsMap.entries()) {
-        obj[ns][k] = v;
-      }
-    }
-    return {
-      state: obj,
-      // Persist auxiliary sets that affect validity
-      commitments: Array.from(this.commitments.values?.() || []),
-      nullifiers: Array.from(this.nullifierSet.values?.() || []),
-    };
+  // Export/import helpers for UI persistence (wrap existing snapshot format)
+  exportSnapshot(): IndexStateSnapshot {
+    return this.toSnapshot();
   }
 
-  /**
-   * Import a previously exported snapshot, replacing current in-memory state.
-   * Does not perform validation; caller must ensure snapshot is trusted.
-   */
-  importSnapshot(snapshot: any): void {
+  importSnapshot(snapshot: IndexStateSnapshot): void {
     try {
       // Reset
       this.state.clear();
       this.commitments.clear();
       this.nullifierSet.clear();
-      // Restore key-value namespaces
-      const obj = snapshot?.state || {};
-      for (const ns of Object.keys(obj)) {
-        const nsMap = new Map<string, string>();
-        const entries = obj[ns] || {};
-        for (const k of Object.keys(entries)) {
-          nsMap.set(k, String(entries[k]));
+      // Restore namespaces
+      for (const [ns, kv] of Object.entries(snapshot.data || {})) {
+        const inner = new Map<string, string>();
+        for (const [k, v] of Object.entries(kv || {})) {
+          inner.set(k, String(v));
         }
-        this.state.set(ns, nsMap);
+        this.state.set(ns, inner);
       }
-      // Restore auxiliary sets
-      const commits = Array.isArray(snapshot?.commitments) ? snapshot.commitments : [];
-      for (const c of commits) this.commitments.add(c);
-      const nulls = Array.isArray(snapshot?.nullifiers) ? snapshot.nullifiers : [];
-      for (const n of nulls) this.nullifierSet.add(n);
+      // Rebuild commitments from shielded_pool
+      const shieldedPool = this.state.get("shielded_pool");
+      if (shieldedPool) {
+        for (const [commitment] of shieldedPool) {
+          const noteId = `${commitment}_${Date.now()}`;
+          this.commitments.set(commitment, noteId);
+        }
+      }
+      // Rebuild nullifier set
+      const nullifiers = this.state.get("nullifiers");
+      if (nullifiers) {
+        for (const nullifier of nullifiers.keys()) {
+          this.nullifierSet.add(nullifier);
+        }
+      }
     } catch {
-      // On any failure, leave current state as-is
+      // ignore
     }
   }
 
