@@ -470,6 +470,16 @@ function App() {
   // Phase 29: Initialize LocalStateCoordinator
   useEffect(() => {
     if (!chainContext) return;
+    // On cold start, attempt to restore last indexState snapshot for consistent balances
+    try {
+      const snapStr = localStorage.getItem("indexer_state_snapshot");
+      if (snapStr) {
+        const snap = JSON.parse(snapStr);
+        chainContext.indexState.importSnapshot(snap);
+      }
+    } catch (e) {
+      // ignore
+    }
     
     const initStateCoordinator = async () => {
       await localStateCoordinator.init(chainContext);
@@ -4419,6 +4429,29 @@ function App() {
   // Phase 42: Add multi-device mining protection
   const handleStartMining = async () => {
     if (!chainContext) return;
+    // Enforce mining on network tip: if local is behind, trigger fast sync and delay start
+    try {
+      const localH = chainContext.storage.getTip()?.header.height ?? 0;
+      const networkH = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+      if (networkH > 0 && localH < networkH) {
+        // Proactively request a large window to catch up before mining
+        const p2p = p2pNodeRef.current;
+        const step = 2000;
+        const from = Math.max(1, networkH - 5000);
+        p2p?.broadcast?.("GLOBAL_VIEW_REQUEST", {});
+        p2p?.broadcast?.("REQUEST_BOOTSTRAP", {});
+        p2p?.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 1000 });
+        p2p?.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from, to: networkH });
+        for (let f = from; f <= networkH; f += step) {
+          const t = Math.min(f + step - 1, networkH);
+          p2p?.broadcast?.("REQUEST_BLOCKS", { fromHeight: f, toHeight: t });
+        }
+        setError(locale === "zh"
+          ? `⏳ 正在追赶到网络高度 ${networkH} 后再启动挖矿…`
+          : `⏳ Fast syncing to network height ${networkH} before starting mining…`);
+        return;
+      }
+    } catch {}
     
     // Phase 38: Check onboarding for first-time users
     // Phase 39: Use ref to check immediately (avoids async state update issue)
@@ -4668,6 +4701,14 @@ function App() {
                 };
                 const p2p = p2pNodeRef.current;
                 p2p?.sendToSignalServer?.("UPDATE_ROOT_TIP", payload.payload);
+              } catch (e) {
+                // ignore
+              }
+
+              // NEW: Persist index state snapshot to localStorage for balance continuity on refresh
+              try {
+                const snap = chainContext.indexState.exportSnapshot();
+                localStorage.setItem("indexer_state_snapshot", JSON.stringify(snap));
               } catch (e) {
                 // ignore
               }

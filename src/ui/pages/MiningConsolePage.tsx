@@ -419,8 +419,8 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
                 const availableFrom = (typeof window !== 'undefined' && (window as any).lastAvailableFromHeight) || 0;
                 if (peerCount > 0 && (network === 0 || local < network)) {
-                    const step = 500;
-                    const fallbackFrom = Math.max(1, (network > 0 ? (network - step + 1) : 1));
+                    const step = 2000; // 更大的窗口，加速追赶
+                    const fallbackFrom = Math.max(1, (network > 0 ? (network - 5000 + 1) : 1));
                     const startFrom = Math.max(local + 1, availableFrom > 0 ? availableFrom : fallbackFrom);
                     const target = Math.max(network > 0 ? network : (startFrom + step), startFrom + step);
                     for (let from = startFrom; from <= target; from += step) {
@@ -438,12 +438,12 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     }
                     // Also ask for bootstrap occasionally
                     p2pNode.broadcast?.("REQUEST_BOOTSTRAP", {});
-                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 500 });
-                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: startFrom + step });
+                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP", { wantHeaders: true, headerCount: 1000 });
+                    p2pNode.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: startFrom, to: startFrom + 2 * step });
                     p2pNode.sendToSignalServer?.("GLOBAL_VIEW_REQUEST", {});
                 }
             } catch {}
-        }, 2000);
+        }, 1000);
         return () => clearInterval(retry);
     }, [props.chainContext, props.p2pNode, peerCount]);
 

@@ -400,13 +400,27 @@
 
 /* 固定卡片高度，内部内容变化不影响布局 */
 .slotCard {
-    height: 220px;
-    overflow: hidden;
+    height: 240px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* 保持固定高度不抖动 */
+}
+
+.slotCard .slotPreview {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto; /* 内容超出时内部滚动，避免被遮盖 */
 }
 
 .weightCard {
-    height: 240px;
-    overflow: hidden;
+    height: 260px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* 固定高度 */
+}
+
+.weightCard .smallInfo {
+    margin-top: auto; /* 将说明文本固定在卡片底部，数字变化不挤压 */
 }
 
 /* Wallet Page */

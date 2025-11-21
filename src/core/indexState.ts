@@ -395,6 +395,56 @@ export class IndexState {
   }
 
   /**
+   * Export current index state snapshot to a JSON-serializable object.
+   * Only includes deterministic key-value spaces used for balances and commitments.
+   */
+  exportSnapshot(): any {
+    const obj: Record<string, Record<string, string>> = {};
+    for (const [ns, nsMap] of this.state.entries()) {
+      obj[ns] = {};
+      for (const [k, v] of nsMap.entries()) {
+        obj[ns][k] = v;
+      }
+    }
+    return {
+      state: obj,
+      // Persist auxiliary sets that affect validity
+      commitments: Array.from(this.commitments.values?.() || []),
+      nullifiers: Array.from(this.nullifierSet.values?.() || []),
+    };
+  }
+
+  /**
+   * Import a previously exported snapshot, replacing current in-memory state.
+   * Does not perform validation; caller must ensure snapshot is trusted.
+   */
+  importSnapshot(snapshot: any): void {
+    try {
+      // Reset
+      this.state.clear();
+      this.commitments.clear();
+      this.nullifierSet.clear();
+      // Restore key-value namespaces
+      const obj = snapshot?.state || {};
+      for (const ns of Object.keys(obj)) {
+        const nsMap = new Map<string, string>();
+        const entries = obj[ns] || {};
+        for (const k of Object.keys(entries)) {
+          nsMap.set(k, String(entries[k]));
+        }
+        this.state.set(ns, nsMap);
+      }
+      // Restore auxiliary sets
+      const commits = Array.isArray(snapshot?.commitments) ? snapshot.commitments : [];
+      for (const c of commits) this.commitments.add(c);
+      const nulls = Array.isArray(snapshot?.nullifiers) ? snapshot.nullifiers : [];
+      for (const n of nulls) this.nullifierSet.add(n);
+    } catch {
+      // On any failure, leave current state as-is
+    }
+  }
+
+  /**
    * Phase 27: Apply a shielded transfer operation
    * 
    * Handles privacy-preserving transfers:
