@@ -477,7 +477,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             } catch {}
         }, 1000);
         return () => clearInterval(retry);
-    }, [props.chainContext, props.p2pNode, peerCount]);
+    }, [props.chainContext, props.p2pNode]); // Removed peerCount dependency - sync works via signal server even with 0 peers
 
     // Force warp/snapshot sync when far behind; persist flags across re-renders and auto-repair if stuck
     useEffect(() => {
@@ -493,12 +493,15 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 const FAR_BEHIND = 500; // threshold to trigger snapshot warp
                 if (!triggeredRef.current && network > 0 && (network - local >= FAR_BEHIND)) {
                     triggeredRef.current = true;
-                    // Ask peers for snapshot meta around target near tip
+                    // Request snapshot meta from signaling server (primary) and peers (fallback)
                     try {
+                        const target = Math.max(1, (network - 1));
+                        // Primary: request from signal server (works even with 0 peers)
+                        p2p.sendToSignalServer?.("REQUEST_SNAPSHOT_META", { targetHeight: target });
+                        // Fallback: also ask peers if available
                         if (p2p.peers) {
                             for (const [peerId, peer] of p2p.peers) {
                                 if (peer?.connected && peer.dataChannel?.readyState === "open") {
-                                    const target = Math.max(1, (network - 1));
                                     p2p.sendToPeer?.(peerId, "REQUEST_SNAPSHOT_META", {
                                         targetHeight: target,
                                         requestId: `warp_${Date.now()}_${target}`
@@ -506,9 +509,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 }
                             }
                         }
-                        // Also request snapshot meta from signaling (WS path)
-                        const target = Math.max(1, (network - 1));
-                        p2p.sendToSignalServer?.("REQUEST_SNAPSHOT_META", { targetHeight: target });
                     } catch {}
                     // 如果全局有 snapshotDownloader，则直接进行一次下载尝试（不等统一管理器）
                     try {
@@ -542,19 +542,43 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         saveAllSnapshotMeta(metas);
                                         // Expose to window hint
                                         (window as any).lastRootTipSnapshotMeta = snapshotData.meta;
+                                        // CRITICAL: Apply snapshot state immediately so chain can continue from snapshot height
+                                        try {
+                                            const { IndexState } = await import("../../core/indexState.js");
+                                            if (snapshotData.indexState) {
+                                                const restoredState = IndexState.fromSnapshot(snapshotData.indexState);
+                                                const restoredInternalState = (restoredState as any).getInternalState();
+                                                const currentInternalState = (ctx.indexState as any).getInternalState();
+                                                currentInternalState.clear();
+                                                for (const [ns, kvMap] of restoredInternalState) {
+                                                    const newMap = new Map(kvMap);
+                                                    currentInternalState.set(ns, newMap);
+                                                }
+                                                // Restore privacy state
+                                                const restoredCommitments = (restoredState as any).getCommitments?.() || (restoredState as any).commitments;
+                                                const restoredNullifiers = (restoredState as any).getNullifierSet?.() || (restoredState as any).nullifierSet;
+                                                if (restoredCommitments) {
+                                                    (ctx.indexState as any).commitments = new Map(restoredCommitments);
+                                                }
+                                                if (restoredNullifiers) {
+                                                    (ctx.indexState as any).nullifierSet = new Set(restoredNullifiers);
+                                                }
+                                            }
+                                        } catch {}
                                     }
                                 } catch {}
-                                // After snapshot saved, immediately request blocks from snapshotHeight+1
+                                // After snapshot saved and applied, immediately request blocks from snapshotHeight+1
                                 try {
                                     const fromH = (best.height || 0) + 1;
                                     if (fromH > 1) {
+                                        // Request from signal server (primary) and peers (fallback)
                                         p2p.sendToSignalServer?.("REQUEST_BOOTSTRAP_BLOCKS", { from: fromH, to: Math.max(fromH + 10000, network || fromH + 10000) });
                                         p2p.broadcast?.("REQUEST_BLOCKS", { fromHeight: fromH, toHeight: (network || fromH + 5000) });
-                                    }
-                                    // Hint availableFrom for the retry loop
-                                    if (typeof window !== 'undefined') {
-                                        (window as any).lastAvailableFromHeight = Math.max((window as any).lastAvailableFromHeight || 0, fromH);
-                                        (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, network || fromH);
+                                        // Hint availableFrom for the retry loop to continue from here
+                                        if (typeof window !== 'undefined') {
+                                            (window as any).lastAvailableFromHeight = Math.max((window as any).lastAvailableFromHeight || 0, fromH);
+                                            (window as any).lastRootTipHeight = Math.max((window as any).lastRootTipHeight || 0, network || fromH);
+                                        }
                                     }
                                 } catch {}
                             }
@@ -673,7 +697,16 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     displayMining={displayMining}
                                     guardMessage={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? '⚠️ 同一设备/浏览器仅允许一个活动矿工会话' : guardMessage}
                                     autoMining={autoMining}
-                                    onToggleMining={() => { setDisplayMining(prev => !prev); toggleMining(); }}
+                                    onToggleMining={() => {
+                                        if (autoMining) {
+                                            // 自动挖矿模式：切换按钮状态
+                                            setDisplayMining(prev => !prev);
+                                            toggleMining();
+                                        } else {
+                                            // 非自动挖矿模式：只挖一次，不切换按钮状态
+                                            toggleMining();
+                                        }
+                                    }}
                                     onToggleAutoMining={setAutoMining}
                                 />
 
