@@ -644,8 +644,6 @@ export async function appendMinedBlock(
       // Phase 32: Update root tip on signal server (if this is a LEADER instance)
       // Phase 46+: Also prepare rootTip for P2P gossip
       if (typeof window !== "undefined") {
-        const { getLocalInstanceCoordinator } = await import("./localInstance.js");
-        const coordinator = getLocalInstanceCoordinator();
         
         // Phase 38: Get recent headers (last 500) for fast sync
         const recentHeaders: any[] = [];
