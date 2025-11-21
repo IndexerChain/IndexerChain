@@ -400,7 +400,7 @@
 
 /* 固定卡片高度，内部内容变化不影响布局 */
 .slotCard {
-    height: 240px;
+    height: 320px;
     display: flex;
     flex-direction: column;
     overflow: hidden; /* 保持固定高度不抖动 */
@@ -413,7 +413,7 @@
 }
 
 .weightCard {
-    height: 260px;
+    height: 300px;
     display: flex;
     flex-direction: column;
     overflow: hidden; /* 固定高度 */

@@ -45,9 +45,12 @@ export const useMiningData = ({
     const lastHeightRef = useRef<number>(0);
     const heightHistoryRef = useRef<Array<{ height: number; time: number }>>([]); // Track height changes for sync rate
 
-    // Derived state from props
-    const localHeight = chainContext?.storage.getTip()?.header.height || 0;
-    const networkHeight = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || localHeight;
+    // Derived state from props + reactive polling to ensure UI updates even when not mining
+    const initialLocalHeight = chainContext?.storage.getTip()?.header.height || 0;
+    const [localHeight, setLocalHeight] = useState<number>(initialLocalHeight);
+    const [networkHeight, setNetworkHeight] = useState<number>(
+        (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || initialLocalHeight
+    );
     const peerCount = p2pNode?.getPeerCount() || 0;
     
     // Determine detailed status
@@ -65,6 +68,26 @@ export const useMiningData = ({
     };
 
     const status = getStatus();
+
+    // Poll tip height and network height periodically to drive UI without mining
+    useEffect(() => {
+        if (!chainContext) return;
+        const poll = setInterval(() => {
+            try {
+                const tip = chainContext.storage.getTip();
+                const lh = tip?.header.height || 0;
+                if (lh !== localHeight) setLocalHeight(lh);
+                const newNetworkHeight = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
+                if (typeof newNetworkHeight === 'number' && newNetworkHeight >= 0 && newNetworkHeight !== networkHeight) {
+                    setNetworkHeight(newNetworkHeight);
+                }
+            } catch {
+                // ignore
+            }
+        }, 500);
+        return () => clearInterval(poll);
+        // Intentionally exclude localHeight/networkHeight from deps to avoid tight loops
+    }, [chainContext]);
 
     // Balance - Real data from chain
     const [balance, setBalance] = useState(0);
