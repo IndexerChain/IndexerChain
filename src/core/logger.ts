@@ -27,7 +27,7 @@ function isProduction(): boolean {
       return true;
     }
   }
-  
+
   // Check hostname (production domains)
   if (typeof window !== "undefined" && window.location) {
     const hostname = window.location.hostname;
@@ -39,7 +39,7 @@ function isProduction(): boolean {
       return true;
     }
   }
-  
+
   return false;
 }
 
@@ -47,88 +47,57 @@ function isProduction(): boolean {
  * Get current log level based on environment
  */
 function getLogLevel(): LogLevel {
-  // Disabled - no logging
-  return LogLevel.NONE;
-  
-  // Original code (disabled):
-  // if (isProduction()) {
-  //   return LogLevel.ERROR; // Only errors in production
-  // }
-  // 
-  // // Development: allow all logs
-  // // Can be overridden by localStorage for debugging
-  // if (typeof window !== "undefined" && window.localStorage) {
-  //   const logLevel = window.localStorage.getItem("indexerchain_log_level");
-  //   if (logLevel) {
-  //     const level = parseInt(logLevel, 10);
-  //     if (!isNaN(level) && level >= 0 && level <= 4) {
-  //       return level as LogLevel;
-  //     }
-  //   }
-  // }
-  // 
-  // return LogLevel.INFO; // Only INFO and above in development (no DEBUG)
+  if (isProduction()) {
+    return LogLevel.ERROR;
+  }
+  return LogLevel.DEBUG;
 }
 
 class Logger {
   private logLevel: LogLevel;
-  
+
   constructor() {
     this.logLevel = getLogLevel();
   }
-  
-  /**
-   * Update log level (useful for runtime changes)
-   */
+
   setLogLevel(level: LogLevel): void {
     this.logLevel = level;
   }
-  
-  /**
-   * Get current log level
-   */
+
   getLogLevel(): LogLevel {
     return this.logLevel;
   }
-  
-  /**
-   * Debug log (disabled - no logging)
-   */
-  debug(..._args: any[]): void {
-    // Disabled - no logging
+
+  debug(...args: any[]): void {
+    if (this.logLevel <= LogLevel.DEBUG) {
+      console.debug(...args);
+    }
   }
-  
-  /**
-   * Info log
-   */
-  info(..._args: any[]): void {
-    // Disabled - no logging
+
+  info(...args: any[]): void {
+    if (this.logLevel <= LogLevel.INFO) {
+      console.info(...args);
+    }
   }
-  
-  /**
-   * Warning log
-   */
-  warn(..._args: any[]): void {
-    // Disabled - no logging
+
+  warn(...args: any[]): void {
+    if (this.logLevel <= LogLevel.WARN) {
+      console.warn(...args);
+    }
   }
-  
-  /**
-   * Error log (always shown, even in production)
-   */
-  error(..._args: any[]): void {
-    // Disabled - no logging
+
+  error(...args: any[]): void {
+    if (this.logLevel <= LogLevel.ERROR) {
+      console.error(...args);
+    }
   }
-  
-  /**
-   * Log with custom prefix (disabled - only errors are logged)
-   */
-  log(_prefix: string, ..._args: any[]): void {
-    // Disabled - only errors are logged
+
+  log(prefix: string, ...args: any[]): void {
+    if (this.logLevel <= LogLevel.INFO) {
+      console.log(prefix, ...args);
+    }
   }
-  
-  /**
-   * Check if currently in production mode
-   */
+
   isProduction(): boolean {
     return isProduction();
   }

@@ -24,8 +24,7 @@ export class SignalingRoom {
     // Phase 51: Track per-connection join time and nodeId->address mapping
     this.peerJoinAt = new Map(); // Map<nodeId, number>
     this.nodeAddresses = new Map(); // Map<nodeId, address>
-    // Phase 33: Track IP hashes for all peers
-    this.peerIPHashes = new Map(); // Map<nodeId, ipHash>
+    // IP hash tracking removed - all nodes can mine without IP restrictions
     this.bootstrapState = {
       latestHeight: 0,
       latestHeader: null,
@@ -791,39 +790,15 @@ export class SignalingRoom {
           // Phase 51: Record join time
           this.peerJoinAt.set(nodeId, Date.now());
 
-          // Generate IP hash
-          const clientIP = request.headers.get('CF-Connecting-IP') || 
-                          request.headers.get('X-Forwarded-For')?.split(',')[0] || 
-                          'unknown';
-          
-          let ipHash = '';
-          for (let i = 0; i < clientIP.length; i++) {
-            ipHash += String.fromCharCode((clientIP.charCodeAt(i) * 7 + 13) % 256);
-          }
-          ipHash = btoa(ipHash).substring(0, 16);
-
-          console.log(`[SignalingRoom] Node ${nodeId.substring(0, 16)}... joined. Total peers: ${this.peers.size}. IP hash: ${ipHash}`);
-          
-          // Phase 33: Store IP hash for this peer
-          this.peerIPHashes.set(nodeId, ipHash);
+          console.log(`[SignalingRoom] Node ${nodeId.substring(0, 16)}... joined. Total peers: ${this.peers.size}`);
 
           // Send list of existing peers to the new node
           const peerList = Array.from(this.peers.keys()).filter((id) => id !== nodeId);
-          
-          // Phase 33: Build IP hashes object for all existing peers
-          const peerIPHashes = {};
-          for (const [id, hash] of this.peerIPHashes.entries()) {
-            if (id !== nodeId) {
-              peerIPHashes[id] = hash;
-            }
-          }
           
           // Send JOIN_ACK with peers list AND rootTip (even if peers is empty)
           server.send(JSON.stringify({
             type: 'JOIN_ACK',
             peers: peerList,
-            ipHash: ipHash,
-            peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all existing peers
             // Phase 37: Include current rootTip so node can immediately sync
             // Also include trustLevel and stateCommitment for client verification
             rootTip: {
@@ -843,8 +818,6 @@ export class SignalingRoom {
           server.send(JSON.stringify({
             type: 'peers',
             peers: peerList,
-            ipHash: ipHash,
-            peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all existing peers
           }));
 
           // Notify other peers about the new node
@@ -853,29 +826,15 @@ export class SignalingRoom {
               peer.send(JSON.stringify({
                 type: 'new-peer',
                 peerId: nodeId,
-                ipHash: ipHash,
               }));
             }
           }
         } else if (data.type === 'request-peers') {
           const peerList = Array.from(this.peers.keys()).filter((id) => id !== nodeId);
           
-          // Phase 33: Build IP hashes object for all peers
-          const peerIPHashes = {};
-          for (const [id, hash] of this.peerIPHashes.entries()) {
-            if (id !== nodeId) {
-              peerIPHashes[id] = hash;
-            }
-          }
-          
-          // Get IP hash for requesting node
-          const requestingNodeIPHash = this.peerIPHashes.get(nodeId) || '';
-          
           server.send(JSON.stringify({
             type: 'peers',
             peers: peerList,
-            ipHash: requestingNodeIPHash, // Phase 33: Include requesting node's IP hash
-            peerIPHashes: peerIPHashes, // Phase 33: Include IP hashes for all peers
           }));
         } else if (data.type === 'ANNOUNCE_ID' && data.address && nodeId) {
           // Phase 51: Map nodeId -> address and persist
@@ -1492,7 +1451,7 @@ export class SignalingRoom {
     server.addEventListener('close', async () => {
       if (nodeId) {
         this.peers.delete(nodeId);
-        this.peerIPHashes.delete(nodeId); // Phase 33: Remove IP hash when peer disconnects
+        // IP hash tracking removed - all nodes can mine without IP restrictions
         console.log(`[SignalingRoom] Node ${nodeId.substring(0, 16)}... disconnected. Total peers: ${this.peers.size}`);
         // Phase 51: Accumulate online ms for the current epoch using mapped address
         try {

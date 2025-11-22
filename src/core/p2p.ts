@@ -13,8 +13,6 @@
 import { logger } from "./logger.js";
 import { ConnectionManager, type ConnectionConfig } from "./connectionManager.js";
 
-// Types imported as needed
-
 /**
  * P2P message types
  * 
@@ -162,11 +160,14 @@ export class BrowserP2PNode implements P2PNode {
           return;
         }
 
+        logger.info(`[P2P] Connecting to signaling server: ${bootstrapUrl}`);
+        console.log(`[P2P] Connecting to signaling server (console): ${bootstrapUrl}`);
         this.ws = new WebSocket(bootstrapUrl);
 
         // Set connection timeout (10 seconds)
         const timeout = setTimeout(() => {
           if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+            logger.warn(`[P2P] Connection timeout for ${bootstrapUrl}`);
             this.ws.close();
             reject(
               new Error(
@@ -177,6 +178,7 @@ export class BrowserP2PNode implements P2PNode {
         }, 10000);
 
         this.ws.onopen = () => {
+          console.log(`[P2P] WebSocket onopen fired for ${bootstrapUrl}`);
           clearTimeout(timeout);
           const connectLog = `[P2P] ✅ Connected to signaling server: ${bootstrapUrl}`;
           logger.info(connectLog);
@@ -206,10 +208,14 @@ export class BrowserP2PNode implements P2PNode {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            const msgLog = `[P2P] 📨 Received signaling message: type=${message.type}`;
-            logger.info(msgLog);
-            logger.debug(`[P2P] Received signaling message:`, message.type, message);
-            
+            // Only log info for important messages to reduce noise
+            if (message.type === 'BOOTSTRAP_RESPONSE' || message.type === 'JOIN_ACK' || message.type === 'peers') {
+              const msgLog = `[P2P] 📨 Received signaling message: type=${message.type}`;
+              logger.info(msgLog);
+            } else {
+              logger.debug(`[P2P] Received signaling message:`, message.type);
+            }
+
             // Phase 32: Check if this is a BOOTSTRAP_RESPONSE and handle it directly
             if (message.type === 'BOOTSTRAP_RESPONSE') {
               logger.info(`[Phase 32] 📦 Direct handling of BOOTSTRAP_RESPONSE from WebSocket`);
@@ -223,6 +229,7 @@ export class BrowserP2PNode implements P2PNode {
         };
 
         this.ws.onerror = (error) => {
+          console.log(`[P2P] WebSocket onerror fired for ${bootstrapUrl}`, error);
           clearTimeout(timeout);
           logger.error("WebSocket error:", error);
           const errorMessage =
@@ -233,6 +240,7 @@ export class BrowserP2PNode implements P2PNode {
         };
 
         this.ws.onclose = (event) => {
+          console.log(`[P2P] WebSocket onclose fired for ${bootstrapUrl}`, event.code, event.reason);
           clearTimeout(timeout);
           logger.debug("Disconnected from signaling server", event.code, event.reason);
           this.isConnected = false;
@@ -259,7 +267,7 @@ export class BrowserP2PNode implements P2PNode {
                 return;
               }
             }
-            
+
             if (this.currentBootstrapUrl) {
               logger.info("[P2P] Connection closed unexpectedly, will attempt auto-reconnect...");
               if (this.connectionManager) {
@@ -278,7 +286,7 @@ export class BrowserP2PNode implements P2PNode {
               // But don't reject if we have auto-reconnect enabled
               if (!this.connectionManager) {
                 let errorMsg = `Connection failed (code: ${event.code}).\n\n`;
-                
+
                 if (event.code === 1006) {
                   errorMsg += `⚠️ Code 1006: Abnormal closure - The server is likely not running.\n\n`;
                   errorMsg += `📋 To fix this:\n`;
@@ -296,7 +304,7 @@ export class BrowserP2PNode implements P2PNode {
                   errorMsg += `3. Server rejected the connection\n`;
                   errorMsg += `4. Firewall blocking the connection`;
                 }
-                
+
                 reject(new Error(errorMsg));
               }
             }
@@ -326,7 +334,7 @@ export class BrowserP2PNode implements P2PNode {
     }
 
     this.signalServers = [...signalServers];
-    
+
     // Phase 45: Try cached peers first (P2P bootstrap)
     const cachedPeers = this.getCachedPeers();
     if (cachedPeers.length > 0) {
@@ -337,12 +345,12 @@ export class BrowserP2PNode implements P2PNode {
 
     // Phase 45: Randomly select initial signal server
     const shuffled = [...signalServers].sort(() => Math.random() - 0.5);
-    
+
     let lastError: Error | null = null;
     for (let i = 0; i < shuffled.length; i++) {
       const url = shuffled[i];
       this.currentSignalServerIndex = signalServers.indexOf(url);
-      
+
       try {
         logger.info(`[Phase 45] Attempting to connect to signal server ${i + 1}/${shuffled.length}: ${url}`);
         await this.connectToSingleServer(url);
@@ -386,7 +394,7 @@ export class BrowserP2PNode implements P2PNode {
    */
   setupConnectionManager(config: ConnectionConfig): void {
     this.connectionManager = new ConnectionManager(config);
-    
+
     // Setup auto-reconnect
     this.connectionManager.setupAutoReconnect(
       async () => {
@@ -407,13 +415,13 @@ export class BrowserP2PNode implements P2PNode {
    */
   disconnect(): void {
     this.isManualDisconnect = true;
-    
+
     // Stop auto-reconnect
     if (this.connectionManager) {
       this.connectionManager.stopReconnect();
       this.connectionManager.clearAllHeartbeats();
     }
-    
+
     // Close all peer connections
     for (const peer of this.peers.values()) {
       if (peer.dataChannel) {
@@ -550,21 +558,21 @@ export class BrowserP2PNode implements P2PNode {
           hasRootTip: !!message.rootTip,
           rootTipHeight: message.rootTip?.latestHeight || 0,
         });
-        
+
         // Handle peers list (same as "peers" message)
         const joinAckPeerIds: string[] = message.peers || [];
         logger.debug(`[P2P] Processing ${joinAckPeerIds.length} peers from JOIN_ACK`);
-        
+
         // Phase 45: Cache peer list from JOIN_ACK
         this.cachePeers(joinAckPeerIds);
-        
+
         for (const peerId of joinAckPeerIds) {
           if (peerId !== this.nodeId && !this.peers.has(peerId)) {
             logger.debug(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
             this.initiatePeerConnection(peerId);
           }
         }
-        
+
         // Handle IP hash
         if (message.ipHash) {
           logger.debug(`[P2P] Received own IP hash in JOIN_ACK: ${message.ipHash}`);
@@ -581,7 +589,7 @@ export class BrowserP2PNode implements P2PNode {
             })();
           }
         }
-        
+
         // Phase 33: Handle IP hashes for peer list in JOIN_ACK
         if (message.peerIPHashes) {
           const peerIPHashes = message.peerIPHashes;
@@ -601,17 +609,17 @@ export class BrowserP2PNode implements P2PNode {
             })();
           }
         }
-        
+
         // Handle rootTip - forward to bootstrap sync manager
         if (message.rootTip) {
           const rootTipLog = `[P2P] 📦 JOIN_ACK contains rootTip: height=${message.rootTip.latestHeight}, hasHeader=${!!message.rootTip.latestHeader}, recentHeaders=${message.rootTip.recentHeaders?.length || 0}`;
           logger.info(rootTipLog);
-          
+
           if (message.rootTip.latestHeight > 0) {
             const validHeightLog = `[P2P] ✅ RootTip has valid height, forwarding to bootstrap handlers`;
             logger.info(validHeightLog);
           }
-          
+
           // Phase 37: Store rootTip info for debug overlay
           if (typeof window !== "undefined") {
             (window as any).lastRootTipHeight = message.rootTip.latestHeight;
@@ -620,7 +628,7 @@ export class BrowserP2PNode implements P2PNode {
             (window as any).lastRootTipTrustLevel = message.rootTip.trustLevel || 'root-only';
             (window as any).lastRootTipStateCommitment = message.rootTip.stateCommitment || null;
           }
-          
+
           // Try to forward to registered handlers first
           const handlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
           if (handlers && handlers.size > 0) {
@@ -676,7 +684,7 @@ export class BrowserP2PNode implements P2PNode {
             })();
           }
         }
-        
+
         // Phase 33: Handle IP hashes for peer list
         if (message.peerIPHashes) {
           // Signal server may send IP hashes for all peers
@@ -697,19 +705,19 @@ export class BrowserP2PNode implements P2PNode {
             })();
           }
         }
-        
+
         // Original peer list handling
         // Received list of peers, initiate WebRTC connections
         const peerIds: string[] = message.peers || [];
         logger.debug(`[P2P] Processing ${peerIds.length} peers, current connections: ${this.peers.size}`);
-        
+
         // Phase 45: Cache peer list to localStorage
         this.cachePeers(peerIds);
-        
+
         if (peerIds.length === 0) {
           logger.debug("[P2P] Received empty peer list - no other nodes online (this is normal if you're the first node)");
         }
-        
+
         for (const peerId of peerIds) {
           if (peerId !== this.nodeId && !this.peers.has(peerId)) {
             logger.debug(`[P2P] Initiating connection to peer: ${peerId.substring(0, 16)}...`);
@@ -742,7 +750,7 @@ export class BrowserP2PNode implements P2PNode {
         // When signal server notifies us about a new peer, initiate connection
         const newPeerId = message.peerId;
         const newPeerIPHash = message.ipHash;
-        
+
         // Phase 33: Set IP hash for new peer if provided
         if (newPeerIPHash && typeof window !== "undefined") {
           (async () => {
@@ -756,7 +764,7 @@ export class BrowserP2PNode implements P2PNode {
             }
           })();
         }
-        
+
         if (newPeerId && newPeerId !== this.nodeId && !this.peers.has(newPeerId)) {
           logger.debug(`[P2P] Signal server notified about new peer: ${newPeerId.substring(0, 16)}..., initiating connection`);
           this.initiatePeerConnection(newPeerId);
@@ -798,7 +806,7 @@ export class BrowserP2PNode implements P2PNode {
           recentHeadersCount: message.recentHeaders?.length || 0,
           requestId: message.requestId,
         });
-        
+
         // Even if latestHeight is 0, forward to handlers (they will handle it appropriately)
         const handlers = this.messageHandlers.get("BOOTSTRAP_RESPONSE");
         if (handlers && handlers.size > 0) {
@@ -815,7 +823,7 @@ export class BrowserP2PNode implements P2PNode {
             (window as any).lastZkStateRoot = message.zkStateRoot ?? message.stateCommitment ?? null;
             (window as any).lastZkFinalizedHeight = message.zkFinalizedHeight ?? 0;
             (window as any).lastZkProofHash = message.zkProofHash ?? null;
-          } catch {}
+          } catch { }
         }
         break;
 
@@ -826,7 +834,7 @@ export class BrowserP2PNode implements P2PNode {
           hasHeader: !!message.rootTip?.latestHeader || !!message.latestHeader,
           timestamp: message.timestamp,
         });
-        
+
         // Forward to message handlers
         const tipHandlers = this.messageHandlers.get("ROOT_TIP_UPDATE");
         if (tipHandlers && tipHandlers.size > 0) {
@@ -844,10 +852,10 @@ export class BrowserP2PNode implements P2PNode {
             (window as any).lastZkStateRoot = rt.zkStateRoot ?? rt.stateCommitment ?? (window as any).lastZkStateRoot ?? null;
             if (typeof rt.zkFinalizedHeight === "number") (window as any).lastZkFinalizedHeight = rt.zkFinalizedHeight;
             if (rt.zkProofHash) (window as any).lastZkProofHash = rt.zkProofHash;
-          } catch {}
+          } catch { }
         }
         break;
-      
+
       // Phase 48: Forward BOOTSTRAP_BLOCKS (signal-server WS response) to handlers
       case "BOOTSTRAP_BLOCKS":
         logger.debug(`[Phase 48] Received BOOTSTRAP_BLOCKS from signal server:`, {
@@ -868,7 +876,7 @@ export class BrowserP2PNode implements P2PNode {
           }
         }
         break;
-      
+
       // Forward SNAPSHOT_* messages from signal server to handlers (Global Snapshot via signaling fallback)
       case "SNAPSHOT_META": {
         const handlers = this.messageHandlers.get("SNAPSHOT_META" as any);
@@ -985,7 +993,7 @@ export class BrowserP2PNode implements P2PNode {
               const parsed = JSON.parse(raw);
               if (Array.isArray(parsed)) return parsed;
             }
-          } catch {}
+          } catch { }
         }
         try {
           const envVal = (import.meta as any)?.env?.VITE_ICE_SERVERS;
@@ -993,7 +1001,7 @@ export class BrowserP2PNode implements P2PNode {
             const parsed = JSON.parse(envVal);
             if (Array.isArray(parsed)) return parsed;
           }
-        } catch {}
+        } catch { }
         // Background fetch ICE config from signaling HTTP to improve subsequent attempts
         try {
           const httpUrl = (this.currentBootstrapUrl || "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
@@ -1006,10 +1014,10 @@ export class BrowserP2PNode implements P2PNode {
                   (window as any).iceServers = cfg.iceServers;
                 }
               })
-              .catch(() => {})
-              .finally(() => { try { delete (window as any).iceServersFetching; } catch {} });
+              .catch(() => { })
+              .finally(() => { try { delete (window as any).iceServersFetching; } catch { } });
           }
-        } catch {}
+        } catch { }
         return defaults;
       })();
       const connection = new RTCPeerConnection({ iceServers });
@@ -1049,7 +1057,7 @@ export class BrowserP2PNode implements P2PNode {
           const failureKey = `connection_failure_${peerId}`;
           const lastFailureLog = (typeof window !== "undefined" && (window as any)[failureKey]) || 0;
           const now = Date.now();
-          
+
           // Only log once per peer per 30 seconds to reduce spam
           if (now - lastFailureLog > 30000) {
             if (typeof window !== "undefined") {
@@ -1082,7 +1090,7 @@ export class BrowserP2PNode implements P2PNode {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) return parsed;
           }
-        } catch {}
+        } catch { }
       }
       try {
         const envVal = (import.meta as any)?.env?.VITE_ICE_SERVERS;
@@ -1090,7 +1098,7 @@ export class BrowserP2PNode implements P2PNode {
           const parsed = JSON.parse(envVal);
           if (Array.isArray(parsed)) return parsed;
         }
-      } catch {}
+      } catch { }
       // Background fetch ICE config from signaling HTTP to improve subsequent attempts
       try {
         const httpUrl = (this.currentBootstrapUrl || "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
@@ -1103,10 +1111,10 @@ export class BrowserP2PNode implements P2PNode {
                 (window as any).iceServers = cfg.iceServers;
               }
             })
-            .catch(() => {})
-            .finally(() => { try { delete (window as any).iceServersFetching; } catch {} });
+            .catch(() => { })
+            .finally(() => { try { delete (window as any).iceServersFetching; } catch { } });
         }
-      } catch {}
+      } catch { }
       return defaults;
     })();
     const connection = new RTCPeerConnection({ iceServers: iceServers2 });
@@ -1151,7 +1159,7 @@ export class BrowserP2PNode implements P2PNode {
         const failureKey = `connection_failure_${peerId}`;
         const lastFailureLog = (typeof window !== "undefined" && (window as any)[failureKey]) || 0;
         const now = Date.now();
-        
+
         // Only log once per peer per 30 seconds to reduce spam
         if (now - lastFailureLog > 30000) {
           if (typeof window !== "undefined") {
@@ -1206,7 +1214,7 @@ export class BrowserP2PNode implements P2PNode {
               const parsed = JSON.parse(raw);
               if (Array.isArray(parsed)) return parsed;
             }
-          } catch {}
+          } catch { }
         }
         try {
           const envVal = (import.meta as any)?.env?.VITE_ICE_SERVERS;
@@ -1214,7 +1222,7 @@ export class BrowserP2PNode implements P2PNode {
             const parsed = JSON.parse(envVal);
             if (Array.isArray(parsed)) return parsed;
           }
-        } catch {}
+        } catch { }
         // Background fetch ICE config from signaling HTTP to improve subsequent attempts
         try {
           const httpUrl = (this.currentBootstrapUrl || "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
@@ -1227,10 +1235,10 @@ export class BrowserP2PNode implements P2PNode {
                   (window as any).iceServers = cfg.iceServers;
                 }
               })
-              .catch(() => {})
-              .finally(() => { try { delete (window as any).iceServersFetching; } catch {} });
+              .catch(() => { })
+              .finally(() => { try { delete (window as any).iceServersFetching; } catch { } });
           }
-        } catch {}
+        } catch { }
         return defaults;
       })();
       const connection = new RTCPeerConnection({ iceServers: iceServers3 });
@@ -1333,6 +1341,7 @@ export class BrowserP2PNode implements P2PNode {
    * Setup data channel for peer communication
    */
   private setupDataChannel(dataChannel: RTCDataChannel, peerInfo: PeerInfo): void {
+    logger.debug(`[P2P] Setting up data channel for ${peerInfo.id.substring(0, 16)}... (state: ${dataChannel.readyState})`);
     peerInfo.dataChannel = dataChannel;
 
     dataChannel.onopen = () => {
@@ -1340,7 +1349,7 @@ export class BrowserP2PNode implements P2PNode {
       peerInfo.connected = true;
       peerInfo.lastSeen = Date.now();
       logger.debug(`[P2P] Total connected peers: ${this.getPeerCount()}`);
-      
+
       // Phase 40: Setup heartbeat for this peer
       if (this.connectionManager) {
         this.connectionManager.setupPeerHeartbeat(
@@ -1363,7 +1372,7 @@ export class BrowserP2PNode implements P2PNode {
           }
         );
       }
-      
+
       // Phase 33: Log IP hash for connected peer
       if (typeof window !== "undefined") {
         (async () => {
@@ -1373,7 +1382,7 @@ export class BrowserP2PNode implements P2PNode {
             const ipHash = quorumManager.getPeerIPHash(peerInfo.id);
             const peerIPHash = (peerInfo as any).ipHash;
             logger.debug(`[P2P] Peer ${peerInfo.id.substring(0, 16)}... connected - IP hash: ${ipHash || peerIPHash || "not set"}`);
-            
+
             // If IP hash is not set, try to get it from signal server
             if (!ipHash && !peerIPHash) {
               logger.warn(`[P2P] ⚠️ Peer ${peerInfo.id.substring(0, 16)}... has no IP hash - independent peer count may be incorrect`);
@@ -1383,14 +1392,14 @@ export class BrowserP2PNode implements P2PNode {
           }
         })();
       }
-      
+
       // Phase 30: Send network handshake when data channel opens
       // This will be handled by App.tsx after P2P connection is established
-      
+
       // Phase 32: Notify that a peer connected (for executing pending block requests)
       if (typeof window !== "undefined") {
         // Dispatch a custom event to notify App.tsx that a peer connected
-        window.dispatchEvent(new CustomEvent('peer-connected', { 
+        window.dispatchEvent(new CustomEvent('peer-connected', {
           detail: { peerId: peerInfo.id, peerCount: this.getPeerCount() }
         }));
       }
@@ -1408,7 +1417,7 @@ export class BrowserP2PNode implements P2PNode {
     dataChannel.onclose = () => {
       logger.debug(`[P2P] Data channel closed with peer ${peerInfo.id.substring(0, 16)}...`);
       peerInfo.connected = false;
-      
+
       // Phase 40: Clear heartbeat when channel closes
       if (this.connectionManager) {
         this.connectionManager.clearPeerHeartbeat(peerInfo.id);
@@ -1422,7 +1431,7 @@ export class BrowserP2PNode implements P2PNode {
       if (rtcError) {
         const errorName = rtcError.name || rtcError.constructor?.name || '';
         const errorReason = rtcError.reason || '';
-        
+
         // Ignore normal close operations
         if (
           errorName === 'OperationError' &&
@@ -1433,7 +1442,7 @@ export class BrowserP2PNode implements P2PNode {
           peerInfo.connected = false;
           return;
         }
-        
+
         // Check if channel is already closed
         if (dataChannel.readyState === 'closed') {
           logger.debug(`[P2P] Data channel already closed with peer ${peerInfo.id.substring(0, 16)}..., ignoring error`);
@@ -1441,7 +1450,7 @@ export class BrowserP2PNode implements P2PNode {
           return;
         }
       }
-      
+
       // Only log as error if it's a real error, not a normal close
       logger.error(`[P2P] Data channel error with peer ${peerInfo.id.substring(0, 16)}...:`, error);
       peerInfo.connected = false;
@@ -1462,7 +1471,7 @@ export class BrowserP2PNode implements P2PNode {
       }
       return;
     }
-    
+
     if (message.type === "PONG") {
       // Record successful heartbeat response
       if (this.connectionManager) {
@@ -1470,7 +1479,7 @@ export class BrowserP2PNode implements P2PNode {
       }
       return;
     }
-    
+
     // Deduplication: ignore messages we've seen
     if (message.messageId && this.seenMessages.has(message.messageId)) {
       return;
@@ -1539,7 +1548,7 @@ export class BrowserP2PNode implements P2PNode {
    */
   private cachePeers(peerIds: string[]): void {
     if (typeof window === "undefined") return;
-    
+
     try {
       const cacheData = {
         peerIds: peerIds.filter(id => id !== this.nodeId),
@@ -1558,20 +1567,20 @@ export class BrowserP2PNode implements P2PNode {
    */
   private loadCachedPeers(): string[] {
     if (typeof window === "undefined") return [];
-    
+
     try {
       const cached = localStorage.getItem("indexerchain_cached_peers");
       if (!cached) return [];
-      
+
       const data = JSON.parse(cached);
       const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-      
+
       if (Date.now() - data.timestamp > maxAge) {
         // Cache expired
         localStorage.removeItem("indexerchain_cached_peers");
         return [];
       }
-      
+
       logger.debug(`[Phase 45] Loaded ${data.peerIds?.length || 0} cached peers from localStorage`);
       return data.peerIds || [];
     } catch (error) {

@@ -3,10 +3,11 @@
  * 
  * Shows detailed breakdown of expected block reward:
  * - Base block reward
- * - Global multipliers (IP reputation, Session duration, ActiveBooster)
- * - IP sharing weight
+ * - Global multipliers (Session duration, ActiveBooster)
  * - Referral rewards
  * - Total expected reward
+ * 
+ * IP reputation and IP sharing weight removed - all nodes can mine without IP restrictions
  */
 
 import { useState, useEffect } from "react";
@@ -16,8 +17,7 @@ import { getBlockRewardRaw, uIDCToIDC, IDC_BLOCKS_PER_YEAR } from "../../core/id
 import { calculateMiningReward, getSessionTracker } from "../../core/miningRewardMultiplier.js";
 import { getActiveBoosterTracker } from "../../core/activeBooster.js";
 import { getReferralSystem } from "../../core/referralSystem.js";
-import { getIPSharingTracker, getOrCreateDeviceId } from "../../core/ipSharingWeight.js";
-import { getQuorumManager } from "../../core/quorumManager.js";
+// IP sharing weight and IP reputation removed - all nodes can mine without IP restrictions
 
 interface RewardBreakdownCardProps {
   chainContext: ChainContext | null;
@@ -54,24 +54,12 @@ export function RewardBreakdownCard({
         const rawBlockRewardUIDC = getBlockRewardRaw(height);
         const baseRewardIDC = uIDCToIDC(rawBlockRewardUIDC);
 
-        // Get QuorumScore
-        let quorumScore = 100;
-        try {
-          const quorumManager = getQuorumManager();
-          if (p2pNode) {
-            quorumManager.initialize(p2pNode, chainContext);
-          }
-          const quorumStatus = quorumManager.getQuorumStatus();
-          quorumScore = quorumStatus.totalScore > 0 ? Math.max(quorumStatus.totalScore, 80) : 100;
-        } catch (e) {
-        }
-
         // Session duration
         const sessionTracker = getSessionTracker();
         const sessionDuration = sessionTracker.getTotalDuration();
 
-        // Calculate multipliers
-        const rewardBreakdown = calculateMiningReward(rawBlockRewardUIDC, quorumScore, sessionDuration);
+        // Calculate multipliers (IP reputation removed - all nodes get 1.0x)
+        const rewardBreakdown = calculateMiningReward(rawBlockRewardUIDC, 100, sessionDuration);
 
         // ActiveBooster
         const activeBooster = getActiveBoosterTracker();
@@ -87,39 +75,18 @@ export function RewardBreakdownCard({
         const activeBoosterMultiplier = Math.min(rawActiveBoosterMultiplier, activeBoosterCap);
 
         // Total multiplier (before hard cap)
-        const rawTotalMultiplier = rewardBreakdown.ipReputationMultiplier * 
-                                   rewardBreakdown.sessionDurationMultiplier * 
+        // IP reputation multiplier removed - all nodes get 1.0x
+        const rawTotalMultiplier = rewardBreakdown.sessionDurationMultiplier * 
                                    activeBoosterMultiplier;
         const HARD_CAP = 3.0;
         const cappedMultiplier = Math.min(rawTotalMultiplier, HARD_CAP);
 
-        // Miner base reward (after multipliers, before IP sharing)
+        // Miner base reward (after multipliers)
+        // IP sharing weight removed - all nodes can mine without IP restrictions
         const minerBaseRewardUIDC = (rawBlockRewardUIDC * BigInt(Math.floor(cappedMultiplier * 1000))) / 1000n;
         const minerBaseRewardIDC = uIDCToIDC(minerBaseRewardUIDC);
-
-        // IP sharing weight
-        let ipSharingWeight = 1.0;
-        let ipSharingPosition = 1;
-        try {
-          const deviceId = getOrCreateDeviceId();
-          const ipSharingTracker = getIPSharingTracker();
-          
-          if (p2pNode) {
-            const quorumManager = getQuorumManager();
-            quorumManager.initialize(p2pNode, chainContext);
-            const quorumStatus = quorumManager.getQuorumStatus();
-            const localPeer = quorumStatus.peerMetrics.find((p: any) => p.peerId === p2pNode?.nodeId);
-            const ipHash = localPeer?.ipHash || deviceId;
-            
-            ipSharingPosition = ipSharingTracker.registerMiner(ipHash, deviceId);
-            ipSharingWeight = ipSharingTracker.getSharingWeight(ipHash, deviceId);
-          }
-        } catch (e) {
-        }
-
-        // Final miner reward (after IP sharing)
-        const finalMinerRewardUIDC = (minerBaseRewardUIDC * BigInt(Math.floor(ipSharingWeight * 1000))) / 1000n;
-        const finalMinerRewardIDC = uIDCToIDC(finalMinerRewardUIDC);
+        const finalMinerRewardUIDC = minerBaseRewardUIDC;
+        const finalMinerRewardIDC = minerBaseRewardIDC;
 
         // Referral rewards
         const referralSystem = getReferralSystem();
@@ -155,14 +122,11 @@ export function RewardBreakdownCard({
         setRewardData({
           baseRewardIDC,
           year,
-          ipReputationMultiplier: rewardBreakdown.ipReputationMultiplier,
           sessionDurationMultiplier: rewardBreakdown.sessionDurationMultiplier,
           activeBoosterMultiplier,
           rawTotalMultiplier,
           cappedMultiplier,
           minerBaseRewardIDC,
-          ipSharingWeight,
-          ipSharingPosition,
           finalMinerRewardIDC,
           level1ReferralRewardIDC,
           level2ReferralRewardIDC,
@@ -171,7 +135,6 @@ export function RewardBreakdownCard({
           validLevel2Count,
           estimatedFeesIDC,
           totalRewardIDC,
-          quorumScore,
           sessionDuration,
           activeBoosterDays: activeBooster.getConsecutiveDays(),
         });
@@ -255,9 +218,6 @@ export function RewardBreakdownCard({
             </strong>
             <div style={{ marginLeft: "1rem", marginTop: "0.5rem", fontSize: "0.85rem" }}>
               <div style={{ marginBottom: "0.25rem" }}>
-                {isZh ? "IP 信誉系数" : "IP Reputation"}: <strong>QuorumScore {rewardData.quorumScore}</strong> → <strong>{rewardData.ipReputationMultiplier.toFixed(2)}x</strong>
-              </div>
-              <div style={{ marginBottom: "0.25rem" }}>
                 {isZh ? "在线时长" : "Session Duration"}: <strong>{Math.floor(rewardData.sessionDuration / 60000)} min</strong> → <strong>{rewardData.sessionDurationMultiplier.toFixed(2)}x</strong>
               </div>
               <div style={{ marginBottom: "0.25rem" }}>
@@ -285,18 +245,10 @@ export function RewardBreakdownCard({
 
           <div style={{ marginBottom: "1rem" }}>
             <strong style={{ fontSize: "0.9rem", color: "#495057" }}>
-              {isZh ? "IP 共享权重（同 IP 多设备）" : "IP Sharing Weight (Same IP Multiple Devices)"}
+              {isZh ? "矿工最终奖励" : "Final Miner Reward"}
             </strong>
-            <div style={{ marginLeft: "1rem", marginTop: "0.5rem", fontSize: "0.85rem" }}>
-              <div style={{ marginBottom: "0.25rem" }}>
-                {isZh ? "当前 IP 同时挖矿设备" : "Concurrent Miners on Same IP"}: <strong>{rewardData.ipSharingPosition}</strong>
-              </div>
-              <div style={{ marginBottom: "0.25rem" }}>
-                {isZh ? "本设备权重" : "This Device Weight"}: <strong>{rewardData.ipSharingWeight.toFixed(1)}x</strong>
-              </div>
-              <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#fff3cd", borderRadius: "4px" }}>
-                {isZh ? "最终矿工奖励" : "Final Miner Reward"}: {rewardData.minerBaseRewardIDC.toFixed(2)} × {rewardData.ipSharingWeight.toFixed(1)} = <strong>{rewardData.finalMinerRewardIDC.toFixed(2)} IDC</strong>
-              </div>
+            <div style={{ marginLeft: "1rem", marginTop: "0.25rem", fontSize: "0.85rem", color: "#666" }}>
+              {rewardData.baseRewardIDC.toFixed(2)} × {rewardData.cappedMultiplier.toFixed(2)} = <strong>{rewardData.finalMinerRewardIDC.toFixed(2)} IDC</strong>
             </div>
           </div>
 

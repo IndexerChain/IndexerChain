@@ -43,7 +43,7 @@ export interface ChainContext {
  */
 export function needsMigration(storage: BrowserChainStorage): boolean {
   const blocks = storage.getAllBlocks();
-  
+
   // Check if any transaction is missing Phase 5 fields
   for (const block of blocks) {
     for (const tx of block.txs) {
@@ -53,7 +53,7 @@ export function needsMigration(storage: BrowserChainStorage): boolean {
       }
     }
   }
-  
+
   return false; // All transactions are in Phase 5 format
 }
 
@@ -89,7 +89,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
   // Phase 16: Initialize total_minted to 0 if not exists
   let indexState = IndexState.createEmpty();
   indexState.beginRecording(); // Start recording changes for delta snapshots
-  
+
   // Phase 16: Ensure total_minted exists (initialize to 0 if not set)
   // This will be updated when we rebuild from blocks
   let startHeight = 0;
@@ -107,7 +107,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
 
   const latestSnap = getLatestSnapshotMeta();
   let remoteSnapshotUsed: SnapshotMeta | null = null;
-  
+
   if (latestSnap) {
     // Verify snapshot is still valid
     const snapshotBlock = storage.getBlockByHeight(latestSnap.height);
@@ -117,7 +117,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
       if (snapData) {
         if (snapData.full === false && snapData.delta) {
           // Delta snapshot - need to reconstruct from full + deltas
-          
+
           // Find nearest full snapshot
           const fullSnapMeta = findNearestFullSnapshot(latestSnap.height);
           if (fullSnapMeta) {
@@ -139,7 +139,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
                   const newMap = new Map(kvMap);
                   currentInternalState.set(ns, newMap);
                 }
-              
+
                 // Apply all delta snapshots
                 const deltaMetas = loadDeltaSnapshotsAfter(fullSnapMeta.height, latestSnap.height);
                 for (const deltaMeta of deltaMetas) {
@@ -151,7 +151,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
                     });
                   }
                 }
-              
+
                 startHeight = latestSnap.height + 1;
               }
             }
@@ -190,7 +190,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
   const tip = storage.getTip();
   const currentHeight = tip?.header.height ?? 0;
   const minHeight = params.remoteSnapshotMinHeight ?? 0;
-  
+
   // Only try remote sync if:
   // 1. Remote sync is enabled
   // 2. Current height is below minimum (or no local snapshot)
@@ -204,10 +204,10 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     try {
       const { syncFromRemoteSnapshot } = await import("./remoteSnapshot.js");
       const remoteMeta = await syncFromRemoteSnapshot(params, storage);
-      
+
       if (remoteMeta) {
         remoteSnapshotUsed = remoteMeta;
-        
+
         // Reload snapshot after saving remote one
         const updatedSnap = getLatestSnapshotMeta();
         if (updatedSnap && updatedSnap.height === remoteMeta.height) {
@@ -230,7 +230,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
                 currentInternalState.set(ns, newMap);
               }
             }
-            
+
             startHeight = updatedSnap.height + 1;
           }
         }
@@ -242,7 +242,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
 
   // Phase 10: Replay blocks from startHeight to tip (with light node window limit)
   const lightNodeWindow = params.lightNodeWindow ?? 200;
-  
+
   // Re-fetch tip in case it changed during remote sync
   const finalTip = storage.getTip();
   if (finalTip) {
@@ -250,18 +250,18 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
     // We'll replay what we have, starting from the earliest available block
     const minHeight = storage.getMinHeight();
     const actualStartHeight = Math.max(startHeight, minHeight);
-    
+
     // Only replay blocks within the window (if in light node mode)
-    const maxReplayHeight = lightNodeWindow > 0 
+    const maxReplayHeight = lightNodeWindow > 0
       ? Math.min(finalTip.header.height, actualStartHeight + lightNodeWindow - 1)
       : finalTip.header.height;
-    
+
     for (let h = actualStartHeight; h <= maxReplayHeight; h++) {
       const block = storage.getBlockByHeight(h);
       if (block) {
         try {
           indexState.applyBlock(block);
-          
+
           // Phase 16: Update total_minted after applying each block
           if (block.txs.length > 0) {
             const coinbaseTx = block.txs[0];
@@ -299,7 +299,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
         }
       }
     }
-    
+
     // If we're in light node mode and started from a snapshot, log it
     if (latestSnap && lightNodeWindow > 0) {
     }
@@ -373,17 +373,22 @@ export async function getDefaultChainParams(): Promise<ChainParams> {
               // Persist explicit flag for subsequent loads
               localStorage.setItem("indexerchain_force_mainnet", "true");
             }
-          } catch {}
+          } catch { }
         }
       }
-    } catch {}
+    } catch { }
+
+    // Force dev mode on localhost
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      useMainnet = false;
+    }
   }
-  
+
   if (useMainnet) {
     const { MAINNET_PARAMS } = await import("./networkParams.js");
     return MAINNET_PARAMS;
   }
-  
+
   // Phase 21: Default peer reputation parameters (dev/testnet)
   return {
     version: 1,
@@ -469,22 +474,22 @@ export async function appendMinedBlock(
       return { success: true };
     } else {
       // Different block at same height - this is a fork, reject
-      return { 
-        success: false, 
-        error: `Block ${block.header.height} already exists with different hash (fork detected)` 
+      return {
+        success: false,
+        error: `Block ${block.header.height} already exists with different hash (fork detected)`
       };
     }
   }
 
   // Get previous block (re-fetch to ensure we have the latest tip)
   const prevBlock = context.storage.getTip();
-  
+
   // Check if tip has advanced beyond this block (race condition: another block was appended)
   if (prevBlock && prevBlock.header.height >= block.header.height) {
     // Tip has advanced - this block is stale
-    return { 
-      success: false, 
-      error: `Block ${block.header.height} is stale (tip is now at ${prevBlock.header.height})` 
+    return {
+      success: false,
+      error: `Block ${block.header.height} is stale (tip is now at ${prevBlock.header.height})`
     };
   }
 
@@ -494,7 +499,7 @@ export async function appendMinedBlock(
   let skipVerify = false;
   try {
     skipVerify = isProposerEnforceEnabled();
-  } catch {}
+  } catch { }
   if (!skipVerify) {
     const verification = await verifyBlock(block, prevBlock, allBlocks, context.params);
     if (!verification.valid) {
@@ -507,12 +512,12 @@ export async function appendMinedBlock(
     const currentTip = context.storage.getTip();
     if (currentTip && currentTip.header.height >= block.header.height) {
       // Tip has advanced - this block is stale
-      return { 
-        success: false, 
-        error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})` 
+      return {
+        success: false,
+        error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})`
       };
     }
-    
+
     // Check if block already exists (race condition: another worker may have appended it)
     const existingBlock = context.storage.getBlockByHeight(block.header.height);
     if (existingBlock) {
@@ -521,13 +526,13 @@ export async function appendMinedBlock(
         return { success: true };
       } else {
         // Different block at same height - this is a fork, reject
-        return { 
-          success: false, 
-          error: `Block ${block.header.height} already exists with different hash (fork detected)` 
+        return {
+          success: false,
+          error: `Block ${block.header.height} already exists with different hash (fork detected)`
         };
       }
     }
-    
+
     // Append to storage (this also saves to persistence)
     context.storage.appendBlock(block);
 
@@ -535,7 +540,7 @@ export async function appendMinedBlock(
     // This ensures incrementTotalMinted can be called after applyBlock completes
     const wasApplyingBlock = (context.indexState as any).isApplyingBlock;
     (context.indexState as any).isApplyingBlock = true;
-    
+
     try {
       // Apply block to index state
       try {
@@ -547,7 +552,7 @@ export async function appendMinedBlock(
         throw stateError;
       }
 
-      
+
       // Phase 29: Report state update to LocalStateCoordinator
       if (typeof window !== "undefined" && (window as any).localStateCoordinator) {
         (window as any).localStateCoordinator.reportLocalState(
@@ -596,10 +601,10 @@ export async function appendMinedBlock(
         const { loadAllSnapshotMeta, findNearestFullSnapshot } = await import("./snapshot.js");
         const allMetas = loadAllSnapshotMeta();
         const snapshotCount = allMetas.length;
-        
+
         // Check if there's a full snapshot available before deciding on delta
         const hasFullSnapshot = findNearestFullSnapshot(height - 1) !== null;
-        
+
         // Force full snapshot if:
         // 1. This is the first snapshot (snapshotCount === 0)
         // 2. No full snapshot exists (hasFullSnapshot === false)
@@ -628,7 +633,7 @@ export async function appendMinedBlock(
             // No changes, skip delta snapshot
           }
         }
-        
+
         // Prune old snapshots
         pruneOldSnapshots(maxSnapshotCount);
       } catch (error) {
@@ -646,7 +651,7 @@ export async function appendMinedBlock(
             if (raw) {
               // Parse once
               let parsed: any = null;
-              try { parsed = JSON.parse(raw); } catch {}
+              try { parsed = JSON.parse(raw); } catch { }
               const base64Data = parsed?.data || parsed?.delta || null;
               if (base64Data && typeof base64Data === "string") {
                 let meta: any = { id: `snap_${String(height).padStart(7, "0")}`, height, createdAt: Date.now(), version: 1 };
@@ -655,13 +660,13 @@ export async function appendMinedBlock(
                   const allMetas = loadAllSnapshotMeta();
                   const m = allMetas.find((x: any) => x.height === height);
                   if (m) meta = m;
-                } catch {}
+                } catch { }
                 (context.p2p as any).sendToSignalServer("SEED_SNAPSHOT", { meta, data: base64Data });
               }
             }
           }
         }
-      } catch {}
+      } catch { }
     }
 
     // Phase 10: Auto-prune old blocks (light node mode)
@@ -691,11 +696,11 @@ export async function appendMinedBlock(
       // Also broadcast full block for backward compatibility
       // Nodes that haven't upgraded to Phase 17 will still receive full blocks
       context.p2p.broadcast("NEW_BLOCK", block);
-      
+
       // Phase 32: Update root tip on signal server (if this is a LEADER instance)
       // Phase 46+: Also prepare rootTip for P2P gossip
       if (typeof window !== "undefined") {
-        
+
         // Phase 38: Get recent headers (last 500) for fast sync
         const recentHeaders: any[] = [];
         let currentBlock = block;
@@ -716,7 +721,7 @@ export async function appendMinedBlock(
           }
         }
         recentHeaders.reverse(); // Oldest to newest
-        
+
         // Get latest snapshot meta if available
         let latestSnapshotMeta = null;
         try {
@@ -725,7 +730,7 @@ export async function appendMinedBlock(
         } catch (error) {
           // Snapshot not available, continue without it
         }
-        
+
         // Phase 37: Send UPDATE_ROOT_TIP to signal server (allow on any instance to keep rootTip fresh)
         if ((context.p2p as any).sendToSignalServer) {
           const updatePayload: any = {
@@ -737,7 +742,7 @@ export async function appendMinedBlock(
             stateCommitment: block.header.stateCommitment, // Phase 37: Include stateCommitment for Worker verification
             // Note: finalityCert can be added here if available from finalityManager
           };
-          
+
           // Phase 48: Include canonicalBlock for bootstrap storage (only for low heights ≤ 1024)
           // This allows signal server to store bootstrap blocks for new nodes
           if (block.header.height > 0 && block.header.height <= 1024) {
@@ -748,28 +753,28 @@ export async function appendMinedBlock(
               // Include all necessary block data for verification
             };
           }
-          
+
           // CRITICAL: Update window hints FIRST (synchronous, immediate UI update)
           if (typeof window !== "undefined") {
             (window as any).lastRootTipHeight = block.header.height;
             (window as any).lastRootTipHash = block.hash;
           }
-          
+
           // Send UPDATE_ROOT_TIP immediately (fire and forget). Let Worker de-duplicate if needed.
           try {
             if ((context.p2p as any)?.sendToSignalServer) {
               (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", updatePayload);
             }
-          } catch {}
+          } catch { }
         }
-        
+
         // Phase 46+: P2P RootTip Gossip - Broadcast rootTip via P2P network
         // This ensures rootTip propagation even if signal servers are unavailable
         try {
           const { getRootTipGossipManager } = await import("./rootTipGossip.js");
           const gossipManager = getRootTipGossipManager();
           gossipManager.init(context.p2p);
-          
+
           // Build rootTip for gossip
           const rootTipForGossip = {
             latestHeight: block.header.height,
@@ -781,7 +786,7 @@ export async function appendMinedBlock(
             trustLevel: "root-only" as const,
             updatedAt: Date.now(),
           };
-          
+
           // Gossip to P2P network (original sender = true, we mined this block)
           await gossipManager.gossipRootTip(rootTipForGossip, true);
         } catch (error) {
@@ -794,7 +799,7 @@ export async function appendMinedBlock(
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
-    
+
     // Handle race condition: block may have been appended by another worker
     if (errorMsg.includes("Invalid block height") || errorMsg.includes("already exists")) {
       // Re-check if block exists with same hash
@@ -803,18 +808,18 @@ export async function appendMinedBlock(
         // Same block - already appended, return success (this is normal in cluster mining)
         return { success: true };
       }
-      
+
       // Check if tip has advanced
       const currentTip = context.storage.getTip();
       if (currentTip && currentTip.header.height > block.header.height) {
         // Tip has advanced - this block is stale
-        return { 
-          success: false, 
-          error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})` 
+        return {
+          success: false,
+          error: `Block ${block.header.height} is stale (tip is now at ${currentTip.header.height})`
         };
       }
     }
-    
+
     return {
       success: false,
       error: errorMsg,

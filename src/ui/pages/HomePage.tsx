@@ -31,10 +31,8 @@ export function HomePage({
   const isZh = locale === "zh";
   const { t } = useI18n();
   const isP2PConnected = !!(p2pNode as any)?.isConnected;
-  const localHeight = chainContext?.storage.getTip()?.header.height ?? 0;
   const rawNetworkHeight = (typeof window !== "undefined" && (window as any).lastRootTipHeight) || 0;
-  const networkHeight = rawNetworkHeight > 0 ? rawNetworkHeight : localHeight;
-  const behindBy = Math.max(0, networkHeight - localHeight);
+  const networkHeight = rawNetworkHeight > 0 ? rawNetworkHeight : 0;
   const peerCount = (p2pNode && (p2pNode as any).getPeerCount) ? (p2pNode as any).getPeerCount() : 0;
 
   return (
@@ -81,7 +79,7 @@ export function HomePage({
                 opacity: 0.95 
               }}>
                 {isP2PConnected && nodeAddress
-                  ? t("banner.networkConnected", { count: peerCount, height: localHeight })
+                  ? t("banner.networkConnected", { count: peerCount, height: networkHeight })
                   : !isP2PConnected && !nodeAddress
                   ? t("banner.networkDisconnected")
                   : !isP2PConnected
@@ -108,7 +106,7 @@ export function HomePage({
         <DailyInfoBar
           chainContext={chainContext}
           nodeAddress={nodeAddress}
-          currentHeight={localHeight}
+          currentHeight={networkHeight}
           isMining={isMining}
           clusterMining={clusterMining}
           currentReferrerAddress={currentReferrerAddress || null}
@@ -170,16 +168,8 @@ export function HomePage({
         </div>
         <div style={{ marginTop: "0.75rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
           <div style={{ minWidth: "140px" }}>
-            <div style={{ opacity: 0.9 }}>{isZh ? "本地高度" : "Local Height"}</div>
-            <div style={{ fontWeight: "bold", fontSize: "1.1rem" }}>{localHeight}</div>
-          </div>
-          <div style={{ minWidth: "140px" }}>
             <div style={{ opacity: 0.9 }}>{isZh ? "网络高度" : "Network Height"}</div>
             <div style={{ fontWeight: "bold", fontSize: "1.1rem" }}>{networkHeight}</div>
-          </div>
-          <div style={{ minWidth: "140px" }}>
-            <div style={{ opacity: 0.9 }}>{isZh ? "落后" : "Behind"}</div>
-            <div style={{ fontWeight: "bold", fontSize: "1.1rem" }}>{behindBy}</div>
           </div>
           <div style={{ minWidth: "140px" }}>
             <div style={{ opacity: 0.9 }}>{isZh ? "对等节点" : "Peers"}</div>

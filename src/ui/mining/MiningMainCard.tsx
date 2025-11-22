@@ -13,7 +13,6 @@ import { SlotInfoBar } from "./SlotInfoBar.js";
 import { computeEffectiveWeight } from "../../core/rewardPoolAllocator.js";
 import { computeOnlineScore, getBalanceUIDC } from "../../core/weightSignals.js";
 import { getBlockRewardRaw, uIDCToIDC } from "../../core/idcEmission.js";
-// useState already imported above
 import { MiningWeightCard } from "./MiningWeightCard.js";
 
 interface MiningMainCardProps {
@@ -753,33 +752,7 @@ export function MiningMainCard({
                   {t("miningMain.miningRequirementsHeading")}
                 </div>
                 <div>{reason}</div>
-                {miningGuardResult.details && (
-                  <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-                    {miningGuardResult.details.quorumScore !== undefined && (
-                      <div>
-                        {t("miningStatus.quorumScore")}: {miningGuardResult.details.quorumScore} / {miningGuardResult.details.requiredQuorumScore || 30}
-                      </div>
-                    )}
-                    {miningGuardResult.details.independentPeerCount !== undefined && (
-                      <div>
-                        {(() => {
-                          const minPeersRequired = chainContext?.params?.minPeersRequired ?? 3;
-                          const requiredPeers = miningGuardResult.details.requiredIndependentPeers || minPeersRequired;
-                          return (
-                            <>
-                              {t("miningStatus.independentPeers")}: {miningGuardResult.details.independentPeerCount} / {requiredPeers}
-                              {miningGuardResult.details.independentPeerCount < requiredPeers && (
-                                <div style={{ fontSize: "0.7rem", color: "#856404", marginTop: "0.25rem", fontStyle: "italic" }}>
-                                  {t("miningMain.needDifferentIPsHint")}
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* QuorumScore and IP restrictions removed - all nodes can mine */}
               </>
             );
           })()}

@@ -11,9 +11,9 @@ compatibility_date = "2024-01-01"
 # No additional configuration needed for WebSocket support
 
 # Custom domain configuration
-routes = [
-  { pattern = "signal.indexerchain.com/*", zone_name = "indexerchain.com" }
-]
+# routes = [
+#   { pattern = "signal.indexerchain.com/*", zone_name = "indexerchain.com" }
+# ]
 
 # Optional: Environment variables
 # [vars]

@@ -1,5 +1,3 @@
-// No imports required
-
 export interface RewardInput {
   address: string;
   balanceIDC: number;

@@ -2047,7 +2047,7 @@ export const translations: Record<Locale, Translations> = {
       myEffectiveWeight: "我的有效权重",
       projectedRewardInline: "预计分红",
       miningRequirementsHeading: "挖矿要求",
-      needDifferentIPsHint: "💡 需要来自不同 IP 的节点（同一电脑的多个标签页不算）",
+      needDifferentIPsHint: "", // Removed - all nodes can mine without IP restrictions
       waiting: "等待网络",
       synced: "已同步",
       catchingUp: "追赶中",
@@ -2067,15 +2067,15 @@ export const translations: Record<Locale, Translations> = {
       totalMultiplierCapped: "总乘数（封顶）",
       expectedTotalReward: "预期总奖励",
       globalMultipliers: "全局乘数（封顶 3.0x）",
-      ipReputation: "IP 信誉系数",
+      ipReputation: "", // Removed - IP reputation no longer used
       sessionDuration: "在线时长",
       activeBooster: "连续登录",
       year1Cap: "第1年上限: 1.5x",
       totalMultiplier: "总乘数",
       minerBaseReward: "矿工基础奖励",
-      ipSharingWeight: "IP 共享权重（同 IP 多设备）",
-      concurrentMinersOnSameIP: "当前 IP 同时挖矿设备",
-      thisDeviceWeight: "本设备权重",
+      ipSharingWeight: "", // Removed - IP sharing weight no longer used
+      concurrentMinersOnSameIP: "", // Removed - IP restrictions removed
+      thisDeviceWeight: "", // Removed - IP sharing weight no longer used
       finalMinerReward: "最终矿工奖励",
       referralRewards: "邀请奖励",
       level1Referral: "一级邀请奖励",
@@ -3222,7 +3222,7 @@ export const translations: Record<Locale, Translations> = {
       myEffectiveWeight: "My Effective Weight",
       projectedRewardInline: "Projected reward",
       miningRequirementsHeading: "Mining Requirements",
-      needDifferentIPsHint: "💡 Need peers from different IPs (multiple tabs on same computer don't count)",
+      needDifferentIPsHint: "", // Removed - all nodes can mine without IP restrictions
       waiting: "Waiting",
       synced: "Synced",
       catchingUp: "Catching up",
@@ -3242,13 +3242,13 @@ export const translations: Record<Locale, Translations> = {
       totalMultiplierCapped: "Total Multiplier (Capped)",
       expectedTotalReward: "Expected Total Reward",
       globalMultipliers: "Global Multipliers (Capped at 3.0x)",
-      ipReputation: "IP Reputation",
+      ipReputation: "", // Removed - IP reputation no longer used
       sessionDuration: "Session Duration",
       activeBooster: "ActiveBooster",
       year1Cap: "Year 1 Cap: 1.5x",
       totalMultiplier: "Total Multiplier",
       minerBaseReward: "Miner Base Reward",
-      ipSharingWeight: "IP Sharing Weight (Same IP Multiple Devices)",
+      ipSharingWeight: "", // Removed - IP sharing weight no longer used
       concurrentMinersOnSameIP: "Concurrent Miners on Same IP",
       thisDeviceWeight: "This Device Weight",
       finalMinerReward: "Final Miner Reward",

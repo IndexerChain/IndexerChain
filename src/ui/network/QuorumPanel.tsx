@@ -167,9 +167,6 @@ export function QuorumPanel({ chainContext, p2pNode, locale }: QuorumPanelProps)
                       <th style={{ padding: "0.5rem", textAlign: "left" }}>
                         {isZh ? "Peer ID" : "Peer ID"}
                       </th>
-                      <th style={{ padding: "0.5rem", textAlign: "left" }}>
-                        {isZh ? "IP Hash" : "IP Hash"}
-                      </th>
                       <th style={{ padding: "0.5rem", textAlign: "center" }}>
                         {isZh ? "分数" : "Score"}
                       </th>
@@ -200,11 +197,8 @@ export function QuorumPanel({ chainContext, p2pNode, locale }: QuorumPanelProps)
                           <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.75rem" }}>
                             {formatAddress(peer.peerId, 8, 8)}
                           </td>
-                          <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.75rem" }}>
-                            {peer.ipHash || "-"}
-                          </td>
                           <td style={{ padding: "0.5rem", textAlign: "center", fontWeight: "bold" }}>
-                            {peer.quorumScore}
+                            {peer.quorumScore || "-"}
                           </td>
                           <td style={{ padding: "0.5rem", textAlign: "center" }}>
                             {peer.avgLatencyMs ? `${Math.round(peer.avgLatencyMs)}ms` : "-"}

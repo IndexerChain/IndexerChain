@@ -107,8 +107,6 @@ export interface MiningGuardResult {
     activeMinerId?: string;
     currentMinerId?: string;
     deviceId?: string;
-    ipSharingWeight?: number;
-    ipSharingPosition?: number;
       // All-Light-Node: header alignment diagnostics
       localTipHash?: string;
       rootTipHash?: string;
@@ -330,34 +328,8 @@ export class MiningGuard {
       miningMode = "GUARDED"; // Use GUARDED mode for independent IP mining (no P2P peers)
     }
     
-    // Pool Mining Architecture: Simplified requirements for independent IP mining
-    // New rules: Signal/Shadow connection + QuorumScore ≥ 30 (independent IP) + sync status
-    const POOL_MINING_REQUIRED_QUORUM_SCORE = 30; // Independent IP = 30+ score
-    
-    // Check QuorumScore (independent IP requirement)
-    // In pool mining mode, independent IP nodes can mine with only Signal/Shadow connection
-    // QuorumScore ≥ 30 means the node is an independent IP (not same IP as others)
-    // All-Light-Node Chain: At genesis (height 0), allow mining even with low QuorumScore
-    // Genesis mode allows mining to start the chain
-    if (p2pNode && quorumStatus.totalScore < POOL_MINING_REQUIRED_QUORUM_SCORE && currentHeight > 0) {
-      // Only enforce QuorumScore requirement after genesis (height > 0)
-      return {
-        ok: false,
-        mode: "BLOCKED",
-        code: "INSUFFICIENT_PEERS",
-        reason: `Pool mining requires independent IP (QuorumScore ≥ ${POOL_MINING_REQUIRED_QUORUM_SCORE}). Current: ${quorumStatus.totalScore}`,
-        details: {
-          peerCount,
-          requiredPeers: 0, // No peer requirement in pool mining
-          quorumScore: quorumStatus.totalScore,
-          requiredQuorumScore: POOL_MINING_REQUIRED_QUORUM_SCORE,
-          independentPeerCount: quorumStatus.independentPeerCount,
-        },
-      };
-    }
-    
-    // If QuorumScore is sufficient and Signal/Shadow is connected, allow mining
-    // Note: We skip peer count checks in pool mining mode - only Signal/Shadow connection is needed
+    // All browser nodes can mine - no IP or QuorumScore restrictions
+    // Removed QuorumScore requirement - all nodes are allowed to mine
     
     // Phase 39: Stage 1 - Genesis Quorum Mode (height = 0)
     // Pool Mining Architecture: Genesis mode still applies, but with simplified requirements
@@ -556,12 +528,12 @@ export class MiningGuard {
         ok: false,
         mode: "BLOCKED",
         code: "INSUFFICIENT_PEERS",
-        reason: `Pool mining requires Signal/Shadow connection and QuorumScore ≥ 30. Current: Signal=${isSignalConnected}, QuorumScore=${quorumStatus.totalScore}`,
+        reason: `Pool mining requires Signal/Shadow connection. Current: Signal=${isSignalConnected}`,
         details: {
           peerCount,
           requiredPeers: 0, // No peer requirement in pool mining
           quorumScore: quorumStatus.totalScore,
-          requiredQuorumScore: POOL_MINING_REQUIRED_QUORUM_SCORE,
+          requiredQuorumScore: 0, // No QuorumScore requirement - all nodes can mine
         },
       };
     }
@@ -696,37 +668,9 @@ export class MiningGuard {
     // This would require integration with GlobalStateSentinel
     // For now, we'll just check if we have enough peers
     
-    // Phase 44: Calculate IP sharing weight
-    let ipSharingWeight = 1.0;
-    let ipSharingPosition = 1;
-    if (p2pNode && deviceId) {
-      try {
-        const { getIPSharingTracker } = await import("./ipSharingWeight.js");
-        const { getQuorumManager } = await import("./quorumManager.js");
-        
-        const ipSharingTracker = getIPSharingTracker();
-        const quorumManager = getQuorumManager();
-        quorumManager.initialize(p2pNode, chainContext);
-        const quorumStatus = quorumManager.getQuorumStatus();
-        
-        // Get IP hash from quorum status (if available)
-        // Try to find local peer's IP hash, or use deviceId
-        const localPeer = quorumStatus.peerMetrics.find(p => p.peerId === p2pNode?.nodeId);
-        const ipHash = localPeer?.ipHash || deviceId;
-        const minerId = deviceId;
-        
-        // Register this miner and get position
-        ipSharingPosition = ipSharingTracker.registerMiner(ipHash, minerId);
-        ipSharingWeight = ipSharingTracker.getSharingWeight(ipHash, minerId);
-      } catch (e) {
-        logger.debug("[Phase 44] Failed to calculate IP sharing weight:", e);
-        // Continue with default weight (1.0)
-      }
-    }
-
     // Phase 33: All checks passed, return with mining mode and quorum info
     // Phase 39: Include network stage information
-    // Phase 44: Include IP sharing weight information
+    // IP sharing weight removed - all nodes can mine without IP restrictions
     // Phase 45: Get actual required quorum score (first year = 40, not 50)
     const isFirstYearModeForDisplay = this.isFirstYear(chainContext) && isMainnet(chainContext.params);
     let requiredQuorumScoreForDisplay = quorumStatus.requiredScore;
@@ -800,10 +744,7 @@ export class MiningGuard {
         requiredIndependentPeers,
         networkStage,
         networkStageInfo: stageInfo,
-        // Phase 44: IP sharing information
         deviceId,
-        ipSharingWeight,
-        ipSharingPosition,
       },
     };
   }

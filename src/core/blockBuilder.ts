@@ -30,10 +30,6 @@ import {
 import {
   getReferralSystem,
 } from "./referralSystem.js";
-import {
-  getIPSharingTracker,
-  getOrCreateDeviceId,
-} from "./ipSharingWeight.js";
 import { isSlotLeaderModeEnabled, isPooledRewardsEnabled } from "./featureFlags.js";
 import { getSlotIdentity, deriveRandSeed, selectLeader } from "./slotSchedule.js";
 import { allocateRewardPool, computeEffectiveWeight } from "./rewardPoolAllocator.js";
@@ -45,7 +41,6 @@ import { computeOnlineScore } from "./weightSignals.js";
  * Phase 16: Uses dynamic emission schedule based on block height and total minted
  * Phase 41: Applies reward multipliers (IP reputation + session duration)
  * Phase 42: Adds ActiveBooster (consecutive days) + Referral rewards (invitation fission)
- * Phase 44: Applies IP sharing weight (same IP multiple miners reward reduction)
  * 
  * @param minerAddress Address of the miner
  * @param blockHeight Block height (for emission calculation)
@@ -53,7 +48,6 @@ import { computeOnlineScore } from "./weightSignals.js";
  * @param fees Total transaction fees collected in this block (in uIDC)
  * @param quorumScore Optional: QuorumScore for IP reputation multiplier (default: 100 = 1.0x)
  * @param sessionDurationMs Optional: Session duration in ms for session multiplier (default: uses SessionTracker)
- * @param ipSharingWeight Optional: IP sharing weight (0.1-1.0) for same IP multiple miners (default: 1.0)
  * @returns Coinbase transaction with all operations (miner reward + referral rewards)
  */
 type PooledCandidateInput = { address: Address; balanceUIDC?: bigint; onlineScore?: number; reliabilityScore?: number };
@@ -65,7 +59,6 @@ export async function createCoinbaseTx(
   fees: bigint = 0n,
   quorumScore: number = 100, // Default: standard node (1.0x)
   sessionDurationMs?: number, // Optional: if not provided, uses SessionTracker
-  ipSharingWeight: number = 1.0, // Phase 44: IP sharing weight (default: 1.0 = full reward)
   pooledRecipients?: Address[], // Phase 50: When provided, perform pooled distribution (equal weights)
   pooledCandidateInputs?: PooledCandidateInput[] // Phase 50-B: Weighted pooled distribution
 ): Promise<Tx> {
@@ -120,9 +113,7 @@ export async function createCoinbaseTx(
     blockRewardUIDC = (blockRewardUIDC * BigInt(Math.floor(scaleFactor * 1000))) / 1000n;
   }
   
-  // Phase 44: Apply IP sharing weight (same IP multiple miners reward reduction)
-  // This is applied AFTER hard cap to ensure fairness
-  blockRewardUIDC = (blockRewardUIDC * BigInt(Math.floor(ipSharingWeight * 1000))) / 1000n;
+  // IP sharing weight removed - all nodes can mine without IP restrictions
   
   // Phase 42: Calculate referral rewards
   // Phase 42.1: Pass blockHeight for year-based decay
@@ -444,7 +435,7 @@ export async function createCoinbaseTx(
  * Phase 6: Calculates dynamic difficulty based on recent block times
  * Phase 7: Automatically adds coinbase transaction as first transaction
  * Phase 15: Computes stateCommitment from IndexState after applying all transactions
- * Phase 44: Applies IP sharing weight for same IP multiple miners
+ * Creates candidate block for mining
  * 
  * @param pendingTxs Pending transactions to include
  * @param prevBlock Previous block (tip of the chain)
@@ -452,8 +443,8 @@ export async function createCoinbaseTx(
  * @param params Chain parameters
  * @param minerAddress Address of the miner (for coinbase reward)
  * @param currentIndexState Current IndexState (before applying block transactions)
- * @param p2pNode Optional: P2P node for IP sharing weight calculation
- * @param chainContext Optional: Chain context for IP sharing weight calculation
+ * @param p2pNode Optional: P2P node
+ * @param chainContext Optional: Chain context
  * @returns Candidate block with nonce = 0 (ready for mining)
  */
 export async function buildCandidateBlock(
@@ -463,8 +454,8 @@ export async function buildCandidateBlock(
   params: ChainParams,
   minerAddress: Address,
   currentIndexState: IndexState,
-  p2pNode?: any, // Phase 44: Optional P2P node
-  chainContext?: any // Phase 44: Optional chain context
+  _p2pNode?: any, // Optional P2P node (not used after IP restrictions removal)
+  _chainContext?: any // Optional chain context (not used after IP restrictions removal)
 ): Promise<Block> {
   const height = prevBlock.header.height + 1;
   const prevHash = prevBlock.hash;
@@ -551,60 +542,18 @@ export async function buildCandidateBlock(
     }
   } catch {}
 
-  // Phase 41: Get QuorumScore for reward multiplier
-  // Try to get from QuorumManager if available
-  let quorumScore = 100; // Default: standard node (1.0x multiplier)
-  try {
-    const { getQuorumManager } = await import("./quorumManager.js");
-    const quorumManager = getQuorumManager();
-    if (p2pNode && chainContext) {
-      quorumManager.initialize(p2pNode, chainContext);
-    }
-    const quorumStatus = quorumManager.getQuorumStatus();
-    // Use local node's quorum score (if available) or average peer score
-    quorumScore = quorumStatus.totalScore > 0 
-      ? Math.max(quorumStatus.totalScore, 80) // Minimum 80 for standard multiplier
-      : 100; // Default if no quorum data
-  } catch (e) {
-    // QuorumManager not available, use default
-  }
+  // IP reputation multiplier removed - all nodes get 1.0x
+  // No need to calculate quorumScore
 
-  // Phase 44: Get IP sharing weight
-  let ipSharingWeight = 1.0; // Default: full reward
-  try {
-    const deviceId = getOrCreateDeviceId();
-    const ipSharingTracker = getIPSharingTracker();
-    
-    if (p2pNode && chainContext) {
-      // Get IP hash from QuorumManager (if available)
-      const { getQuorumManager } = await import("./quorumManager.js");
-      const quorumManager = getQuorumManager();
-      quorumManager.initialize(p2pNode, chainContext);
-      const quorumStatus = quorumManager.getQuorumStatus();
-      
-      // Get IP hash from quorum status (if available)
-      // For now, use deviceId as fallback for IP identification
-      // Try to find local peer's IP hash, or use deviceId
-      const localPeer = quorumStatus.peerMetrics.find(p => p.peerId === p2pNode?.nodeId);
-      const ipHash = localPeer?.ipHash || deviceId;
-      
-      // Register this miner and get sharing weight
-      ipSharingTracker.registerMiner(ipHash, deviceId);
-      ipSharingWeight = ipSharingTracker.getSharingWeight(ipHash, deviceId);
-    }
-  } catch (e) {
-    // Continue with default weight (1.0)
-  }
-
-  // Phase 16 + 41 + 44: Create coinbase transaction with dynamic reward + multipliers + IP sharing weight + fees
+  // Phase 16 + 41: Create coinbase transaction with dynamic reward + multipliers + fees
+  // IP sharing weight removed - all nodes can mine without IP restrictions
   const coinbaseTx = await createCoinbaseTx(
     minerAddress, 
     height, 
     totalMinted, 
     totalFeesUIDC,
-    quorumScore, // Pass quorumScore for IP reputation multiplier
+    100, // Default quorumScore (no IP reputation multiplier)
     undefined, // sessionDurationMs - will use SessionTracker
-    ipSharingWeight, // Phase 44: Pass IP sharing weight
     pooledRecipients, // Phase 50: Equal recipients fallback
     pooledCandidateInputs // Phase 50-B: Weighted candidates (preferred)
   );

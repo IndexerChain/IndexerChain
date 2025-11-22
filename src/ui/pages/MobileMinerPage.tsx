@@ -16,7 +16,7 @@ interface MobileMinerPageProps {
 }
 
 export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const [autoMining, setAutoMining] = useState<boolean>(() => {
     try {
       const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_auto_mining') : null;
@@ -36,7 +36,6 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
   const [miningGuardOk, setMiningGuardOk] = useState<boolean>(true);
   const [statusText, setStatusText] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
-  const [localHeight, setLocalHeight] = useState<number>(0);
   const [networkHeight, setNetworkHeight] = useState<number>(0);
   
   const address = props.nodeAddress || '';
@@ -63,7 +62,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
   // Use mining data hook
   const {
     balance,
-    localHeight: hookLocalHeight,
+    // Removed localHeight - light node mode only shows network height
     networkHeight: hookNetworkHeight,
     miningGuardResult
   } = useMiningData({
@@ -78,11 +77,10 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     bootstrapComplete: props.bootstrapComplete
   });
 
-  // Sync local height state
+  // Sync network height state (light node mode - no local height)
   useEffect(() => {
-    setLocalHeight(hookLocalHeight);
     setNetworkHeight(hookNetworkHeight);
-  }, [hookLocalHeight, hookNetworkHeight]);
+  }, [hookNetworkHeight]);
 
   // Auto-start/stop based on autoMining
   useEffect(() => {
@@ -331,18 +329,9 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
       {/* Mining Info */}
       <div className={styles.infoCard}>
         <div className={styles.infoRow}>
-          <span className={styles.infoLabel}>{t('miningConsole.localHeight')}:</span>
-          <span className={styles.infoValue}>{localHeight.toLocaleString()}</span>
-        </div>
-        <div className={styles.infoRow}>
           <span className={styles.infoLabel}>{t('miningConsole.networkHeight')}:</span>
           <span className={styles.infoValue}>{networkHeight.toLocaleString()}</span>
         </div>
-        {networkHeight > localHeight && (
-          <div className={styles.syncWarning}>
-            ⚠️ {t('miningMain.catchingUp')}: {networkHeight - localHeight} {locale === 'zh' ? '个区块' : 'blocks'}
-          </div>
-        )}
       </div>
 
       {/* Auto-Mining Toggle */}

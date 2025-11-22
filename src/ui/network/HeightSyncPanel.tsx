@@ -171,25 +171,6 @@ export function HeightSyncPanel({
           marginBottom: "1rem",
         }}
       >
-        {/* Local Height */}
-        <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
-          <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
-            {isZh ? "本地高度" : "Local Height"}
-          </div>
-          <div
-            style={{
-              fontSize: "1.5rem",
-              fontWeight: "bold",
-              color: displayInfo.local.color,
-            }}
-          >
-            {displayInfo.local.height}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
-            {displayInfo.local.status}
-          </div>
-        </div>
-
         {/* Shadow Node Height */}
         <div style={{ padding: "0.75rem", background: "white", borderRadius: "6px" }}>
           <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>

@@ -1,15 +1,14 @@
 /**
  * Phase 41: Mining Reward Multiplier System
  * 
- * Implements two reward multipliers to incentivize:
- * 1. IP Reputation Score (0.3x - 1.3x) - Based on QuorumScore
- * 2. Session Duration Multiplier (0.5x - 1.2x) - Anti-bot, rewards long-term nodes
+ * Implements session duration multiplier to incentivize long-term nodes:
+ * - Session Duration Multiplier (0.5x - 1.2x) - Anti-bot, rewards long-term nodes
  * 
- * Final reward = baseReward × IPReputationMultiplier × SessionDurationMultiplier
+ * IP Reputation multiplier removed - all nodes can mine without IP restrictions
+ * 
+ * Final reward = baseReward × SessionDurationMultiplier
  */
 
-// QuorumManager type not needed here, but kept for future reference
-// import type { QuorumManager } from "./quorumManager.js";
 
 /**
  * IP Reputation Multiplier based on QuorumScore
@@ -24,18 +23,9 @@
  * - 120-150: 1.1x (good quality node)
  * - 150+: 1.3x (high quality independent node)
  */
-export function getIPReputationMultiplier(quorumScore: number): number {
-  if (quorumScore < 30) {
-    return 0.0; // No reward for very low quality
-  } else if (quorumScore < 80) {
-    return 0.3; // Low quality node - reduced reward
-  } else if (quorumScore < 120) {
-    return 1.0; // Standard node - full reward
-  } else if (quorumScore < 150) {
-    return 1.1; // Good quality node - 10% bonus
-  } else {
-    return 1.3; // High quality independent node - 30% bonus
-  }
+export function getIPReputationMultiplier(_quorumScore: number): number {
+  // IP reputation multiplier removed - all nodes get 1.0x (no IP restrictions)
+  return 1.0;
 }
 
 /**

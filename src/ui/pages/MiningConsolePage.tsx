@@ -98,8 +98,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         } catch {}
         return 'full';
     });
-    const [zkVerified, setZkVerified] = useState<boolean>(false);
-    const [zkLatencyMs, setZkLatencyMs] = useState<number>(0);
+    // Removed zkVerified and zkLatencyMs - status bar removed
     const [leaderThisSlot, setLeaderThisSlot] = useState<string | null>(null);
     const [payoutProof, setPayoutProof] = useState<{
         ok: boolean;
@@ -600,16 +599,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         } catch {}
     }, [nodeMode]);
 
-    // Mock ZK verification status/latency for UI (until backend wires in)
-    useEffect(() => {
-        const startedAt = Date.now();
-        const id = setInterval(() => {
-            const advancing = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-            setZkVerified(advancing > 0);
-            setZkLatencyMs(Math.max(20, Math.min(2000, Date.now() - startedAt)));
-        }, 1000);
-        return () => clearInterval(id);
-    }, []);
+    // Removed ZK verification status/latency mock - status bar removed
 
     // Keep a human-readable guard reason (we no longer block start while syncing)
     // Pool Mining Architecture: No longer require peers, only Signal/Shadow connection needed
@@ -1270,11 +1260,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         <div className={styles.addressBar}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>{t('miningConsole.localHeight')}</span>
-                                    <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar" style={{ fontSize: '1.1em', minWidth: 'auto' }}>{localHeight.toLocaleString()}</span>
-                                </div>
-                                <div style={{ width: '1px', height: '14px', background: 'var(--color-border)' }}></div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                     <span style={{ color: '#8b949e', fontSize: '0.9em' }}>{t('miningConsole.networkHeight')}</span>
                                     <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar" style={{ fontSize: '1.1em', minWidth: 'auto' }}>{networkHeight.toLocaleString()}</span>
                                 </div>
@@ -1299,33 +1284,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 })()}
                             </div>
                         </div>
-                        {/* ZK/Sync status bar */}
-                        {nodeMode === 'light' && (
-                            <div className={styles.card} style={{ display: 'flex', gap: 12, padding: 12, alignItems: 'center' }}>
-                                <div>
-									<div style={{ fontSize: 12, color: '#8b949e' }}>ZK</div>
-                                    <div style={{ marginTop: 2 }}>{zkVerified ? 'Yes ✅' : 'No ⏳'}</div>
-                                </div>
-                                <div>
-									<div style={{ fontSize: 12, color: '#8b949e' }}>Latency</div>
-                                    <div style={{ marginTop: 2 }}>{zkLatencyMs.toFixed(0)} ms</div>
-                                </div>
-                                <div>
-									<div style={{ fontSize: 12, color: '#8b949e' }}>Finalized</div>
-                                    <div style={{ marginTop: 2 }}>{(typeof window !== 'undefined' && (window as any).lastZkFinalizedHeight) || 0}</div>
-                                </div>
-                                <div>
-									<div style={{ fontSize: 12, color: '#8b949e' }}>Sync</div>
-                                    <div style={{ marginTop: 2 }}>
-                                        {networkHeight >= localHeight ? `Behind by ${Math.max(0, networkHeight - localHeight)} blocks` : 'Synced'}
-                                    </div>
-                                </div>
-                                <div>
-									<div style={{ fontSize: 12, color: '#8b949e' }}>Leader</div>
-									<div style={{ marginTop: 2 }} title={leaderThisSlot || ''}>{humanLeader(leaderThisSlot || '')}</div>
-                                </div>
-                            </div>
-                        )}
+                        {/* ZK/Sync status bar removed - light node mode doesn't need these details */}
 
                         {/* Top Section */}
                         <div className={styles.topSection}>

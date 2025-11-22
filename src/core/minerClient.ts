@@ -31,15 +31,15 @@ type MiningCompactBlockHeader = {
  */
 type MinerWorkerCommand =
   | {
-      type: "START";
-      header: MiningCompactBlockHeader; // Phase 37-C: Compact block header instead of full block
-      difficulty: number;
-      maxIterations?: number;
-      nonceStart?: number; // Phase 18: Starting nonce
-      nonceEnd?: number; // Phase 18: Ending nonce
-      dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
-      miningEpochId?: string; // Phase 37-A: Mining epoch ID
-    }
+    type: "START";
+    header: MiningCompactBlockHeader; // Phase 37-C: Compact block header instead of full block
+    difficulty: number;
+    maxIterations?: number;
+    nonceStart?: number; // Phase 18: Starting nonce
+    nonceEnd?: number; // Phase 18: Ending nonce
+    dutyCycle?: number; // Phase 26: CPU duty cycle (0.0 to 1.0)
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
+  }
   | { type: "STOP"; miningEpochId?: string } // Phase 37-A: Include epoch ID in STOP
   | { type: "SET_DUTY_CYCLE"; dutyCycle: number }; // Phase 26: Update duty cycle dynamically
 
@@ -51,39 +51,39 @@ type MinerWorkerCommand =
  */
 type MinerWorkerEvent =
   | {
-      type: "PROGRESS";
-      nonce: number;
-      hash: string;
-      hashesTried: number;
-      startedAt: number;
-      miningEpochId?: string; // Phase 37-A: Mining epoch ID
-    }
+    type: "PROGRESS";
+    nonce: number;
+    hash: string;
+    hashesTried: number;
+    startedAt: number;
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
+  }
   | {
-      type: "FOUND";
-      nonce: number; // Phase 37-C: Only nonce, not full block
-      hash: string;
-      hashesTried: number;
-      startedAt: number;
-      finishedAt: number;
-      miningEpochId?: string; // Phase 37-A: Mining epoch ID
-    }
+    type: "FOUND";
+    nonce: number; // Phase 37-C: Only nonce, not full block
+    hash: string;
+    hashesTried: number;
+    startedAt: number;
+    finishedAt: number;
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
+  }
   | {
-      type: "STOPPED";
-      reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
-      errorMessage?: string;
-      miningEpochId?: string; // Phase 37-A: Mining epoch ID
-    }
+    type: "STOPPED";
+    reason: "user" | "replaced" | "error" | "exhausted"; // Phase 18: Added "exhausted"
+    errorMessage?: string;
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
+  }
   | {
-      type: "EXHAUSTED"; // Phase 37-A: Separate EXHAUSTED event
-      lastNonce: number;
-      hashesTried: number;
-      miningEpochId?: string; // Phase 37-A: Mining epoch ID
-    }
+    type: "EXHAUSTED"; // Phase 37-A: Separate EXHAUSTED event
+    lastNonce: number;
+    hashesTried: number;
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
+  }
   | {
-      type: "ERROR"; // Phase 37-A: Separate ERROR event
-      error: string;
-      miningEpochId?: string; // Phase 37-A: Mining epoch ID
-    };
+    type: "ERROR"; // Phase 37-A: Separate ERROR event
+    error: string;
+    miningEpochId?: string; // Phase 37-A: Mining epoch ID
+  };
 
 /**
  * Progress event handler
@@ -188,10 +188,10 @@ export class MinerClient {
           });
         });
       };
-      
+
       // Log successful worker initialization
       logger.debug("Miner worker initialized successfully");
-      
+
       // Add message handler
       this.worker.onmessage = (event: MessageEvent<MinerWorkerEvent>) => {
         this.handleWorkerMessage(event.data);
@@ -223,6 +223,10 @@ export class MinerClient {
    * Phase 37-A: Validate epoch ID before processing events
    */
   private handleWorkerMessage(event: MinerWorkerEvent): void {
+    // Production: No debug logs
+    if (process.env.NODE_ENV === 'development') {
+      logger.debug(`[MinerClient] Received worker message: ${event.type}`, event);
+    }
     // Phase 37-A: Validate epoch ID if validator is provided
     if (this.epochValidator) {
       const isValid = this.epochValidator(event.miningEpochId);
@@ -398,17 +402,17 @@ export class MinerClient {
       this.progressHandlers.add(args.onProgress);
     }
     // If no onProgress provided, keep existing handlers (registered via onProgress())
-    
+
     if (args.onFound) {
       this.foundHandlers.clear();
       this.foundHandlers.add(args.onFound);
     }
-    
+
     if (args.onStopped) {
       this.stoppedHandlers.clear();
       this.stoppedHandlers.add(args.onStopped);
     }
-    
+
     // Handlers registered (either from args or from onProgress()/onFound()/onStopped())
 
     // Reset stats
@@ -474,7 +478,7 @@ export class MinerClient {
       return;
     }
 
-    const command: MinerWorkerCommand = { 
+    const command: MinerWorkerCommand = {
       type: "STOP",
       miningEpochId: this.currentEpochId ?? undefined, // Phase 37-A: Include epoch ID
     };
