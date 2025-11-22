@@ -4601,9 +4601,6 @@ function App() {
         if (typeof window !== "undefined") {
           (window as any).__soloMiningMode = true;
           (window as any).__isMining = true;
-          try {
-            console.log("[LightSlot] Solo mining mode enabled - IndexState restore blocked");
-          } catch {}
         }
         
         // CRITICAL: Reset Expected Balance to chain kernel state before starting mining
@@ -4631,20 +4628,15 @@ function App() {
                   detail: { address: minerAddr, balance: currentBalance } 
                 }));
               } catch {}
-              
-              try {
-                console.log("[LightSlot] Reset Expected Balance to chain kernel:", currentBalance, "for", minerAddr);
-              } catch {}
             }
           }
         } catch (e) {
-          try { console.log("[LightSlot] Failed to reset Expected Balance:", e); } catch {}
+          // ignore
         }
         
         // Start per-slot loop
         const loopKey = "lightSlotLoop";
         (window as any)[loopKey] && clearInterval((window as any)[loopKey]);
-        try { console.log("[LightSlot] loop starting"); } catch {}
         (window as any)[loopKey] = window.setInterval(async () => {
           try {
             if (!chainContextRef.current || !isMiningRef.current) return;
@@ -4652,7 +4644,6 @@ function App() {
             if (isProposingRef.current) return;
             const tip = ctx.storage.getTip();
             if (!tip) return;
-            try { console.log("[LightSlot] tip", tip.header.height, tip.hash.substring(0, 12)); } catch {}
             // Track latest observed tip to avoid re-proposing same height
             if (tip.header.height > lastProposedHeightRef.current) {
               lastProposedHeightRef.current = tip.header.height;
@@ -4700,7 +4691,6 @@ function App() {
               const seed = await deriveRandSeed(tip.hash, epochId, slotIndex);
               const candidates = recipients.map((a) => ({ address: a, weight: 1 }));
               const leader = await selectLeader(epochId, slotIndex, seed, candidates);
-              try { console.log("[LightSlot] epoch", epochId, "slot", slotIndex, "leader", leader === minerAddr ? "ME" : leader?.slice(0, 12)); } catch {}
               if (leader !== minerAddr) { isProposingRef.current = false; return; } // not leader for this slot
               
               // Store slot key for multi-node mode
@@ -4713,7 +4703,6 @@ function App() {
                 isProposingRef.current = false;
                 return;
               }
-              try { console.log("[LightSlot] SINGLE-NODE mode: skipping slot checks, mining height", expectedHeight); } catch {}
             }
             
             // Get epoch/slot for block metadata (even in single-node mode, for consistency)
@@ -4723,7 +4712,6 @@ function App() {
             // Build candidate block (coinbase-only), then set proposer metadata
             const pendingTxs = mempool.getAll();
             const allBlocks = ctx.storage.getAllBlocks();
-            try { console.log("[LightSlot] buildCandidate for next height", tip.header.height + 1, isSingleNode ? "(SINGLE-NODE)" : ""); } catch {}
             
             // OPTIMIZATION: In single-node mode, use minimal pendingTxs (coinbase only) for faster building
             const txsToUse = isSingleNode ? [] : pendingTxs; // Single-node: skip pending txs for speed
@@ -4738,7 +4726,6 @@ function App() {
               ctx.p2p || undefined,
               ctx
             );
-            try { console.log("[LightSlot] candidate prevHash", candidateBlock.header.prevHash?.substring(0, 12), "height", candidateBlock.header.height); } catch {}
             // Inject proposer metadata for verification rule
             (candidateBlock.header as any).proposer = minerAddr;
             (candidateBlock.header as any).epoch = epochId;
@@ -4752,19 +4739,14 @@ function App() {
             let verification: { valid: boolean; error?: string } = { valid: true };
             if (!isSingleNode) {
               verification = await verifyBlock(blockToAppend as any, tip, allBlocks, ctx.params);
-              try { console.log("[LightSlot] verify", verification.valid, verification.error || "ok"); } catch {}
               if (!verification.valid) {
-                try { console.log("[LightSlot] verify failed:", verification.error); } catch {}
                 isProposingRef.current = false;
       return;
     }
-            } else {
-              try { console.log("[LightSlot] SINGLE-NODE: skipping verification for speed"); } catch {}
             }
             
             const result = await appendMinedBlock(blockToAppend as any, ctx);
             if (result.success) {
-              try { console.log("[LightSlot] appended height", blockToAppend.header.height); } catch {}
               lastProposedHeightRef.current = blockToAppend.header.height;
               if (!isSingleNode) {
                 // Only track slot key in multi-node mode
@@ -4884,7 +4866,6 @@ function App() {
                       const kernelBalance = chainContextRef.current.indexState.getBalance(minerAddr);
                       if (typeof kernelBalance === "number" && Number.isFinite(kernelBalance) && kernelBalance > previousLocalBalance) {
                         previousLocalBalance = kernelBalance;
-                        try { console.log("[LightSlot] Using chain kernel balance for initialization:", kernelBalance); } catch {}
                       }
                     }
                   }
@@ -4900,16 +4881,6 @@ function App() {
                   );
                   
                   w.lastLocalBalance = newLocalBalance;
-                  
-                  try { 
-                    console.log("[LightSlot] ExpectedBalance local++ =>", newLocalBalance,
-                      "(delta:", coinbaseDelta,
-                      "prev:", previousLocalBalance,
-                      "state:", balanceFromState,
-                      "IndexState ID:", (ctx.indexState as any)._debugId,
-                      "Storage Tip:", ctx.storage.getTip()?.header.height,
-                      "for", minerAddr); 
-                  } catch {}
                   
                   // Dispatch balance update event with the accumulated (non-reverting) balance
                   try {
@@ -4927,12 +4898,9 @@ function App() {
                   return prev ? { ...prev } : prev;
                 });
               } catch {}
-            } else {
-              try { console.log("[LightSlot] append failed:", result.error); } catch {}
             }
             isProposingRef.current = false;
           } catch (e) {
-            try { console.log("[LightSlot] loop error:", e instanceof Error ? e.message : String(e)); } catch {}
             isProposingRef.current = false;
           }
         }, 5); // Ultra-fast 5ms loop for single-node mining (was 10ms, originally 50ms)
@@ -5319,7 +5287,6 @@ function App() {
       (window as any).__soloMiningMode = false;
       (window as any).__isMining = false;
       try {
-        console.log("[LightSlot] Solo mining mode disabled - IndexState restore allowed");
       } catch {}
     }
     try { minerClient.stopMining("user"); } catch {}

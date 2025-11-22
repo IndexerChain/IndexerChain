@@ -132,7 +132,6 @@ export class IndexState {
     try {
       const g: any = (typeof window !== "undefined") ? (window as any) : {};
       if (typeof g.__soloMiningMode === "boolean" && g.__soloMiningMode) {
-        console.warn(`[IndexState] 🛑 Blocked ${actionName} during solo mining mode (only applyBlock allowed)`);
         throw new Error(`IndexState modification blocked: ${actionName} (solo mining mode)`);
       }
     } catch (e) {
@@ -470,7 +469,6 @@ export class IndexState {
     try {
       const g: any = (typeof window !== "undefined") ? (window as any) : {};
       if (typeof g.__soloMiningMode === "boolean" && g.__soloMiningMode && !this.isApplyingBlock) {
-        console.warn("[IndexState] 🛑 getInternalState() called during solo mining mode - returning read-only view");
         // Return a read-only proxy that throws on modification attempts
         return new Proxy(this.state, {
           get: (target, prop) => {

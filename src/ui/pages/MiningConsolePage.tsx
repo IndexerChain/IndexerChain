@@ -361,8 +361,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     // If chain kernel balance is smaller than what we've displayed, it was likely reset
                     // Keep the previous displayed value to prevent rollback
                     if (candidate < lastDisplayedBalanceRef.current) {
-                        console.warn("[MiningConsole] Detected indexState rollback:", candidate, "<", lastDisplayedBalanceRef.current, 
-                            "- keeping previous Expected Balance");
                         candidate = lastDisplayedBalanceRef.current;
                     } else {
                         // Normal update: use max to prevent visual flicker
@@ -398,10 +396,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                     }
                     initializedRef.current = true;
                     lastChainContextIdRef.current = currentContextId;
-                    console.log("[MiningConsole] Initialized Expected Balance from chain kernel:", kernelBalance);
                 }
             } catch (e) {
-                console.error("[MiningConsole] Failed to initialize balance:", e);
+                // ignore
             }
         }
         
@@ -936,7 +933,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                             
                                             // CRITICAL: Block snapshot application during solo mining to prevent balance rollback
                                             if (!guardSnapshotApplication(snapshotHeight, currentHeight)) {
-                                                console.warn(`[MiningConsole] Skipping snapshot application at height ${snapshotHeight} (solo mining mode)`);
+                                                // Skip snapshot application during solo mining
                                             } else if (snapshotData.indexState) {
                                                 const restoredState = IndexState.fromSnapshot(snapshotData.indexState);
                                                 const restoredInternalState = (restoredState as any).getInternalState();
@@ -978,7 +975,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                         }
                                                     } catch (reorgError) {
                                                         // If reorg fails, try to continue anyway
-                                                        console.warn('[MiningConsole] Failed to reorg after snapshot:', reorgError);
                                                     }
                                                 }
                                             }

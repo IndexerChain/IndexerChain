@@ -125,7 +125,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
             const { guardSnapshotApplication } = await import("./stateGuards.js");
             const currentHeight = storage.getTip()?.header.height ?? 0;
             if (!guardSnapshotApplication(fullSnapMeta.height, currentHeight)) {
-              console.warn(`[Chain] Skipping snapshot restore at height ${fullSnapMeta.height} (solo mining mode)`);
+              // Skip snapshot restore during solo mining mode
               startHeight = 0;
             } else {
               const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
@@ -164,7 +164,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
           const { guardSnapshotApplication } = await import("./stateGuards.js");
           const currentHeight = storage.getTip()?.header.height ?? 0;
           if (!guardSnapshotApplication(latestSnap.height, currentHeight)) {
-            console.warn(`[Chain] Skipping snapshot restore at height ${latestSnap.height} (solo mining mode)`);
+            // Skip snapshot restore during solo mining mode
             startHeight = 0;
           } else {
             const restoredState = IndexState.fromSnapshot(snapData.indexState);
@@ -215,7 +215,7 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
           const { guardSnapshotApplication } = await import("./stateGuards.js");
           const currentHeight = storage.getTip()?.header.height ?? 0;
           if (!guardSnapshotApplication(updatedSnap.height, currentHeight)) {
-            console.warn(`[Chain] Skipping remote snapshot restore at height ${updatedSnap.height} (solo mining mode)`);
+            // Skip remote snapshot restore during solo mining mode
           } else {
             // Load the newly saved remote snapshot
             const snapData = await loadSnapshotByHeight(updatedSnap.height);
@@ -547,19 +547,6 @@ export async function appendMinedBlock(
         throw stateError;
       }
 
-      // Log updated balance for debugging
-      try {
-        if (block.txs.length > 0) {
-          const coinbase = block.txs[0];
-          if (coinbase.ownerAddress === "idc_system" && coinbase.ops.length > 0) {
-            const minerOp = coinbase.ops.find(op => op.type === "TRANSFER" && op.to?.startsWith("idc_"));
-            if (minerOp && minerOp.to) {
-              const bal = context.indexState.getBalance(minerOp.to);
-              console.log(`[Chain] Applied block ${block.header.height}. IndexState ID: ${(context.indexState as any)._debugId}. New balance for ${minerOp.to}: ${bal}`);
-            }
-          }
-        }
-      } catch {}
       
       // Phase 29: Report state update to LocalStateCoordinator
       if (typeof window !== "undefined" && (window as any).localStateCoordinator) {

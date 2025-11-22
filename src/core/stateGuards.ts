@@ -30,11 +30,8 @@ export function isSoloMiningMode(): boolean {
 /**
  * Guard against external state writes during solo mining
  */
-export function guardExternalStateWrite(actionName: string): boolean {
+export function guardExternalStateWrite(_actionName: string): boolean {
   if (isSoloMiningMode()) {
-    try { 
-      console.warn(`[StateGuard] 🛑 Blocked external state write: ${actionName} (solo mining mode)`); 
-    } catch {}
     return false;
   }
   return true;
@@ -44,14 +41,8 @@ export function guardExternalStateWrite(actionName: string): boolean {
  * Guard against IndexState restoration/snapshot application during solo mining
  * This is the CRITICAL guard that prevents balance rollback
  */
-export function guardIndexStateRestore(actionName: string, snapshotHeight?: number, currentHeight?: number): boolean {
+export function guardIndexStateRestore(_actionName: string, _snapshotHeight?: number, _currentHeight?: number): boolean {
   if (isSoloMiningMode()) {
-    try {
-      const heightInfo = snapshotHeight !== undefined && currentHeight !== undefined
-        ? ` (snapshot height: ${snapshotHeight}, current height: ${currentHeight})`
-        : '';
-      console.warn(`[StateGuard] 🛑 Blocked IndexState restore: ${actionName}${heightInfo} (solo mining mode)`);
-    } catch {}
     return false;
   }
   return true;
@@ -67,11 +58,8 @@ export function guardSnapshotApplication(snapshotHeight?: number, currentHeight?
 /**
  * Guard against state hydration from storage during solo mining
  */
-export function guardStateHydration(actionName: string): boolean {
+export function guardStateHydration(_actionName: string): boolean {
   if (isSoloMiningMode()) {
-    try {
-      console.warn(`[StateGuard] 🛑 Blocked state hydration: ${actionName} (solo mining mode)`);
-    } catch {}
     return false;
   }
   return true;
