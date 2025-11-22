@@ -15,6 +15,7 @@ import type { ChainContext } from "./chain.js";
 import type { SnapshotMeta } from "./types.js";
 import { getLocalInstanceCoordinator } from "./localInstance.js";
 import { getLatestSnapshotMeta, loadSnapshotByHeight } from "./snapshot.js";
+import { guardExternalStateWrite } from "./stateGuards.js";
 import { IndexState as IndexStateClass } from "./indexState.js";
 import { applyDelta } from "./snapshotDelta.js";
 import { computeSnapshotStateHash } from "./snapshotVerify.js";
@@ -169,6 +170,7 @@ export class LocalStateCoordinator {
     // Phase 38: Listen for storage events (cross-tab updates)
     if (typeof window !== "undefined") {
       window.addEventListener("storage", (e) => {
+        if (!guardExternalStateWrite('storage_event')) return;
         if (e.key && e.key.startsWith(STORAGE_KEY_PREFIX)) {
           this.handleStorageEvent(e);
         }
@@ -195,6 +197,7 @@ export class LocalStateCoordinator {
     if (role === "LEADER") {
       // Leader: Broadcast state updates periodically
       this.stateSyncInterval = window.setInterval(() => {
+        if (!guardExternalStateWrite('broadcastStateUpdate')) return;
         this.broadcastStateUpdate();
       }, STATE_SYNC_INTERVAL_MS);
       
@@ -203,6 +206,7 @@ export class LocalStateCoordinator {
     } else {
       // Follower: Check for updates periodically
       this.followerSyncCheckInterval = window.setInterval(() => {
+        if (!guardExternalStateWrite('checkForStateUpdate')) return;
         this.checkForStateUpdate();
       }, FOLLOWER_SYNC_CHECK_INTERVAL_MS);
       
@@ -467,6 +471,7 @@ export class LocalStateCoordinator {
   private async triggerLocalFastSync(): Promise<void> {
     if (!this.chainContext || this.isSyncing) return;
     if (this.instanceCoordinator.getRole() !== "FOLLOWER") return;
+    if (!guardExternalStateWrite('local_fast_sync')) return;
     
     this.isSyncing = true;
     this.syncInfo.syncStatus = "syncing";
@@ -493,6 +498,7 @@ export class LocalStateCoordinator {
       }
       
       // Apply snapshot to local state
+      if (!guardExternalStateWrite('apply_local_snapshot')) return;
       await this.applyLocalSnapshot(snapshotResponse);
       
       // Verify consistency

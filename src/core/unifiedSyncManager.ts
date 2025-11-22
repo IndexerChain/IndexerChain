@@ -1405,8 +1405,24 @@ export async function handleRootTipUpdate(
   const localTip = chainContext.storage.getTip();
   const localHeight = localTip?.header.height ?? 0;
   
+  // Forward-only rule in single-node mining: never roll back or re-apply state from rootTip
+  // If mining and root tip is not strictly ahead, skip processing entirely
+  if (isMiner && rootTip.latestHeight <= localHeight) {
+    if (statusCallback) {
+      statusCallback(`Mining active: forward-only. Ignoring rootTip ${rootTip.latestHeight} ≤ local ${localHeight}.`);
+    }
+    return {
+      success: true,
+      synced: true,
+      method: "none",
+      fromHeight: localHeight,
+      toHeight: localHeight,
+    };
+  }
+  
   // Detect signal server reset: rootTip is at genesis but local has old blocks
-  if (rootHeight === 0 && localHeight > 1) {
+  // CRITICAL: Do NOT reset if we are mining! We might be the new root.
+  if (rootHeight === 0 && localHeight > 1 && !isMiner) {
     if (statusCallback) {
       statusCallback(`Signal server reset detected (rootTip at genesis, local at ${localHeight}). Clearing local storage...`);
     }

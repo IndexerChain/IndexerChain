@@ -75,7 +75,13 @@ export async function handleReceivedBlock(
 
     try {
       context.storage.appendBlock(block);
-      context.indexState.applyBlock(block);
+      try {
+        context.indexState.applyBlock(block);
+      } catch (stateError) {
+        // CRITICAL: If applying to state fails, we MUST revert the storage append
+        context.storage.removeBlocksFromHeight(block.header.height);
+        throw stateError;
+      }
       
       // Phase 21: Record valid block
       if (sender && context.params.peerScoreEnabled) {
@@ -320,7 +326,13 @@ export async function handleReceivedBlocks(
       }
       
       context.storage.appendBlock(block);
-      context.indexState.applyBlock(block);
+      try {
+        context.indexState.applyBlock(block);
+      } catch (stateError) {
+        // CRITICAL: If applying to state fails, we MUST revert the storage append
+        context.storage.removeBlocksFromHeight(block.header.height);
+        throw stateError;
+      }
       
       // Phase 21: Record valid block
       if (sender && context.params.peerScoreEnabled) {
@@ -587,7 +599,13 @@ export async function handleReceivedBlockBody(
   // Append block
   try {
     context.storage.appendBlock(block);
-    context.indexState.applyBlock(block);
+    try {
+      context.indexState.applyBlock(block);
+    } catch (stateError) {
+      // CRITICAL: If applying to state fails, we MUST revert the storage append
+      context.storage.removeBlocksFromHeight(block.header.height);
+      throw stateError;
+    }
 
     // Phase 21: Record valid block
     if (sender && context.params.peerScoreEnabled) {

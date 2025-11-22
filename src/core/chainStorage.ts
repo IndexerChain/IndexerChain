@@ -200,6 +200,12 @@ export class BrowserChainStorage implements ChainStorage {
       return;
     }
 
+    // Phase 52: Skip loading from persistence if we already have blocks in memory
+    // This prevents overwriting fresh in-memory state with stale persisted state during rapid mining
+    if (this.blocks.length > 0) {
+      return;
+    }
+
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       this.blocks = [];
@@ -226,11 +232,38 @@ export class BrowserChainStorage implements ChainStorage {
     }
 
     try {
+      // Phase 52: Safe Save - Check for stale overwrite
+      // Before writing, check if disk has a higher block height
+      const rawExisting = localStorage.getItem(STORAGE_KEY);
+      if (rawExisting) {
+        try {
+          const existingBlocks = JSON.parse(rawExisting) as Block[];
+          if (Array.isArray(existingBlocks) && existingBlocks.length > 0) {
+            const diskTip = existingBlocks[existingBlocks.length - 1];
+            const localTip = this.getTip();
+            
+            // If disk has higher height, DO NOT overwrite
+            if (diskTip && localTip && diskTip.header.height > localTip.header.height) {
+              console.warn(`[ChainStorage] Prevented stale overwrite! Disk height: ${diskTip.header.height}, Local height: ${localTip.header.height}`);
+              // Optionally reload? For now just abort save to protect data.
+              return;
+            }
+            // If heights are equal, check hash?
+            if (diskTip && localTip && diskTip.header.height === localTip.header.height && diskTip.hash !== localTip.hash) {
+               console.warn(`[ChainStorage] Fork detected during save! Disk hash: ${diskTip.hash}, Local hash: ${localTip.hash}`);
+               // Don't overwrite potentially valid competing block
+               return;
+            }
+          }
+        } catch {}
+      }
+
       const serialized = JSON.stringify(this.blocks);
       localStorage.setItem(STORAGE_KEY, serialized);
     } catch (error) {
       // Handle QuotaExceededError - localStorage is full
       if (error instanceof DOMException && error.name === "QuotaExceededError") {
+        console.warn("[ChainStorage] LocalStorage quota exceeded, attempting to prune...");
         // Try to prune old blocks and retry
         const tip = this.getTip();
         if (tip && tip.header.height > 50) {
@@ -241,19 +274,25 @@ export class BrowserChainStorage implements ChainStorage {
           try {
             const serialized = JSON.stringify(this.blocks);
             localStorage.setItem(STORAGE_KEY, serialized);
+            console.log("[ChainStorage] Pruned and saved successfully");
           } catch (retryError) {
+            console.error("[ChainStorage] Failed to save even after pruning:", retryError);
             // Last resort: clear all blocks except tip
             if (tip) {
               this.blocks = [tip];
               try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(this.blocks));
+                console.log("[ChainStorage] Critical prune (tip only) saved");
               } catch (finalError) {
+                console.error("[ChainStorage] Critical prune failed:", finalError);
               }
             }
           }
         } else {
+          console.error("[ChainStorage] Cannot prune (chain too short), save failed");
         }
       } else {
+        console.error("[ChainStorage] Save failed:", error);
       }
     }
   }

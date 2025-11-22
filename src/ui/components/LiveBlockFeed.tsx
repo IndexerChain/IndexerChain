@@ -27,7 +27,7 @@ export function LiveBlockFeed({ chainContext, locale, maxItems = 20, myAddress }
       }
     };
     update();
-    const timer = setInterval(update, 1500);
+    const timer = setInterval(update, 500);
     return () => {
       mounted = false;
       clearInterval(timer);

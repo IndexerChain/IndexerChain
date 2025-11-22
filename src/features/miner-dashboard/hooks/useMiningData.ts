@@ -72,20 +72,56 @@ export const useMiningData = ({
     // Poll tip height and network height periodically to drive UI without mining
     useEffect(() => {
         if (!chainContext) return;
-        const poll = setInterval(() => {
+        
+        // Immediate update function
+        const updateHeights = () => {
             try {
                 const tip = chainContext.storage.getTip();
                 const lh = tip?.header.height || 0;
                 if (lh !== localHeight) setLocalHeight(lh);
+                
                 const newNetworkHeight = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-                if (typeof newNetworkHeight === 'number' && newNetworkHeight >= 0 && newNetworkHeight !== networkHeight) {
+                
+                // Single-node mode hack: If no peers and local height > network height, assume we are the network tip
+                const peers = p2pNode?.peers?.size || 0;
+                if (peers === 0 && lh > newNetworkHeight) {
+                    setNetworkHeight(lh);
+                    // Also update window hints to reflect this new reality
+                    if (typeof window !== 'undefined') {
+                        (window as any).lastRootTipHeight = lh;
+                    }
+                } else if (typeof newNetworkHeight === 'number' && newNetworkHeight >= 0 && newNetworkHeight !== networkHeight) {
                     setNetworkHeight(newNetworkHeight);
                 }
             } catch {
                 // ignore
             }
-        }, 500);
-        return () => clearInterval(poll);
+        };
+        
+        // Initial update
+        updateHeights();
+        
+        // Poll every 100ms for very responsive UI
+        const poll = setInterval(updateHeights, 100);
+        
+        // Also listen for immediate rootTip updates (bypasses polling delay)
+        const handleRootTipUpdate = (e: any) => {
+            const height = e?.detail?.height;
+            if (typeof height === 'number' && height >= 0) {
+                setNetworkHeight(height);
+            }
+        };
+        
+        if (typeof window !== 'undefined') {
+            window.addEventListener('rootTipUpdated', handleRootTipUpdate as any);
+        }
+        
+        return () => {
+            clearInterval(poll);
+            if (typeof window !== 'undefined') {
+                window.removeEventListener('rootTipUpdated', handleRootTipUpdate as any);
+            }
+        };
         // Intentionally exclude localHeight/networkHeight from deps to avoid tight loops
     }, [chainContext]);
 
@@ -101,7 +137,8 @@ export const useMiningData = ({
         };
 
         updateBalance();
-        const interval = setInterval(updateBalance, 2000);
+        // Increased frequency from 2000ms to 200ms for real-time balance updates during mining
+        const interval = setInterval(updateBalance, 200);
         return () => clearInterval(interval);
     }, [chainContext, nodeAddress]);
 

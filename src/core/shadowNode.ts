@@ -48,6 +48,8 @@ export class ShadowNodeClient {
   private connectionHandlers: Set<(connected: boolean) => void> = new Set();
   private activeMinerId: string | null = null; // Phase 41: Track active miner
   private activeMinerHandlers: Set<(activeMinerId: string | null) => void> = new Set(); // Phase 41: Active miner change handlers
+  // Guard: allow disabling downstream state application while mining single-node
+  private downstreamDisabled: boolean = false;
 
   constructor(config: ShadowNodeConfig) {
     this.config = {
@@ -206,26 +208,32 @@ export class ShadowNodeClient {
     if (data.type === 'SHADOW_CONNECTED') {
       logger.debug(`[ShadowNode] Shadow node confirmed connection`);
       if (data.cachedState) {
-        this.cachedState = data.cachedState;
-        if (this.cachedState) {
-          this.notifyStateUpdateHandlers(this.cachedState);
+        if (!this.downstreamDisabled) {
+          this.cachedState = data.cachedState;
+          if (this.cachedState) {
+            this.notifyStateUpdateHandlers(this.cachedState);
+          }
         }
       }
     } else if (data.type === 'SHADOW_STATE_UPDATE') {
       // Shadow Node received new state from signaling server
       if (data.state) {
-        this.cachedState = data.state;
-        if (this.cachedState) {
-          this.notifyStateUpdateHandlers(this.cachedState);
-          logger.debug(`[ShadowNode] State updated: height=${data.state.latestHeight}`);
+        if (!this.downstreamDisabled) {
+          this.cachedState = data.state;
+          if (this.cachedState) {
+            this.notifyStateUpdateHandlers(this.cachedState);
+            logger.debug(`[ShadowNode] State updated: height=${data.state.latestHeight}`);
+          }
         }
       }
     } else if (data.type === 'SYNC_RESPONSE') {
       // Response to sync request
       if (data.cachedState) {
-        this.cachedState = data.cachedState;
-        if (this.cachedState) {
-          this.notifyStateUpdateHandlers(this.cachedState);
+        if (!this.downstreamDisabled) {
+          this.cachedState = data.cachedState;
+          if (this.cachedState) {
+            this.notifyStateUpdateHandlers(this.cachedState);
+          }
         }
       }
     } else if (data.type === 'PONG') {
@@ -243,6 +251,7 @@ export class ShadowNodeClient {
    * Request latest state from Shadow Node
    */
   requestSync(): void {
+    if (this.downstreamDisabled) return; // Skip requesting downstream state while disabled
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
         type: 'SYNC_REQUEST',
@@ -260,6 +269,11 @@ export class ShadowNodeClient {
         rootTip: rootTip,
       }));
     }
+  }
+
+  /** Enable/disable downstream state application */
+  setDownstreamSyncEnabled(enabled: boolean): void {
+    this.downstreamDisabled = !enabled;
   }
 
   /**

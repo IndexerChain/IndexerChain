@@ -30,6 +30,7 @@ export interface IndexStateSnapshot {
 export class IndexState {
   // Internal: Map<namespace, Map<key, value>>
   private state: Map<string, Map<string, string>> = new Map();
+  public _debugId = Math.random().toString(36).substring(7); // Debug ID to track instances
   
   // Phase 12: Change log for incremental snapshots
   private changeLog: Operation[] = [];

@@ -92,17 +92,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         } catch {}
         return 'full';
     });
-    const [isLiveFeedActive, setIsLiveFeedActive] = useState(true);
     const [zkVerified, setZkVerified] = useState<boolean>(false);
     const [zkLatencyMs, setZkLatencyMs] = useState<number>(0);
     const [leaderThisSlot, setLeaderThisSlot] = useState<string | null>(null);
-    const [payoutHeight, setPayoutHeight] = useState<number>(() => {
-        try {
-            const tip = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-            return Number(tip) || 0;
-        } catch {}
-        return 0;
-    });
     const [payoutProof, setPayoutProof] = useState<{
         ok: boolean;
         height?: number;
@@ -293,17 +285,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         localHeight,
         networkHeight,
         peerCount,
-        blocks,
-        isLiveFeedActive: hookIsLiveFeedActive,
         effectiveWeight,
         projectedReward,
-        onlineScore,
-        currentEpoch,
-        currentSlot,
-        nextLeader,
-        slotPreview,
         toggleMining,
-        setIsLiveFeedActive: setHookIsLiveFeedActive,
         miningGuardResult
     } = useMiningData({
         chainContext: props.chainContext,
@@ -336,12 +320,71 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     const [lightVerifiedBalance, setLightVerifiedBalance] = useState<number | null>(null);
     const [lastBalanceProofHeight, setLastBalanceProofHeight] = useState<number>(0);
 
-    // Sync local state with hook state
+    // Use local balance from IndexState for immediate UI updates (Critical for mining feedback)
+    const [displayBalance, setDisplayBalance] = useState<string>("0.000000");
+    const lastDisplayedBalanceRef = useRef<number>(0);
+    
     useEffect(() => {
-        if (hookIsLiveFeedActive !== isLiveFeedActive) {
-            setIsLiveFeedActive(hookIsLiveFeedActive);
+        const updateBalance = () => {
+            if (!props.chainContext || !props.nodeAddress) return;
+            try {
+                const windowBal = (typeof window !== 'undefined' && (window as any).lastLocalBalance);
+                const localBal = props.chainContext.indexState.getBalance(props.nodeAddress);
+                const zkBal = lightVerifiedBalance;
+                // Prefer local (real-time) > ZK (delayed proof) > window hint
+                let candidate: number = 0;
+                if (typeof localBal === 'number' && Number.isFinite(localBal)) {
+                    candidate = localBal;
+                } else if (typeof zkBal === 'number' && Number.isFinite(zkBal)) {
+                    candidate = zkBal;
+                } else if (typeof windowBal === 'number' && Number.isFinite(windowBal)) {
+                    candidate = windowBal;
+                } else {
+                    candidate = lastDisplayedBalanceRef.current || 0;
+                }
+                lastDisplayedBalanceRef.current = candidate;
+                setDisplayBalance(candidate.toFixed(12));
+            } catch (e) {
+                // ignore
+            }
+        };
+        
+        // Update immediately
+        updateBalance();
+        
+        // Update on an interval as a fallback
+        const interval = setInterval(updateBalance, 500);
+        // Listen for immediate balance updates from App
+        const handleBalanceUpdated = (e: any) => {
+            try {
+                const b = typeof e?.detail?.balance === 'number' ? e.detail.balance : null;
+                if (b !== null) {
+                    lastDisplayedBalanceRef.current = b;
+                    setDisplayBalance(b.toFixed(12));
+                }
+            } catch {}
+        };
+        // Also listen for new blocks to trigger update immediately
+        const handleNewBlock = () => {
+            updateBalance();
+        };
+        if (typeof window !== 'undefined') {
+            window.addEventListener('balanceUpdated', handleBalanceUpdated as any);
+            window.addEventListener('newBlock', handleNewBlock as any);
         }
-    }, [hookIsLiveFeedActive]);
+        return () => {
+            clearInterval(interval);
+            if (typeof window !== 'undefined') {
+                window.removeEventListener('balanceUpdated', handleBalanceUpdated as any);
+                window.removeEventListener('newBlock', handleNewBlock as any);
+            }
+        };
+    }, [props.chainContext, props.nodeAddress, lightVerifiedBalance]);
+
+    // Sync local state with hook state
+    // useEffect(() => {
+    //     // isLiveFeedActive no longer synced with hook since hookIsLiveFeedActive was removed
+    // }, []);
 
     const isMining = status === 'Mining';
 
@@ -378,11 +421,6 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
             }
         } catch {}
     }, [nodeMode]);
-    const handleToggleLiveFeed = () => {
-        const newState = !isLiveFeedActive;
-        setIsLiveFeedActive(newState);
-        setHookIsLiveFeedActive(newState);
-    };
 
     // Mock ZK verification status/latency for UI (until backend wires in)
     useEffect(() => {
@@ -995,10 +1033,19 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             
                             
                             <div className={styles.balanceInfo}>
-                                <span className={styles.balanceLabel}>Current Balance (IDC):</span>
-                                <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance">
-                                    {(nodeMode === 'light' && lightVerifiedBalance !== null ? lightVerifiedBalance : balance).toFixed(12)}
-                                </span>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                        <span className={styles.balanceLabel} style={{ marginRight: 8 }}>Expected Balance (Local):</span>
+                                        <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance" style={{ color: '#4ee672' }}>
+                                            {displayBalance}
+                                        </span>
+                                    </div>
+                                    {nodeMode === 'light' && (
+                                        <div style={{ fontSize: '0.8em', color: '#8b949e', marginTop: 2 }}>
+                                            ZK Verified: {lightVerifiedBalance !== null ? lightVerifiedBalance.toFixed(12) : 'Pending...'}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -1150,7 +1197,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                 <div className={`${styles.dataValue} ${styles.numeric}`} style={{ wordBreak: 'break-all' }}>
                                                   {leaderThisSlot === props.nodeAddress ? 
                                                     <span style={{color: '#2ea043', fontWeight: 'bold', fontSize: '1.1em'}}>✨ YOU ✨</span> : 
-                                                    humanLeader(leaderThisSlot)}
+                                                    humanLeader(leaderThisSlot || undefined)}
                                                 </div>
                                             </div>
                                             <div>
@@ -1161,11 +1208,11 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
                                             <div>
                                                 <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Block</div>
-                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ? (12.0 * effectiveWeight / 100.0) : 0).toFixed(6)} IDC</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ? (projectedReward / ((24 * 60 * 60) / (props.chainContext?.params?.targetBlockTime || 10))) : 0).toFixed(6)} IDC</div>
                                             </div>
                                             <div>
                                                 <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Day</div>
-                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ? (12.0 * effectiveWeight / 100.0 * 17280) : 0).toFixed(6)} IDC</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ?? 0).toFixed(6)} IDC</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1195,7 +1242,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                     if (h > 0) {
                                                         setPayoutProof(null);
                                                         // Trigger proof request
-                                                        props.p2pNode?.sendToSignalServer('REQUEST_PAYOUT_PROOF', { height: h, address: props.nodeAddress });
+                                                        props.p2pNode?.sendToSignalServer('REQUEST_PAYOUT_PROOF', { height: h, address: props.nodeAddress || undefined });
                                                     }
                                                 }
                                             }}
@@ -1208,7 +1255,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                 const h = parseInt(input?.value);
                                                 if (h > 0) {
                                                     setPayoutProof(null);
-                                                    props.p2pNode?.sendToSignalServer('REQUEST_PAYOUT_PROOF', { height: h, address: props.nodeAddress });
+                                                    props.p2pNode?.sendToSignalServer('REQUEST_PAYOUT_PROOF', { height: h, address: props.nodeAddress || undefined });
                                                 }
                                             }}
                                         >

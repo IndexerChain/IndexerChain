@@ -62,6 +62,12 @@ export async function selectLeader(
 ): Promise<Address | null> {
   const usable = candidates.filter((c) => c.weight > 0 && !!c.address);
   if (usable.length === 0) return null;
+  
+  // Optimization: If only one candidate, return immediately (no VRF needed)
+  // This significantly speeds up single-node mining
+  if (usable.length === 1) {
+    return usable[0].address;
+  }
 
   let bestScore = Number.POSITIVE_INFINITY;
   let leader: Address = usable[0].address;

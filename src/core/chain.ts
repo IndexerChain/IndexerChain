@@ -509,7 +509,28 @@ export async function appendMinedBlock(
     context.storage.appendBlock(block);
 
     // Apply block to index state
-    context.indexState.applyBlock(block);
+    try {
+      context.indexState.applyBlock(block);
+    } catch (stateError) {
+      // CRITICAL: If applying to state fails, we MUST revert the storage append
+      // otherwise we have an inconsistent state (block in storage but not in index)
+      context.storage.removeBlocksFromHeight(block.header.height);
+      throw stateError;
+    }
+
+    // Log updated balance for debugging
+    try {
+      if (block.txs.length > 0) {
+        const coinbase = block.txs[0];
+        if (coinbase.ownerAddress === "idc_system" && coinbase.ops.length > 0) {
+          const minerOp = coinbase.ops.find(op => op.type === "TRANSFER" && op.to?.startsWith("idc_"));
+          if (minerOp && minerOp.to) {
+            const bal = context.indexState.getBalance(minerOp.to);
+            console.log(`[Chain] Applied block ${block.header.height}. IndexState ID: ${(context.indexState as any)._debugId}. New balance for ${minerOp.to}: ${bal}`);
+          }
+        }
+      }
+    } catch {}
     
     // Phase 29: Report state update to LocalStateCoordinator
     if (typeof window !== "undefined" && (window as any).localStateCoordinator) {
@@ -707,8 +728,18 @@ export async function appendMinedBlock(
             };
           }
           
-          (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", updatePayload);
-          // Removed frequent log: Updated root tip on signal server
+          // CRITICAL: Update window hints FIRST (synchronous, immediate UI update)
+          if (typeof window !== "undefined") {
+            (window as any).lastRootTipHeight = block.header.height;
+            (window as any).lastRootTipHash = block.hash;
+          }
+          
+          // Send UPDATE_ROOT_TIP immediately (fire and forget). Let Worker de-duplicate if needed.
+          try {
+            if ((context.p2p as any)?.sendToSignalServer) {
+              (context.p2p as any).sendToSignalServer("UPDATE_ROOT_TIP", updatePayload);
+            }
+          } catch {}
         }
         
         // Phase 46+: P2P RootTip Gossip - Broadcast rootTip via P2P network
