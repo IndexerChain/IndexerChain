@@ -252,7 +252,72 @@ export interface Translations {
   };
 
   // Wallet
-  wallet: {
+    miningConsole: {
+      pageTitle: string;
+      walletPageTitle: string;
+      switchLanguage: string;
+      currentLanguage: string;
+      appName: string;
+      initializingChain: string;
+      loading: string;
+      miningMenu: string;
+      walletMenu: string;
+      advancedMenu: string;
+      minerConsoleTitle: string;
+      provingPanelTitle: string;
+      addressCopied: string;
+      notActiveMinerWarning: string;
+      miningGuardBlocked: string;
+      chinese: string;
+      english: string;
+      switchToChinese: string;
+      switchToEnglish: string;
+      poolMiningModeDesc: string;
+      leaderOfThisSlot: string;
+      myWeight: string;
+      estRewardPerBlock: string;
+      estRewardPerDay: string;
+      blockHeight: string;
+      verify: string;
+      verified: string;
+      merkleRoot: string;
+      leaf: string;
+      verificationFailed: string;
+      unknownError: string;
+      notConnectedToSignalServer: string;
+      followerModeWarning: string;
+      singleDeviceMiningWarning: string;
+      provingGuardTitle: string;
+      miningGuardTitle: string;
+      currentBalance: string;
+      expectedBalance: string;
+      zkVerified: string;
+      zkVerifiedYes: string;
+      zkVerifiedNo: string;
+      zkVerifiedDesc: string;
+      atHeight: string;
+      mainWalletAddress: string;
+      notInitialized: string;
+      copyAddress: string;
+      walletManagement: string;
+      walletBackupRestore: string;
+      miningGuard: string;
+      provingGuard: string;
+      startMining: string;
+      stopMining: string;
+      startProving: string;
+      stopProving: string;
+      activeMining: string;
+      syncedWaiting: string;
+      autoMining: string;
+      minerAddress: string;
+      localHeight: string;
+      networkHeight: string;
+      peers: string;
+      online: string;
+      offline: string;
+    },
+    wallet: {
     title: string;
     address: string;
     balance: string;
@@ -1432,6 +1497,71 @@ export const translations: Record<Locale, Translations> = {
       member: "成员",
       issuedRatio: "已发行比例",
     },
+    miningConsole: {
+      pageTitle: "挖矿控制台",
+      walletPageTitle: "钱包总览 (集成)",
+      switchLanguage: "切换语言",
+      currentLanguage: "当前语言",
+      appName: "IndexerChain",
+      initializingChain: "正在初始化链...",
+      loading: "加载中...",
+      miningMenu: "⛏️ 挖矿",
+      walletMenu: "💳 钱包",
+      advancedMenu: "⚙️ 高级 (隐藏)",
+      minerConsoleTitle: "IndexerChain 挖矿控制台",
+      provingPanelTitle: "证明面板 (池挖矿)",
+      addressCopied: "钱包地址已复制！",
+      notActiveMinerWarning: "⚠️ 当前设备/浏览器已有活动矿工会话，禁止并行挖矿。如需切换，请先在正在挖矿的标签页停止。",
+      miningGuardBlocked: "挖矿守卫已阻止",
+      chinese: "中文",
+      english: "English",
+      switchToChinese: "中",
+      switchToEnglish: "EN",
+      poolMiningModeDesc: "池化挖矿模式：所有参与者按权重共享区块奖励",
+      leaderOfThisSlot: "当前槽位领导者",
+      myWeight: "我的权重",
+      estRewardPerBlock: "预估奖励 / 区块",
+      estRewardPerDay: "预估奖励 / 天",
+      blockHeight: "区块高度",
+      verify: "验证",
+      verified: "✓ 已验证",
+      merkleRoot: "Merkle 根",
+      leaf: "叶子节点",
+      verificationFailed: "✗ 验证失败",
+      unknownError: "未知错误",
+      notConnectedToSignalServer: "⚠️ 未连接到信号服务器。连接到网络以开始挖矿。",
+      followerModeWarning: "⚠️ 本实例为 FOLLOWER，仅 LEADER 实例可启动挖矿。",
+      singleDeviceMiningWarning: "⚠️ 同一设备/浏览器仅允许一个活动矿工会话",
+      provingGuardTitle: "证明控制与状态 (Proving Guard)",
+      miningGuardTitle: "挖矿控制与状态 (Mining Guard)",
+      currentBalance: "当前 IDC 余额",
+      expectedBalance: "预期余额 (本地)",
+      zkVerified: "ZK 验证:",
+      zkVerifiedYes: "是 ✅",
+      zkVerifiedNo: "否 ⏳",
+      zkVerifiedDesc: "说明：该余额通过 ZK 状态根与 Merkle 证明本地验证，无需本地数据库或全节点。",
+      atHeight: "在高度",
+      mainWalletAddress: "主钱包地址:",
+      notInitialized: "未初始化",
+      copyAddress: "复制地址",
+      walletManagement: "💼 钱包管理",
+      walletBackupRestore: "🔐 钱包备份与恢复",
+      miningGuard: "挖矿控制与状态 (Mining Guard)",
+      provingGuard: "证明控制与状态 (Proving Guard)",
+      startMining: "启动挖矿 (Start Mining)",
+      stopMining: "停止挖矿 (Stop Mining)",
+      startProving: "启动证明 (Start Proving)",
+      stopProving: "停止证明 (Stop Proving)",
+      activeMining: "✅ Active Mining",
+      syncedWaiting: "✅ Synced / Waiting",
+      autoMining: "自动挖矿",
+      minerAddress: "矿工地址:",
+      localHeight: "本地高度",
+      networkHeight: "网络高度",
+      peers: "节点数",
+      online: "在线",
+      offline: "离线",
+    },
     wallet: {
       title: "💼 钱包",
       address: "地址",
@@ -2541,6 +2671,71 @@ export const translations: Record<Locale, Translations> = {
       votes: "Votes",
       member: "Member",
       issuedRatio: "Issued Ratio",
+    },
+    miningConsole: {
+      pageTitle: "Mining Console",
+      walletPageTitle: "Wallet Summary (Integrated)",
+      switchLanguage: "Switch Language",
+      currentLanguage: "Current Language",
+      appName: "IndexerChain",
+      initializingChain: "Initializing chain...",
+      loading: "Loading...",
+      miningMenu: "⛏️ Mining",
+      walletMenu: "💳 Wallet",
+      advancedMenu: "⚙️ Advanced (Hidden)",
+      minerConsoleTitle: "IndexerChain Miner Console",
+      provingPanelTitle: "Proving Panel (Pool Mining)",
+      addressCopied: "Wallet Address copied!",
+      notActiveMinerWarning: "⚠️ This device/browser already has an active miner session. Parallel mining is prohibited. To switch, please stop mining in the active tab first.",
+      miningGuardBlocked: "Mining guard blocked",
+      chinese: "中文",
+      english: "English",
+      switchToChinese: "中",
+      switchToEnglish: "EN",
+      poolMiningModeDesc: "Pool Mining Mode: All participants share block rewards by weight",
+      leaderOfThisSlot: "Leader of this Slot",
+      myWeight: "My Weight",
+      estRewardPerBlock: "Est. Reward / Block",
+      estRewardPerDay: "Est. Reward / Day",
+      blockHeight: "Block Height",
+      verify: "Verify",
+      verified: "✓ Verified",
+      merkleRoot: "Merkle Root",
+      leaf: "Leaf",
+      verificationFailed: "✗ Verification Failed",
+      unknownError: "Unknown error",
+      notConnectedToSignalServer: "⚠️ Not connected to Signal Server. Connect to network to start mining.",
+      followerModeWarning: "⚠️ This instance is a FOLLOWER. Only LEADER instances can start mining.",
+      singleDeviceMiningWarning: "⚠️ Only one active miner session is allowed per device/browser",
+      provingGuardTitle: "Proving Control & Status (Proving Guard)",
+      miningGuardTitle: "Mining Control & Status (Mining Guard)",
+      currentBalance: "Current IDC Balance",
+      expectedBalance: "Expected Balance (Local)",
+      zkVerified: "ZK Verified:",
+      zkVerifiedYes: "Yes ✅",
+      zkVerifiedNo: "No ⏳",
+      zkVerifiedDesc: "Note: This balance is verified locally through ZK state root and Merkle proof, no local database or full node required.",
+      atHeight: "at height",
+      mainWalletAddress: "Main Wallet Address:",
+      notInitialized: "Not initialized",
+      copyAddress: "Copy Address",
+      walletManagement: "💼 Wallet Management",
+      walletBackupRestore: "🔐 Wallet Backup & Restore",
+      miningGuard: "Mining Control & Status (Mining Guard)",
+      provingGuard: "Proving Control & Status (Proving Guard)",
+      startMining: "Start Mining",
+      stopMining: "Stop Mining",
+      startProving: "Start Proving",
+      stopProving: "Stop Proving",
+      activeMining: "✅ Active Mining",
+      syncedWaiting: "✅ Synced / Waiting",
+      autoMining: "Auto Mining",
+      minerAddress: "Miner Address:",
+      localHeight: "Local Height",
+      networkHeight: "Network Height",
+      peers: "Peers",
+      online: "Online",
+      offline: "Offline",
     },
     wallet: {
       title: "💼 Wallet",

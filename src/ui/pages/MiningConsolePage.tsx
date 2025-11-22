@@ -8,7 +8,7 @@ import { ChainContext } from '../../core/chain';
 import { MinerClient } from '../../core/minerClient';
 import styles from '../../features/miner-dashboard/styles/miner-console.module.css';
 import { getSlotIdentity, deriveRandSeed, selectLeader } from '../../core/slotSchedule.js';
-import { getMultiWalletStore } from '../../core/multiWallet.js';
+import { useI18n } from '../../i18n/useI18n.js';
 
 // Mining Guard card - memoized to avoid refresh; only changes on explicit prop changes (clicks)
 const MiningGuardCard = React.memo((props: {
@@ -19,11 +19,12 @@ const MiningGuardCard = React.memo((props: {
     onToggleAutoMining: (checked: boolean) => void;
     showStatusBadge?: boolean;
     lightMode?: boolean;
+    t: (path: string) => string;
 }) => {
-    const { displayMining, guardMessage, autoMining, onToggleMining, onToggleAutoMining, showStatusBadge, lightMode } = props;
+    const { displayMining, guardMessage, autoMining, onToggleMining, onToggleAutoMining, showStatusBadge, lightMode, t } = props;
     return (
         <div className={`${styles.card} ${styles.controlCard}`}>
-            <h3>{lightMode ? '证明控制与状态 (Proving Guard)' : '挖矿控制与状态 (Mining Guard)'}</h3>
+            <h3>{lightMode ? t('miningConsole.provingGuardTitle') : t('miningConsole.miningGuardTitle')}</h3>
             <div className={styles.controlCardTop}>
                 <button
                     id="toggle-mining"
@@ -31,11 +32,11 @@ const MiningGuardCard = React.memo((props: {
                     onClick={onToggleMining}
                     title={guardMessage || ''}
                 >
-                    {displayMining ? (lightMode ? '停止证明 (Stop Proving)' : '停止挖矿 (Stop Mining)') : (lightMode ? '启动证明 (Start Proving)' : '启动挖矿 (Start Mining)')}
+                    {displayMining ? (lightMode ? t('miningConsole.stopProving') : t('miningConsole.stopMining')) : (lightMode ? t('miningConsole.startProving') : t('miningConsole.startMining'))}
                 </button>
                 {showStatusBadge !== false && (
                     <div id="mining-status-badge" className={`${styles.miningStatusBadge} ${displayMining ? styles.statusReady : styles.statusSyncing}`}>
-                        {displayMining ? '✅ Active Mining' : '✅ Synced / Waiting'}
+                        {displayMining ? t('miningConsole.activeMining') : t('miningConsole.syncedWaiting')}
                     </div>
                 )}
             </div>
@@ -54,7 +55,7 @@ const MiningGuardCard = React.memo((props: {
                     onChange={(e) => onToggleAutoMining(e.target.checked)}
                 />
                 <label htmlFor="auto-mining-toggle" style={{ fontSize: '0.9em', marginLeft: 8 }}>
-                    Auto-Mining Toggle (链就绪时自动开始)
+                    {t('miningConsole.autoMining')} ({t('mining.autoMiningDesc')})
                 </label>
             </div>
         </div>
@@ -79,6 +80,7 @@ interface MiningConsolePageProps {
 }
 
 export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
+    const { t, locale, setLocale } = useI18n();
     const [activePage, setActivePage] = useState<'mining' | 'wallet'>('mining');
     const [walletRefreshKey, setWalletRefreshKey] = useState<number>(0);
     const [autoMining, setAutoMining] = useState<boolean>(() => {
@@ -620,7 +622,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         // Use healthSnapshot.isSignalConnected if available, otherwise check p2pNode directly
         const isSignalConnected = healthSnapshot.isSignalConnected || (props.p2pNode?.isConnected ?? false);
         if (!isSignalConnected) {
-            setGuardMessage('⚠️ Not connected to Signal Server. Connect to network to start mining.');
+            setGuardMessage(t('miningConsole.notConnectedToSignalServer'));
             return;
         }
         // If Signal is connected, rely on miningGuardResult for detailed status
@@ -628,14 +630,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         if (miningGuardResult && !miningGuardResult.ok) {
             // Special messaging for same device/IP single-active restriction
             if (miningGuardResult.code === 'NOT_ACTIVE_MINER') {
-                setGuardMessage('⚠️ 当前设备/浏览器已有活动矿工会话，禁止并行挖矿。如需切换，请先在正在挖矿的标签页停止。');
+                setGuardMessage(t('miningConsole.notActiveMinerWarning'));
                 return;
             }
             if (miningGuardResult.code === 'FOLLOWER_MODE') {
-                setGuardMessage('⚠️ 本实例为 FOLLOWER，仅 LEADER 实例可启动挖矿。');
+                setGuardMessage(t('miningConsole.followerModeWarning'));
                 return;
             }
-            setGuardMessage(`⚠️ ${miningGuardResult.reason || 'Mining guard blocked.'}`);
+            setGuardMessage(`⚠️ ${miningGuardResult.reason || t('miningConsole.miningGuardBlocked')}`);
             return;
         }
         setGuardMessage('');
@@ -849,7 +851,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     const copyWalletAddress = () => {
         if (props.nodeAddress) {
             navigator.clipboard.writeText(props.nodeAddress);
-            alert("Wallet Address copied!");
+            alert(t('miningConsole.addressCopied'));
         }
     };
 
@@ -1140,7 +1142,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     }, [props.chainContext, props.p2pNode]);
 
     const formatAddress = (addr: string) => {
-        if (!addr) return 'Loading...';
+        if (!addr) return t('miningConsole.loading');
         return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
     };
 
@@ -1148,10 +1150,10 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         return (
             <div className={styles.appContainer}>
                 <div className={styles.sidebar}>
-                    <div className={styles.logo}>IndexerChain</div>
+                    <div className={styles.logo}>{t('miningConsole.appName')}</div>
                 </div>
                 <div className={styles.mainContent}>
-                    <div style={{ color: '#c9d1d9', padding: 20 }}>Initializing chain...</div>
+                    <div style={{ color: '#c9d1d9', padding: 20 }}>{t('miningConsole.initializingChain')}</div>
                 </div>
             </div>
         );
@@ -1161,7 +1163,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         <div className={styles.appContainer}>
             {/* Sidebar Navigation */}
             <div className={styles.sidebar}>
-                <div className={styles.logo}>IndexerChain</div>
+                <div className={styles.logo}>{t('miningConsole.appName')}</div>
                 <a 
                     href="#mining" 
                     className={`${styles.navLink} ${activePage === 'mining' ? styles.active : ''}`}
@@ -1170,7 +1172,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         setActivePage('mining');
                     }}
                 >
-                    ⛏️ Mining
+                    {t('miningConsole.miningMenu')}
                 </a>
                 <a 
                     href="#wallet" 
@@ -1180,11 +1182,41 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         setActivePage('wallet');
                     }}
                 >
-                    💳 Wallet
+                    {t('miningConsole.walletMenu')}
                 </a>
                 <a href="#" className={styles.navLink} style={{ opacity: 0.6 }}>
-                    ⚙️ Advanced (Hidden)
+                    {t('miningConsole.advancedMenu')}
                 </a>
+                
+                {/* Language Switcher */}
+                <div style={{ 
+                    marginTop: 'auto', 
+                    paddingTop: 'calc(var(--spacing-unit) * 2)',
+                    borderTop: '1px solid var(--color-border)'
+                }}>
+                    <div 
+                        className={styles.navLink}
+                        onClick={() => {
+                            setLocale(locale === 'zh' ? 'en' : 'zh');
+                        }}
+                        style={{ 
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '8px'
+                        }}
+                        title={t('miningConsole.switchLanguage')}
+                    >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>🌐</span>
+                            <span>{locale === 'zh' ? t('miningConsole.chinese') : t('miningConsole.english')}</span>
+                        </span>
+                        <span style={{ fontSize: '0.8em', opacity: 0.7 }}>
+                            {locale === 'zh' ? t('miningConsole.switchToEnglish') : t('miningConsole.switchToChinese')}
+                        </span>
+                    </div>
+                </div>
             </div>
 
             {/* Main Content */}
@@ -1192,7 +1224,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 {/* Mining Page */}
                 {activePage === 'mining' && (
                     <div className={styles.pageContent}>
-                        <h1>IndexerChain Miner Console</h1>
+                        <h1>{t('miningConsole.minerConsoleTitle')}</h1>
 
                         {/* Wallet Display Bar */}
                         <div className={styles.walletDisplayBar}>
@@ -1206,7 +1238,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         id="copy-address-btn"
                                         onClick={copyAddress}
                                         style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
-                                        title="Copy Address"
+                                        title={t('miningConsole.copyAddress')}
                                     >
                                         📋
                                     </button>
@@ -1216,7 +1248,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             <div className={styles.balanceInfo}>
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
                                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-                                        <span className={styles.balanceLabel}>Expected Balance (Local):</span>
+                                        <span className={styles.balanceLabel}>{t('miningConsole.expectedBalance')}</span>
                                         <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance" style={{ color: '#4ee672', fontSize: '1.6em', lineHeight: 1 }}>
                                             {displayBalance}
                                         </span>
@@ -1224,9 +1256,9 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     </div>
                                     {nodeMode === 'light' && (
                                         <div style={{ fontSize: '0.8em', color: '#8b949e', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <span>ZK Verified:</span>
+                                            <span>{t('miningConsole.zkVerified')}</span>
                                             <span style={{ color: lightVerifiedBalance !== null ? '#4ee672' : '#8b949e' }}>
-                                                {lightVerifiedBalance !== null ? lightVerifiedBalance.toFixed(12) : 'Pending...'}
+                                                {lightVerifiedBalance !== null ? lightVerifiedBalance.toFixed(12) : t('common.loading')}
                                             </span>
                                         </div>
                                     )}
@@ -1238,17 +1270,17 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         <div className={styles.addressBar}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>Local Height</span>
+                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>{t('miningConsole.localHeight')}</span>
                                     <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar" style={{ fontSize: '1.1em', minWidth: 'auto' }}>{localHeight.toLocaleString()}</span>
                                 </div>
                                 <div style={{ width: '1px', height: '14px', background: 'var(--color-border)' }}></div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>Network Height</span>
+                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>{t('miningConsole.networkHeight')}</span>
                                     <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar" style={{ fontSize: '1.1em', minWidth: 'auto' }}>{networkHeight.toLocaleString()}</span>
                                 </div>
                                 <div style={{ width: '1px', height: '14px', background: 'var(--color-border)' }}></div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>Peers</span>
+                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>{t('miningConsole.peers')}</span>
                                     <span className={styles.dataValue} id="peer-count-bar" style={{ fontSize: '1.1em' }}>{peerCount}</span>
                                 </div>
                             </div>
@@ -1322,7 +1354,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 {/* Control Card - memoized, no refresh */}
                                 <MiningGuardCard
                                     displayMining={displayMining}
-                                    guardMessage={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? '⚠️ 同一设备/浏览器仅允许一个活动矿工会话' : guardMessage}
+                                    guardMessage={miningGuardResult?.code === 'NOT_ACTIVE_MINER' ? t('miningConsole.singleDeviceMiningWarning') : guardMessage}
                                     autoMining={autoMining}
                                     showStatusBadge={nodeMode !== 'light'}
                                     lightMode={nodeMode === 'light'}
@@ -1337,6 +1369,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         }
                                     }}
                                     onToggleAutoMining={setAutoMining}
+                                    t={t}
                                 />
 
                                 <WalletSummaryCard chainContext={props.chainContext} address={props.nodeAddress || null} locale={'en'} className={styles.card} styles={styles} />
@@ -1350,7 +1383,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                                         <input 
                                             type="number" 
-                                            placeholder="Block Height"
+                                            placeholder={t('miningConsole.blockHeight')}
                                             style={{ 
                                                 background: 'var(--color-background)', 
                                                 border: '1px solid #30363d', 
@@ -1374,7 +1407,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                             className={styles.btn}
                                             style={{ padding: '6px 12px' }}
                                             onClick={() => {
-                                                const input = document.querySelector('input[placeholder="Block Height"]') as HTMLInputElement;
+                                                const input = document.querySelector(`input[placeholder="${t('miningConsole.blockHeight')}"]`) as HTMLInputElement;
                                                 const h = parseInt(input?.value);
                                                 if (h > 0) {
                                                     setPayoutProof(null);
@@ -1382,20 +1415,20 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                 }
                                             }}
                                         >
-                                            Verify
+                                            {t('miningConsole.verify')}
                                         </button>
                                     </div>
                                     {payoutProof && (
                                         <div style={{ fontSize: 12, background: payoutProof.ok ? 'rgba(46, 160, 67, 0.1)' : 'rgba(218, 54, 51, 0.1)', padding: 8, borderRadius: 4 }}>
                                             {payoutProof.ok ? (
                                                 <>
-                                                    <div style={{ color: '#2ea043', fontWeight: 'bold', marginBottom: 4 }}>✓ Verified</div>
-                                                    <div>Merkle Root: {shortHash(payoutProof.root)}</div>
-                                                    <div>Leaf: {shortHash(payoutProof.entry)}</div>
+                                                    <div style={{ color: '#2ea043', fontWeight: 'bold', marginBottom: 4 }}>{t('miningConsole.verified')}</div>
+                                                    <div>{t('miningConsole.merkleRoot')}: {shortHash(payoutProof.root)}</div>
+                                                    <div>{t('miningConsole.leaf')}: {shortHash(payoutProof.entry)}</div>
                                                 </>
                                             ) : (
                                                 <div style={{ color: '#da3633' }}>
-                                                    ✗ Verification Failed: {payoutProof.error || 'Unknown error'}
+                                                    {t('miningConsole.verificationFailed')}: {payoutProof.error || t('miningConsole.unknownError')}
                                                 </div>
                                             )}
                                         </div>
@@ -1417,14 +1450,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                 
                                 {/* Proving Panel (Pool Mining) */}
                                 <div className={styles.card} ref={provingPanelRef} style={{ display: 'flex', flexDirection: 'column' }}>
-                                    <h3>Proving Panel (Pool Mining)</h3>
+                                    <h3>{t('miningConsole.provingPanelTitle')}</h3>
                                     <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
-                                        池化挖矿模式：所有参与者按权重共享区块奖励
+                                        {t('miningConsole.poolMiningModeDesc')}
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
                                             <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Leader of this Slot</div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>{t('miningConsole.leaderOfThisSlot')}</div>
                                                 <div className={`${styles.dataValue} ${styles.numeric}`} style={{ wordBreak: 'break-all' }}>
                                                   {leaderThisSlot === props.nodeAddress ? 
                                                     <span style={{color: '#2ea043', fontWeight: 'bold', fontSize: '1.1em'}}>✨ YOU ✨</span> : 
@@ -1432,17 +1465,17 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                                 </div>
                                             </div>
                                             <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>My Weight</div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>{t('miningConsole.myWeight')}</div>
                                                 <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ?? 0).toFixed(6)}</div>
                                             </div>
                                         </div>
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
                                             <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Block</div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>{t('miningConsole.estRewardPerBlock')}</div>
                                                 <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ? (projectedReward / ((24 * 60 * 60) / (props.chainContext?.params?.targetBlockTime || 10))) : 0).toFixed(6)} IDC</div>
                                             </div>
                                             <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Day</div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>{t('miningConsole.estRewardPerDay')}</div>
                                                 <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ?? 0).toFixed(6)} IDC</div>
                                             </div>
                                         </div>
@@ -1467,31 +1500,31 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                             </div>
                                     {nodeMode === 'light' && (
                                         <div style={{ marginTop: 8 }}>
-                                            <span className={styles.dataLabel}>ZK Verified:</span>{' '}
+                                            <span className={styles.dataLabel}>{t('miningConsole.zkVerified')}</span>{' '}
                                             <span className={styles.dataValue}>
-                                                {lightVerifiedBalance !== null ? 'Yes ✅' : 'No ⏳'}
+                                                {lightVerifiedBalance !== null ? t('miningConsole.zkVerifiedYes') : t('miningConsole.zkVerifiedNo')}
                                             </span>
                                             {lightVerifiedBalance !== null && (
                                                 <span style={{ marginLeft: 10, color: '#8b949e' }}>
-                                                    at height {lastBalanceProofHeight}
+                                                    {t('miningConsole.atHeight')} {lastBalanceProofHeight}
                                                 </span>
                                             )}
                                             <div style={{ marginTop: 6, color: '#8b949e', fontSize: 13 }}>
-                                                说明：该余额通过 ZK 状态根与 Merkle 证明本地验证，无需本地数据库或全节点。
+                                                {t('miningConsole.zkVerifiedDesc')}
                                             </div>
                                         </div>
                                     )}
                             
                             <div style={{ marginTop: '1rem' }}>
-                                <p className={styles.dataLabel} style={{ marginBottom: '0.5rem' }}>主钱包地址:</p>
+                                <p className={styles.dataLabel} style={{ marginBottom: '0.5rem' }}>{t('miningConsole.mainWalletAddress')}</p>
                                 <div className={styles.walletAddressBox} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                     <span id="wallet-full-address" style={{ fontFamily: 'Consolas, Courier New, monospace', flex: 1, wordBreak: 'break-all' }} title={props.nodeAddress || ''}>
-                                        {props.nodeAddress || 'Not initialized'}
+                                        {props.nodeAddress || t('miningConsole.notInitialized')}
                                     </span>
                                     <button 
                                         onClick={copyWalletAddress}
                                         style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', marginLeft: 10, padding: '4px 8px' }}
-                                        title="Copy Address"
+                                        title={t('miningConsole.copyAddress')}
                                     >
                                         📋
                                     </button>
@@ -1503,7 +1536,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                             {/* Wallet Manager - Create/Manage Wallets */}
                             <div className={styles.card}>
-                                <h3>💼 Wallet Management</h3>
+                                <h3>{t('miningConsole.walletManagement')}</h3>
                                 <WalletManagerPanel
                                     onWalletChanged={async () => {
                                         // Refresh wallet data without reloading page
@@ -1528,7 +1561,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
 
                             {/* Wallet Backup - Import/Export */}
                             <div className={styles.card}>
-                                <h3>🔐 Wallet Backup & Restore</h3>
+                                <h3>{t('miningConsole.walletBackupRestore')}</h3>
                                 <WalletBackupPanel
                                     onExportSuccess={() => {
                                         // Show success message
