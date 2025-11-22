@@ -97,7 +97,7 @@ import "./index.css";
 import { WalletSummaryCard } from "./wallet/WalletSummaryCard.js";
 // import { LiveBlockFeed } from "./components/LiveBlockFeed.js";
 import { MiningConsolePage } from "./pages/MiningConsolePage.js";
-// import { MobileMinerPage } from "./pages/MobileMinerPage.js";
+import { MobileMinerPage } from "./pages/MobileMinerPage.js";
 
 /**
  * Main App Component
@@ -5346,6 +5346,52 @@ function App() {
   useEffect(() => {
     clusterMiningRef.current = clusterMining;
   }, [clusterMining]);
+
+  // Mobile device detection
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const width = window.innerWidth;
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    return isMobileDevice || width <= 768;
+  });
+
+  useEffect(() => {
+    const updateIsMobile = () => {
+      if (typeof window === 'undefined') return;
+      const width = window.innerWidth;
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      setIsMobile(isMobileDevice || width <= 768);
+    };
+    window.addEventListener('resize', updateIsMobile);
+    return () => window.removeEventListener('resize', updateIsMobile);
+  }, []);
+
+  // Toggle mining function
+  const handleToggleMining = () => {
+    if (isMining) {
+      handleStopMining();
+    } else {
+      handleStartMining();
+    }
+  };
+
+  // Show mobile page on mobile devices
+  if (isMobile && chainContext) {
+    return (
+      <MobileMinerPage
+        chainContext={chainContext}
+        minerClient={minerClient}
+        nodeAddress={nodeAddress}
+        isMining={isMining}
+        onToggleMining={handleToggleMining}
+        p2pNode={chainContext.p2p || null}
+        finalityManager={finalityManager}
+        localRole={localRole}
+        bootstrapComplete={bootstrapComplete}
+      />
+    );
+  }
+
   return (
     <div className="app">
       <main className="app-main">

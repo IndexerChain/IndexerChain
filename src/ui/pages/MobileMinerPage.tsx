@@ -1,4 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { useI18n } from '../../i18n/useI18n.js';
+import { useMiningData } from '../../features/miner-dashboard/hooks/useMiningData.js';
+import styles from './MobileMinerPage.module.css';
 
 interface MobileMinerPageProps {
   chainContext: any;
@@ -9,9 +12,11 @@ interface MobileMinerPageProps {
   p2pNode: any;
   finalityManager?: any;
   localRole?: string;
+  bootstrapComplete?: boolean;
 }
 
 export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
+  const { t, locale } = useI18n();
   const [autoMining, setAutoMining] = useState<boolean>(() => {
     try {
       const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_auto_mining') : null;
@@ -20,6 +25,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     } catch {}
     return true;
   });
+  
   const [balanceVerified, setBalanceVerified] = useState<number | null>(null);
   const [lastProofHeight, setLastProofHeight] = useState<number>(0);
   const [verifying, setVerifying] = useState<boolean>(false);
@@ -29,8 +35,16 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
   const [guardReason, setGuardReason] = useState<string>('');
   const [miningGuardOk, setMiningGuardOk] = useState<boolean>(true);
   const [statusText, setStatusText] = useState<string>('');
+  const [copied, setCopied] = useState<boolean>(false);
+  const [localHeight, setLocalHeight] = useState<number>(0);
+  const [networkHeight, setNetworkHeight] = useState<number>(0);
+  
   const address = props.nodeAddress || '';
-  const shortAddr = useMemo(() => address ? `${address.slice(0, 10)}...${address.slice(-6)}` : '' , [address]);
+  const shortAddr = useMemo(() => {
+    if (!address) return '';
+    if (address.length <= 16) return address;
+    return `${address.slice(0, 8)}...${address.slice(-8)}`;
+  }, [address]);
 
   // Force light node mode on mobile
   useEffect(() => {
@@ -46,56 +60,76 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
     } catch {}
   }, [autoMining]);
 
+  // Use mining data hook
+  const {
+    status,
+    balance,
+    localHeight: hookLocalHeight,
+    networkHeight: hookNetworkHeight,
+    miningGuardResult
+  } = useMiningData({
+    chainContext: props.chainContext,
+    isMiningGlobal: props.isMining,
+    onToggleMiningGlobal: props.onToggleMining,
+    nodeAddress: props.nodeAddress,
+    p2pNode: props.p2pNode,
+    minerClient: props.minerClient,
+    finalityManager: props.finalityManager,
+    localRole: props.localRole,
+    bootstrapComplete: props.bootstrapComplete
+  });
+
+  // Sync local height state
+  useEffect(() => {
+    setLocalHeight(hookLocalHeight);
+    setNetworkHeight(hookNetworkHeight);
+  }, [hookLocalHeight, hookNetworkHeight]);
+
   // Auto-start/stop based on autoMining
   useEffect(() => {
     if (!props.chainContext) return;
-    if (autoMining && !props.isMining) {
+    if (autoMining && !props.isMining && miningGuardResult?.ok) {
       props.onToggleMining();
     } else if (!autoMining && props.isMining) {
       props.onToggleMining();
     }
-  }, [autoMining, props.isMining, props.chainContext]);
+  }, [autoMining, props.isMining, props.chainContext, miningGuardResult?.ok]);
 
   // Keep button visual consistent
   useEffect(() => {
     setDisplayMining(props.isMining || autoMining);
   }, [props.isMining, autoMining]);
 
-  // Mining guard polling (reasons when cannot mine)
+  // Update mining guard status
   useEffect(() => {
-    let timer: any;
-    const tick = async () => {
-      try {
-        const { MiningGuard } = await import('../../core/miningGuard.js');
-        const res = await MiningGuard.canMineNow(
-          props.chainContext,
-          props.p2pNode,
-          props.finalityManager,
-          ((props.localRole as ('LEADER' | 'FOLLOWER' | undefined)) ?? 'LEADER'),
-          props.nodeAddress || undefined,
-          true
-        );
-        setMiningGuardOk(!!res?.ok);
-        setGuardReason(res?.ok ? '' : (res?.reason || 'Mining guard blocked.'));
-      } catch {}
-    };
-    tick();
-    timer = setInterval(tick, 2000);
-    return () => clearInterval(timer);
-  }, [props.chainContext, props.p2pNode, props.finalityManager, props.localRole, props.nodeAddress]);
+    if (miningGuardResult) {
+      setMiningGuardOk(!!miningGuardResult.ok);
+      if (!miningGuardResult.ok) {
+        if (miningGuardResult.code === 'NOT_ACTIVE_MINER') {
+          setGuardReason(t('miningConsole.notActiveMinerWarning'));
+        } else if (miningGuardResult.code === 'FOLLOWER_MODE') {
+          setGuardReason(t('miningConsole.followerModeWarning'));
+        } else {
+          setGuardReason(miningGuardResult.reason || t('miningConsole.miningGuardBlocked'));
+        }
+      } else {
+        setGuardReason('');
+      }
+    }
+  }, [miningGuardResult, t]);
 
   // Light node: poll stateRoot + balance proof and verify locally
   useEffect(() => {
     const p2p = props.p2pNode;
     if (!p2p || !props.nodeAddress) return;
     let latestRoot: string | null = null;
-    let cleanup: any[] = [];
 
     const onRoot = (msg: any) => {
       if (msg?.type === 'STATE_ROOT' && msg.ok) {
         latestRoot = String(msg.root || '');
       }
     };
+    
     const onProof = async (msg: any) => {
       if (msg?.type !== 'BALANCE_PROOF' || !msg.ok) return;
       try {
@@ -114,8 +148,9 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
         setVerifying(false);
       } catch {}
     };
-    try { p2p.onMessage?.('STATE_ROOT' as any, onRoot); cleanup.push(['STATE_ROOT', onRoot]); } catch {}
-    try { p2p.onMessage?.('BALANCE_PROOF' as any, onProof); cleanup.push(['BALANCE_PROOF', onProof]); } catch {}
+    
+    try { p2p.onMessage?.('STATE_ROOT' as any, onRoot); } catch {}
+    try { p2p.onMessage?.('BALANCE_PROOF' as any, onProof); } catch {}
 
     const timer = setInterval(() => {
       try {
@@ -126,69 +161,34 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
         p2p.sendToSignalServer?.('REQUEST_BALANCE_PROOF', { address: props.nodeAddress, targetHeight: target });
       } catch {}
     }, 1500);
+    
     return () => {
       clearInterval(timer);
+      try { p2p.offMessage?.('STATE_ROOT' as any, onRoot); } catch {}
+      try { p2p.offMessage?.('BALANCE_PROOF' as any, onProof); } catch {}
     };
   }, [props.p2pNode, props.nodeAddress]);
 
-  // When mining in light mode, pull latest snapshot to have IndexState for block production
-  useEffect(() => {
-    const ctx = props.chainContext as any;
-    const p2p = props.p2pNode as any;
-    if (!ctx || !p2p) return;
-    if (!props.isMining) return;
-    let triggered = false;
-    const id = setInterval(async () => {
+  // Display balance - prioritize verified balance, fallback to chain balance
+  const displayBalance = useMemo(() => {
+    if (balanceVerified !== null) return balanceVerified;
+    if (props.chainContext && address) {
       try {
-        const local = ctx.storage.getTip()?.header.height || 0;
-        const network = (typeof window !== 'undefined' && (window as any).lastRootTipHeight) || 0;
-        if (!triggered && network > 0 && network - local >= 500) {
-          triggered = true;
-          const target = Math.max(1, network - 1);
-          p2p.sendToSignalServer?.('REQUEST_SNAPSHOT_META', { targetHeight: target });
-          const sd: any = (typeof window !== 'undefined' && (window as any).snapshotDownloader) || null;
-          if (sd) {
-            const metas = await sd.requestSnapshotMeta(target);
-            if (Array.isArray(metas) && metas.length > 0) {
-              const best = metas.filter((m:any)=>m.height && m.height<=target).sort((a:any,b:any)=>b.height-a.height)[0] || metas[0];
-              p2p.sendToSignalServer?.('REQUEST_SNAPSHOT', { height: best.height, snapshotId: String(best.height) });
-              const snapshotData: any = await sd.downloadSnapshot(best, {}, ()=>{});
-              try {
-                if (snapshotData && snapshotData.meta && typeof localStorage !== 'undefined') {
-                  const SNAPSHOT_DATA_PREFIX = 'indexerchain_snapshot_v1_';
-                  localStorage.setItem(`${SNAPSHOT_DATA_PREFIX}${snapshotData.meta.height}`, JSON.stringify(snapshotData));
-                  const { loadAllSnapshotMeta, saveAllSnapshotMeta } = await import('../../core/snapshot.js');
-                  const metas2 = loadAllSnapshotMeta().filter((m:any)=> m.height !== snapshotData.meta.height);
-                  metas2.push(snapshotData.meta);
-                  saveAllSnapshotMeta(metas2);
-                  (window as any).lastRootTipSnapshotMeta = snapshotData.meta;
-                  // Apply IndexState immediately
-                  try {
-                    const { IndexState } = await import('../../core/indexState.js');
-                    const restored = IndexState.fromSnapshot(snapshotData.indexState);
-                    const restoredInternal = (restored as any).getInternalState();
-                    const currentInternal = (ctx.indexState as any).getInternalState();
-                    currentInternal.clear();
-                    for (const [ns, kv] of restoredInternal) {
-                      const newMap = new Map(kv);
-                      currentInternal.set(ns, newMap);
-                    }
-                  } catch {}
-                }
-              } catch {}
-            }
-          }
+        const chainBal = props.chainContext.indexState.getBalance(address);
+        if (typeof chainBal === 'number' && Number.isFinite(chainBal)) {
+          return chainBal;
         }
       } catch {}
-    }, 1000);
-    return () => clearInterval(id);
-  }, [props.chainContext, props.p2pNode, props.isMining]);
-
-  const displayBalance = (balanceVerified ?? (props.chainContext?.indexState?.getBalance?.(address) || 0));
+    }
+    return balance || 0;
+  }, [balanceVerified, balance, props.chainContext, address]);
 
   const copyAddr = async () => {
+    if (!address) return;
     try {
       await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch {}
   };
 
@@ -209,10 +209,10 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
 
   const showBubble = (text: string) => {
     setBubble({ text, visible: true });
-    setTimeout(() => setBubble({ text: '', visible: false }), 1200);
+    setTimeout(() => setBubble({ text: '', visible: false }), 2000);
   };
 
-  // Force a proof refresh immediately (not waiting for poll)
+  // Force a proof refresh immediately
   const requestProofNow = () => {
     try {
       const p2p = props.p2pNode as any;
@@ -228,101 +228,160 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
   };
 
   const handleStartStop = async () => {
+    if (!miningGuardOk && !autoMining) {
+      setStatusText(`⚠️ ${guardReason || t('miningConsole.miningGuardBlocked')}`);
+      showBubble(`⚠️ ${guardReason || t('miningConsole.miningGuardBlocked')}`);
+      return;
+    }
+    
     // Auto-mining mode: normal toggle
     if (autoMining) {
       props.onToggleMining();
       return;
     }
+    
     // Single-shot mine with feedback when not auto-mining
-    if (!miningGuardOk) {
-      setStatusText(`⚠️ ${guardReason || 'Cannot mine now'}`);
-      showBubble(`⚠️ ${guardReason || 'Cannot mine now'}`);
-      return;
+    if (!props.isMining) {
+      // Show estimated reward bubble immediately
+      const est = await estimatePerBlockReward();
+      if (est > 0) showBubble(`+${est.toFixed(6)} IDC`);
+      setStatusText(t('miningConsole.startMining'));
+    } else {
+      setStatusText(t('miningConsole.stopMining'));
     }
-    // Show estimated reward bubble immediately
-    const est = await estimatePerBlockReward();
-    if (est > 0) showBubble(`+${est.toFixed(2)} IDC`);
-    // Start mining briefly and stop (do not flip visual button)
-    try {
-      props.onToggleMining(); // start
-      setStatusText('⛏️ Mining...');
-      // refresh proof shortly after start
-      setTimeout(requestProofNow, 600);
-      setTimeout(() => {
-        try { props.onToggleMining(); } catch {}
-        // refresh proof after stop to reflect balance change
-        requestProofNow();
-        if (!guardReason) setStatusText('✅ Ready');
-      }, 1600);
-    } catch {}
+    
+    props.onToggleMining();
+    
+    // Refresh proof after mining
+    setTimeout(requestProofNow, 1000);
   };
 
+  // Update status text based on mining state
+  useEffect(() => {
+    if (props.isMining) {
+      setStatusText(t('miningConsole.activeMining'));
+    } else if (miningGuardOk) {
+      setStatusText(t('miningConsole.syncedWaiting'));
+    } else {
+      setStatusText(`⚠️ ${guardReason || t('miningConsole.miningGuardBlocked')}`);
+    }
+  }, [props.isMining, miningGuardOk, guardReason, t]);
+
+  if (!props.chainContext) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.loading}>
+          {t('miningConsole.initializingChain')}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ background: 'var(--color-background)', color: 'var(--color-text)', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', padding: '16px', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontWeight: 700 }}>IndexerChain Mobile Miner</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ fontSize: '12px', color: '#8b949e' }}>{shortAddr}</div>
-          <button onClick={copyAddr} style={{ background: 'none', border: '1px solid var(--color-border)', color: 'var(--color-secondary)', borderRadius: 6, padding: '2px 6px', fontSize: 12 }}>复制</button>
+    <div className={styles.container}>
+      {/* Header */}
+      <div className={styles.header}>
+        <div className={styles.title}>{t('miningConsole.appName')}</div>
+        <div className={styles.addressSection}>
+          <div className={styles.addressText} title={address}>
+            {shortAddr || t('miningConsole.notInitialized')}
+          </div>
+          <button 
+            onClick={copyAddr} 
+            className={styles.copyButton}
+            title={copied ? t('miningConsole.addressCopied') : t('miningConsole.copyAddress')}
+          >
+            {copied ? '✓' : '📋'}
+          </button>
         </div>
       </div>
 
-      <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, padding: 10 }}>
-          <div style={{ fontSize: 11, color: '#8b949e' }}>Signal</div>
-          <div style={{ marginTop: 4, fontSize: 13 }}>
-            {signalConnected ? 'Connected' : 'Connecting...'}
+      {/* Status Cards */}
+      <div className={styles.statusRow}>
+        <div className={styles.statusCard}>
+          <div className={styles.statusLabel}>{t('miningConsole.online')}</div>
+          <div className={styles.statusValue}>
+            <span className={signalConnected ? styles.statusOnline : styles.statusOffline}>
+              {signalConnected ? '●' : '○'}
+            </span>
+            {signalConnected ? t('miningConsole.online') : t('miningConsole.offline')}
           </div>
         </div>
-        <div style={{ flex: 1, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, padding: 10 }}>
-          <div style={{ fontSize: 11, color: '#8b949e' }}>Proof</div>
-          <div style={{ marginTop: 4, fontSize: 13 }}>
-            {verifying ? 'Verifying...' : (lastProofHeight > 0 ? `Verified @ ${lastProofHeight.toLocaleString()}` : '—')}
+        <div className={styles.statusCard}>
+          <div className={styles.statusLabel}>{t('miningConsole.zkVerified')}</div>
+          <div className={styles.statusValue}>
+            {verifying ? t('common.loading') : (lastProofHeight > 0 ? `${lastProofHeight.toLocaleString()}` : '—')}
           </div>
         </div>
       </div>
 
-      <div style={{ marginTop: 12, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, padding: 16 }}>
-        <div style={{ fontSize: 12, color: '#8b949e' }}>Current Balance (IDC)</div>
-        <div style={{ fontSize: 28, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>{displayBalance.toFixed(2)}</div>
+      {/* Balance Card */}
+      <div className={styles.balanceCard}>
+        <div className={styles.balanceLabel}>{t('miningConsole.currentBalance')}</div>
+        <div className={styles.balanceAmount}>
+          {displayBalance.toFixed(12)}
+          <span className={styles.balanceUnit}> IDC</span>
+        </div>
+        {balanceVerified !== null && (
+          <div className={styles.balanceNote}>
+            {t('miningConsole.zkVerified')} {t('miningConsole.zkVerifiedYes')} {t('miningConsole.atHeight')} {lastProofHeight}
+          </div>
+        )}
       </div>
 
-      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 12 }}>
-        <label style={{ fontSize: 14 }}>Auto-Mining</label>
-        <input type="checkbox" checked={autoMining} onChange={(e) => setAutoMining(e.target.checked)} />
+      {/* Mining Info */}
+      <div className={styles.infoCard}>
+        <div className={styles.infoRow}>
+          <span className={styles.infoLabel}>{t('miningConsole.localHeight')}:</span>
+          <span className={styles.infoValue}>{localHeight.toLocaleString()}</span>
+        </div>
+        <div className={styles.infoRow}>
+          <span className={styles.infoLabel}>{t('miningConsole.networkHeight')}:</span>
+          <span className={styles.infoValue}>{networkHeight.toLocaleString()}</span>
+        </div>
+        {networkHeight > localHeight && (
+          <div className={styles.syncWarning}>
+            ⚠️ {t('miningMain.catchingUp')}: {networkHeight - localHeight} {locale === 'zh' ? '个区块' : 'blocks'}
+          </div>
+        )}
       </div>
 
-      {/* Inline status (reason or ready/mining) */}
-      <div style={{ marginTop: 10, fontSize: 13, color: miningGuardOk ? '#8b949e' : '#ffa198' }}>
-        {miningGuardOk ? (statusText || '✅ Ready') : `⚠️ ${guardReason}`}
+      {/* Auto-Mining Toggle */}
+      <div className={styles.autoMiningCard}>
+        <label className={styles.autoMiningLabel}>
+          <input 
+            type="checkbox" 
+            checked={autoMining} 
+            onChange={(e) => setAutoMining(e.target.checked)}
+            className={styles.checkbox}
+          />
+          <span>{t('miningConsole.autoMining')}</span>
+        </label>
+        <div className={styles.autoMiningDesc}>
+          {t('mining.autoMiningDesc')}
+        </div>
       </div>
 
-      <div style={{ marginTop: 16, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+      {/* Status Message */}
+      <div className={`${styles.statusMessage} ${!miningGuardOk ? styles.statusError : ''}`}>
+        {statusText || (miningGuardOk ? t('miningConsole.syncedWaiting') : `⚠️ ${guardReason}`)}
+      </div>
+
+      {/* Mining Button */}
+      <div className={styles.buttonContainer}>
         <button
           onClick={handleStartStop}
-          style={{
-            width: '100%',
-            maxWidth: 480,
-            padding: '18px 16px',
-            background: displayMining ? 'var(--color-danger)' : '#238636',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 14,
-            fontSize: 18,
-            fontWeight: 700
-          }}
+          className={`${styles.miningButton} ${displayMining ? styles.miningButtonStop : styles.miningButtonStart}`}
+          disabled={!miningGuardOk && !autoMining}
         >
-          {displayMining ? '停止挖矿 (Stop)' : '启动挖矿 (Start)'}
+          {displayMining ? t('miningConsole.stopMining') : t('miningConsole.startMining')}
         </button>
         {bubble.visible && (
-          <div style={{ position: 'absolute', bottom: '70%', fontSize: 20, color: '#4ee672', fontWeight: 700, animation: 'rise 1.2s ease-out' }}>
+          <div className={styles.bubble}>
             {bubble.text}
           </div>
         )}
       </div>
-      <style>{`@keyframes rise{0%{transform:translateY(0);opacity:0}30%{opacity:1}100%{transform:translateY(-30px);opacity:0}}`}</style>
     </div>
   );
 };
-
-

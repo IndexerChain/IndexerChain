@@ -1,0 +1,341 @@
+/* Mobile Miner Page Styles */
+
+.container {
+  background: var(--color-background, #0d1117);
+  color: var(--color-text, #c9d1d9);
+  width: 100vw;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--color-text, #c9d1d9);
+  font-size: 16px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-primary, #4ee672);
+  text-align: center;
+}
+
+.addressSection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--color-surface, #161b22);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.addressText {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--color-text, #c9d1d9);
+  word-break: break-all;
+  flex: 1;
+  text-align: center;
+}
+
+.copyButton {
+  background: transparent;
+  border: none;
+  color: var(--color-secondary, #58a6ff);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  transition: background 0.2s;
+}
+
+.copyButton:active {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+/* Status Row */
+.statusRow {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.statusCard {
+  flex: 1;
+  background: var(--color-surface, #161b22);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.statusLabel {
+  font-size: 11px;
+  color: #8b949e;
+  margin-bottom: 6px;
+}
+
+.statusValue {
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusOnline {
+  color: var(--color-primary, #4ee672);
+  font-size: 12px;
+}
+
+.statusOffline {
+  color: var(--color-danger, #da3633);
+  font-size: 12px;
+}
+
+/* Balance Card */
+.balanceCard {
+  background: var(--color-surface, #161b22);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.balanceLabel {
+  font-size: 12px;
+  color: #8b949e;
+  margin-bottom: 8px;
+}
+
+.balanceAmount {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--color-primary, #4ee672);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.balanceUnit {
+  font-size: 18px;
+  color: #8b949e;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.balanceNote {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+/* Info Card */
+.infoCard {
+  background: var(--color-surface, #161b22);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.infoRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.infoRow:last-child {
+  margin-bottom: 0;
+}
+
+.infoLabel {
+  font-size: 13px;
+  color: #8b949e;
+}
+
+.infoValue {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text, #c9d1d9);
+  font-variant-numeric: tabular-nums;
+}
+
+.syncWarning {
+  margin-top: 12px;
+  padding: 8px;
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #ffc107;
+}
+
+/* Auto-Mining Card */
+.autoMiningCard {
+  background: var(--color-surface, #161b22);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.autoMiningLabel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.checkbox {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: var(--color-primary, #4ee672);
+}
+
+.autoMiningDesc {
+  font-size: 12px;
+  color: #8b949e;
+  line-height: 1.4;
+  margin-left: 30px;
+}
+
+/* Status Message */
+.statusMessage {
+  font-size: 13px;
+  color: #8b949e;
+  text-align: center;
+  margin-bottom: 16px;
+  min-height: 20px;
+}
+
+.statusError {
+  color: var(--color-danger, #da3633);
+}
+
+/* Button Container */
+.buttonContainer {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+.miningButton {
+  width: 100%;
+  max-width: 400px;
+  padding: 18px 24px;
+  border: none;
+  border-radius: 14px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-height: 56px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.miningButton:active {
+  transform: scale(0.98);
+}
+
+.miningButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.miningButtonStart {
+  background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+}
+
+.miningButtonStart:active {
+  background: linear-gradient(135deg, #1e6f2a 0%, #238636 100%);
+}
+
+.miningButtonStop {
+  background: linear-gradient(135deg, #da3633 0%, #f85149 100%);
+}
+
+.miningButtonStop:active {
+  background: linear-gradient(135deg, #b62324 0%, #da3633 100%);
+}
+
+/* Bubble Animation */
+.bubble {
+  position: absolute;
+  bottom: 80%;
+  font-size: 20px;
+  color: var(--color-primary, #4ee672);
+  font-weight: 700;
+  animation: rise 2s ease-out forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes rise {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-40px);
+    opacity: 0;
+  }
+}
+
+/* Safe area insets for notched devices */
+@supports (padding: max(0px)) {
+  .container {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+/* Touch optimizations */
+@media (hover: none) and (pointer: coarse) {
+  .miningButton {
+    min-height: 56px;
+  }
+  
+  .copyButton {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
