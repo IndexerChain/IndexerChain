@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n/useI18n.js';
 import { useMiningData } from '../../features/miner-dashboard/hooks/useMiningData.js';
 import styles from './MobileMinerPage.module.css';
@@ -62,7 +62,6 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
 
   // Use mining data hook
   const {
-    status,
     balance,
     localHeight: hookLocalHeight,
     networkHeight: hookNetworkHeight,
