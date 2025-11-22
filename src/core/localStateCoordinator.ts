@@ -613,7 +613,16 @@ export class LocalStateCoordinator {
   private async applyLocalSnapshot(response: LocalSnapshotResponse): Promise<void> {
     if (!this.chainContext) return;
     
+    // CRITICAL: Block snapshot application during solo mining to prevent balance rollback
+    const { guardSnapshotApplication } = await import("./stateGuards.js");
+    const currentTip = this.chainContext.storage.getTip();
+    const currentHeight = currentTip?.header.height ?? 0;
     const { snapshotMeta, snapshotData, deltaData } = response;
+    
+    if (!guardSnapshotApplication(snapshotMeta?.height, currentHeight)) {
+      logger.warn(`[LocalStateCoordinator] Skipping snapshot application at height ${snapshotMeta?.height} (solo mining mode)`);
+      return;
+    }
     
     // If we have full snapshot data, restore from it
     if (snapshotData) {

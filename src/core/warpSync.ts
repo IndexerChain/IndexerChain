@@ -231,6 +231,22 @@ export class WarpSyncManager {
       // Step 3: Apply snapshot to restore state
       logger.info(`[WarpSync] Applying snapshot at height ${snapshotMeta.height}...`);
       
+      // CRITICAL: Block snapshot application during solo mining to prevent balance rollback
+      const { guardSnapshotApplication } = await import("./stateGuards.js");
+      const currentHeight = this.chainContext.storage.getTip()?.header.height ?? 0;
+      
+      if (!guardSnapshotApplication(snapshotMeta.height, currentHeight)) {
+        logger.warn(`[WarpSync] Skipping snapshot application at height ${snapshotMeta.height} (solo mining mode)`);
+        return {
+          success: false,
+          error: "Snapshot application blocked (solo mining mode)",
+          method: "snapshot",
+          synced: false,
+          fromHeight: currentHeight,
+          toHeight: currentHeight
+        };
+      }
+      
       if (snapshotData.indexState) {
         const restoredState = IndexState.fromSnapshot(snapshotData.indexState);
         const restoredInternalState = (restoredState as any).getInternalState();

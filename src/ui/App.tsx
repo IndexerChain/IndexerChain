@@ -127,6 +127,9 @@ function App() {
   const [isMining, setIsMining] = useState<boolean>(persistedState.isMining ?? false);
   const isMiningRef = useRef(false);
   useEffect(() => { isMiningRef.current = isMining; }, [isMining]);
+  
+  // CRITICAL: Track LocalStateCoordinator initialization to prevent infinite loops
+  const localStateCoordinatorInitializedRef = useRef<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   // Removed unused state: miningHash, miningNonce (replaced by MiningLiveStatsCard)
   const [error, setError] = useState<string>("");
@@ -479,16 +482,26 @@ function App() {
   // Phase 29: Initialize LocalStateCoordinator
   useEffect(() => {
     if (!chainContext) return;
-    // On cold start, attempt to restore last indexState snapshot for consistent balances
-    try {
-      const snapStr = localStorage.getItem("indexer_state_snapshot");
-      if (snapStr) {
-        const snap = JSON.parse(snapStr);
-        chainContext.indexState.importSnapshot(snap);
-      }
-    } catch (e) {
-      // ignore
+    
+    // CRITICAL: Only initialize once to prevent infinite loops
+    if (localStateCoordinatorInitializedRef.current) {
+      return;
     }
+    
+    // CRITICAL: Early return if solo mining mode is active - prevent any state restoration
+    // This prevents React from re-triggering this effect and causing state rollback
+    if (typeof window !== "undefined" && (window as any).__soloMiningMode) {
+      console.warn("[App] Skipping LocalStateCoordinator initialization (solo mining mode)");
+      localStateCoordinatorInitializedRef.current = true; // Mark as initialized to prevent re-execution
+      return;
+    }
+    
+    // CRITICAL: Completely disable localStorage snapshot restore to prevent balance rollback
+    // Even if not in solo mining mode, restoring from localStorage can cause balance to revert
+    // The chain kernel (indexState) already has the correct state from block replay
+    // We should never restore from localStorage snapshot as it may be stale
+    // REMOVED: localStorage snapshot restore logic
+    // This was causing balance to revert from real value to stale cached value (2099.993273)
     
     const initStateCoordinator = async () => {
       await localStateCoordinator.init(chainContext);
@@ -521,11 +534,12 @@ function App() {
     };
     
     const cleanupPromise = initStateCoordinator();
+    localStateCoordinatorInitializedRef.current = true; // Mark as initialized after starting
     
     return () => {
       cleanupPromise.then((cleanup) => cleanup?.());
     };
-  }, [chainContext, localStateCoordinator]);
+  }, [chainContext]); // CRITICAL: Remove localStateCoordinator from deps to prevent infinite loop
 
   // Form state for creating transactions
   const [txNamespace, setTxNamespace] = useState<string>("test");
@@ -4582,6 +4596,51 @@ function App() {
         
         setIsMining(true);
         setError("");
+        
+        // CRITICAL: Set solo mining mode flag to prevent IndexState rollback
+        if (typeof window !== "undefined") {
+          (window as any).__soloMiningMode = true;
+          (window as any).__isMining = true;
+          try {
+            console.log("[LightSlot] Solo mining mode enabled - IndexState restore blocked");
+          } catch {}
+        }
+        
+        // CRITICAL: Reset Expected Balance to chain kernel state before starting mining
+        // This ensures UI and internal state are synchronized from the real chain state
+        try {
+          const ctx = chainContextRef.current || chainContext;
+          const walletStore = getMultiWalletStore();
+          const miningWallet = walletStore.getMiningWallet();
+          const minerAddr = miningWallet ? miningWallet.address : await getOrCreateNodeAddress();
+          
+          if (ctx && minerAddr && typeof window !== "undefined") {
+            const w = window as any;
+            // Read balance from chain kernel's indexState (the authoritative source)
+            const currentBalance = ctx.indexState.getBalance(minerAddr);
+            
+            // CRITICAL: Always reset to chain kernel balance when starting mining
+            // This ensures Expected Balance starts from the real chain state, not old cache
+            if (typeof currentBalance === "number" && Number.isFinite(currentBalance)) {
+              // Reset window.lastLocalBalance to chain kernel balance
+              w.lastLocalBalance = currentBalance;
+              
+              // Dispatch balance update event to synchronize UI immediately
+              try {
+                window.dispatchEvent(new CustomEvent('balanceUpdated', { 
+                  detail: { address: minerAddr, balance: currentBalance } 
+                }));
+              } catch {}
+              
+              try {
+                console.log("[LightSlot] Reset Expected Balance to chain kernel:", currentBalance, "for", minerAddr);
+              } catch {}
+            }
+          }
+        } catch (e) {
+          try { console.log("[LightSlot] Failed to reset Expected Balance:", e); } catch {}
+        }
+        
         // Start per-slot loop
         const loopKey = "lightSlotLoop";
         (window as any)[loopKey] && clearInterval((window as any)[loopKey]);
@@ -4789,25 +4848,74 @@ function App() {
                   p2pAny?.sendToSignalServer?.("REQUEST_BALANCE_PROOF", { address: minerAddr, targetHeight: target });
                 }
               } catch {}
-              // Credit local balance explicitly from coinbase (defensive: ensure UI reflects reward immediately)
-              // REMOVED: Double-application of balance causes state drift. 
-              // We rely on ctx.indexState.applyBlock() which is called inside appendMinedBlock().
-              // The balance update event below will broadcast the correct state from indexState.
-
-              // Force immediate balance refresh from IndexState (bypass ZK proof wait)
+              // CRITICAL FIX: In single-node mining mode, Expected Balance should only accumulate, never revert
+              // The issue: ctx.indexState might be an old instance, causing balance to revert from 2204 back to 2099
+              // Solution: Calculate coinbase delta and accumulate, use max() to prevent rollback
               try {
-                // Update global hint for UI to read immediately
-                const currentBal = ctx.indexState.getBalance(minerAddr);
+                // Calculate coinbase reward delta for this block
+                let coinbaseDelta = 0;
+                const coinbase = blockToAppend.txs?.[0];
+                if (coinbase && coinbase.ops) {
+                  for (const op of coinbase.ops) {
+                    if (op.type === "TRANSFER" && op.to === minerAddr && typeof op.amount === "number") {
+                      coinbaseDelta += op.amount;
+                    }
+                  }
+                }
+                
+                // Get current balance from indexState (may be old, but we use max() to prevent rollback)
+                const balanceFromState = ctx.indexState.getBalance(minerAddr);
+                
+                // Update lastLocalBalance: accumulate delta, but never go backwards
                 if (typeof window !== "undefined") {
-                  (window as any).lastLocalBalance = currentBal;
+                  const w = window as any;
+                  
+                  // CRITICAL: If lastLocalBalance is not initialized, use the balance from chain kernel
+                  // After appendMinedBlock, ctx.indexState should have the updated balance
+                  // But if it's still old, we'll use max() to prevent rollback anyway
+                  let previousLocalBalance = w.lastLocalBalance;
+                  if (previousLocalBalance === undefined || previousLocalBalance === null) {
+                    // First time: initialize from chain kernel's indexState (should be updated after appendMinedBlock)
+                    previousLocalBalance = typeof balanceFromState === "number" && Number.isFinite(balanceFromState) 
+                      ? balanceFromState 
+                      : 0;
+                    // If balanceFromState seems old (less than expected), try to get from chainContext directly
+                    if (chainContextRef.current && chainContextRef.current.indexState) {
+                      const kernelBalance = chainContextRef.current.indexState.getBalance(minerAddr);
+                      if (typeof kernelBalance === "number" && Number.isFinite(kernelBalance) && kernelBalance > previousLocalBalance) {
+                        previousLocalBalance = kernelBalance;
+                        try { console.log("[LightSlot] Using chain kernel balance for initialization:", kernelBalance); } catch {}
+                      }
+                    }
+                  }
+                  
+                  // Accumulate: add coinbase delta to previous balance
+                  const accumulatedBalance = previousLocalBalance + coinbaseDelta;
+                  
+                  // Use max to prevent rollback: take the maximum of accumulated, state value, and previous
+                  const newLocalBalance = Math.max(
+                    accumulatedBalance,
+                    typeof balanceFromState === "number" ? balanceFromState : accumulatedBalance,
+                    previousLocalBalance
+                  );
+                  
+                  w.lastLocalBalance = newLocalBalance;
+                  
                   try { 
-                    console.log("[LightSlot] Balance synced from state:", currentBal, 
+                    console.log("[LightSlot] ExpectedBalance local++ =>", newLocalBalance,
+                      "(delta:", coinbaseDelta,
+                      "prev:", previousLocalBalance,
+                      "state:", balanceFromState,
                       "IndexState ID:", (ctx.indexState as any)._debugId,
                       "Storage Tip:", ctx.storage.getTip()?.header.height,
                       "for", minerAddr); 
                   } catch {}
+                  
+                  // Dispatch balance update event with the accumulated (non-reverting) balance
                   try {
-                    window.dispatchEvent(new CustomEvent('balanceUpdated', { detail: { address: minerAddr, balance: currentBal } }));
+                    window.dispatchEvent(new CustomEvent('balanceUpdated', { 
+                      detail: { address: minerAddr, balance: newLocalBalance } 
+                    }));
                   } catch {}
                 }
                 
@@ -4818,15 +4926,6 @@ function App() {
                   // But keep the same underlying objects to avoid disrupting ongoing operations
                   return prev ? { ...prev } : prev;
                 });
-                
-                // Also trigger a balance read to ensure UI reflects latest state
-                if (minerAddr && ctx.indexState) {
-                  const latestBalance = ctx.indexState.getBalance(minerAddr);
-                  // Update window hint for immediate UI access
-                  if (typeof window !== "undefined") {
-                    (window as any).lastLocalBalance = latestBalance;
-                  }
-                }
               } catch {}
             } else {
               try { console.log("[LightSlot] append failed:", result.error); } catch {}
@@ -5215,6 +5314,14 @@ function App() {
   // Phase 8: Stop mining
   // Phase 42: Release active miner when stopping
   const handleStopMining = () => {
+    // CRITICAL: Clear solo mining mode flag when stopping mining
+    if (typeof window !== "undefined") {
+      (window as any).__soloMiningMode = false;
+      (window as any).__isMining = false;
+      try {
+        console.log("[LightSlot] Solo mining mode disabled - IndexState restore allowed");
+      } catch {}
+    }
     try { minerClient.stopMining("user"); } catch {}
     setIsMining(false);
     try {

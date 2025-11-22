@@ -39,6 +39,9 @@ export class IndexState {
   // Phase 27: Privacy layer - commitments and nullifiers
   private commitments: Map<string, string> = new Map(); // commitment -> noteId
   private nullifierSet: Set<string> = new Set(); // Set of used nullifiers
+  
+  // CRITICAL: Hard isolation mode for solo mining - only allow applyBlock, block all other modifications
+  private isApplyingBlock: boolean = false; // Flag to allow modifications during applyBlock
 
   /**
    * Create an empty state
@@ -117,10 +120,36 @@ export class IndexState {
   }
 
   /**
+   * Check if solo mining mode is active and block modifications
+   * CRITICAL: In solo mining mode, only applyBlock is allowed to modify state
+   */
+  private checkSoloMiningLock(actionName: string): void {
+    if (this.isApplyingBlock) {
+      // Allow modifications during applyBlock
+      return;
+    }
+    
+    try {
+      const g: any = (typeof window !== "undefined") ? (window as any) : {};
+      if (typeof g.__soloMiningMode === "boolean" && g.__soloMiningMode) {
+        console.warn(`[IndexState] 🛑 Blocked ${actionName} during solo mining mode (only applyBlock allowed)`);
+        throw new Error(`IndexState modification blocked: ${actionName} (solo mining mode)`);
+      }
+    } catch (e) {
+      // If check throws, re-throw it
+      if (e instanceof Error && e.message.includes("IndexState modification blocked")) {
+        throw e;
+      }
+      // Otherwise ignore (window might not be available)
+    }
+  }
+
+  /**
    * Set balance for an address
    * Phase 7: Helper to set balance in "balances" namespace
    */
   setBalance(address: Address, amount: number): void {
+    this.checkSoloMiningLock("setBalance");
     const nsMap = this.state.get("balances") || new Map<string, string>();
     nsMap.set(address, amount.toString());
     this.state.set("balances", nsMap);
@@ -145,6 +174,7 @@ export class IndexState {
    * Stored in "system" namespace, key "total_minted"
    */
   setTotalMinted(amount: bigint): void {
+    this.checkSoloMiningLock("setTotalMinted");
     const nsMap = this.state.get("system") || new Map<string, string>();
     nsMap.set("total_minted", amount.toString());
     this.state.set("system", nsMap);
@@ -153,10 +183,22 @@ export class IndexState {
   /**
    * Phase 16: Increment total minted IDC
    * Used when minting new coins (coinbase reward)
+   * CRITICAL: Allow this during applyBlock or when called from appendMinedBlock
    */
   incrementTotalMinted(amount: bigint): void {
-    const current = this.getTotalMinted();
-    this.setTotalMinted(current + amount);
+    // CRITICAL: Allow incrementTotalMinted during applyBlock or when called from appendMinedBlock
+    // This is part of the normal block application flow
+    if (this.isApplyingBlock) {
+      // During applyBlock, allow setTotalMinted
+      const current = this.getTotalMinted();
+      const nsMap = this.state.get("system") || new Map<string, string>();
+      nsMap.set("total_minted", (current + amount).toString());
+      this.state.set("system", nsMap);
+    } else {
+      // Outside applyBlock, use normal path (will be blocked in solo mining mode)
+      const current = this.getTotalMinted();
+      this.setTotalMinted(current + amount);
+    }
   }
 
   /**
@@ -217,6 +259,11 @@ export class IndexState {
    * @param ownerAddress Owner address (from transaction, required for TRANSFER)
    */
   applyOperation(op: Operation, ownerAddress?: Address): void {
+    // CRITICAL: Only allow applyOperation during applyBlock (when isApplyingBlock is true)
+    // This prevents external code from modifying state during solo mining
+    if (!this.isApplyingBlock) {
+      this.checkSoloMiningLock("applyOperation");
+    }
     const { namespace, key, value = "", type } = op;
 
     // Phase 7: Handle TRANSFER operation
@@ -343,6 +390,11 @@ export class IndexState {
    * Apply all transactions in a block
    */
   applyBlock(block: Block): void {
+    // CRITICAL: Set flag to allow modifications during applyBlock
+    // This is the ONLY allowed modification path during solo mining
+    const wasApplyingBlock = this.isApplyingBlock;
+    this.isApplyingBlock = true;
+    
     try {
       for (let i = 0; i < block.txs.length; i++) {
         const tx = block.txs[i];
@@ -361,6 +413,9 @@ export class IndexState {
       throw new Error(
         `Failed to apply block at height ${block.header.height}: ${error instanceof Error ? error.message : String(error)}`
       );
+    } finally {
+      // CRITICAL: Restore flag after applyBlock completes
+      this.isApplyingBlock = wasApplyingBlock;
     }
   }
 
@@ -375,13 +430,31 @@ export class IndexState {
    * The balance calculation doesn't depend on total_minted.
    */
   rebuildFromBlocks(blocks: Block[]): void {
+    // CRITICAL: Only block rebuildFromBlocks if this is the main chainContext.indexState
+    // Temporary states created in buildCandidateBlock should be allowed to rebuild
+    // Check if this is a temporary state by checking if it has no state yet (newly created)
+    const isTemporaryState = this.state.size === 0 && this.commitments.size === 0 && this.nullifierSet.size === 0;
+    
+    if (!isTemporaryState) {
+      // This is the main indexState, check solo mining lock
+      this.checkSoloMiningLock("rebuildFromBlocks");
+    }
+    
     this.state.clear();
     // Also clear commitments and nullifiers (Phase 27)
     this.commitments.clear();
     this.nullifierSet.clear();
     
-    for (const block of blocks) {
-      this.applyBlock(block);
+    // Set isApplyingBlock to allow applyBlock modifications
+    const wasApplyingBlock = this.isApplyingBlock;
+    this.isApplyingBlock = true;
+    
+    try {
+      for (const block of blocks) {
+        this.applyBlock(block);
+      }
+    } finally {
+      this.isApplyingBlock = wasApplyingBlock;
     }
     
     // Note: total_minted is updated in chain.ts during initialization
@@ -390,8 +463,29 @@ export class IndexState {
 
   /**
    * Get the internal state map (for debugging)
+   * CRITICAL: In solo mining mode, this returns a read-only view to prevent external modifications
    */
   getInternalState(): Map<string, Map<string, string>> {
+    // CRITICAL: Check if solo mining mode is active
+    try {
+      const g: any = (typeof window !== "undefined") ? (window as any) : {};
+      if (typeof g.__soloMiningMode === "boolean" && g.__soloMiningMode && !this.isApplyingBlock) {
+        console.warn("[IndexState] 🛑 getInternalState() called during solo mining mode - returning read-only view");
+        // Return a read-only proxy that throws on modification attempts
+        return new Proxy(this.state, {
+          get: (target, prop) => {
+            if (prop === 'clear' || prop === 'delete' || prop === 'set') {
+              throw new Error(`IndexState.getInternalState() modification blocked during solo mining mode (${String(prop)})`);
+            }
+            const value = target[prop as keyof typeof target];
+            if (typeof value === 'function') {
+              return value.bind(target);
+            }
+            return value;
+          }
+        }) as any;
+      }
+    } catch {}
     return this.state;
   }
 
@@ -401,6 +495,7 @@ export class IndexState {
   }
 
   importSnapshot(snapshot: IndexStateSnapshot): void {
+    this.checkSoloMiningLock("importSnapshot");
     try {
       // Reset
       this.state.clear();

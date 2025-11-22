@@ -284,6 +284,15 @@ export class StateRepairManager {
       throw new Error(`Failed to load snapshot at height ${fullSnapMeta.height}`);
     }
 
+    // CRITICAL: Block state repair during solo mining to prevent balance rollback
+    const { guardSnapshotApplication } = await import("./stateGuards.js");
+    const currentHeight = this.chainContext.storage.getTip()?.header.height ?? 0;
+    
+    if (!guardSnapshotApplication(fullSnapMeta.height, currentHeight)) {
+      console.warn(`[StateRepair] Skipping state rebuild from snapshot at height ${fullSnapMeta.height} (solo mining mode)`);
+      throw new Error("State repair blocked (solo mining mode)");
+    }
+    
     // Restore state from snapshot
     const restoredState = IndexState.fromSnapshot(fullSnap.indexState);
     const restoredInternalState = (restoredState as any).getInternalState();

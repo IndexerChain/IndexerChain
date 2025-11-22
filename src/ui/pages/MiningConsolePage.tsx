@@ -324,30 +324,86 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     const [displayBalance, setDisplayBalance] = useState<string>("0.000000");
     const lastDisplayedBalanceRef = useRef<number>(0);
     
+    // CRITICAL: Track if we've already initialized to prevent re-initialization from stale state
+    const initializedRef = useRef<boolean>(false);
+    const lastChainContextIdRef = useRef<string | null>(null);
+    
     useEffect(() => {
         const updateBalance = () => {
             if (!props.chainContext || !props.nodeAddress) return;
             try {
-                const windowBal = (typeof window !== 'undefined' && (window as any).lastLocalBalance);
+                // CRITICAL FIX: Always initialize from chain kernel (indexState), never from old cache
+                // This ensures Expected Balance always starts from the real chain state, not stale values
                 const localBal = props.chainContext.indexState.getBalance(props.nodeAddress);
                 const zkBal = lightVerifiedBalance;
-                // Prefer local (real-time) > ZK (delayed proof) > window hint
+                const windowBal = (typeof window !== 'undefined' && (window as any).lastLocalBalance);
+                
+                // Priority 1: Chain kernel balance (indexState) - the authoritative source
+                // This is the real balance from the chain, always use this as baseline
                 let candidate: number = 0;
                 if (typeof localBal === 'number' && Number.isFinite(localBal)) {
                     candidate = localBal;
                 } else if (typeof zkBal === 'number' && Number.isFinite(zkBal)) {
+                    // Fallback to ZK verified balance if indexState is not available
                     candidate = zkBal;
-                } else if (typeof windowBal === 'number' && Number.isFinite(windowBal)) {
-                    candidate = windowBal;
-                } else {
-                    candidate = lastDisplayedBalanceRef.current || 0;
                 }
+                
+                // Priority 2: If we're actively mining, use window.lastLocalBalance (accumulated delta)
+                // But only if it's larger than the chain kernel balance (meaning we've mined new blocks)
+                // This allows Expected Balance to show accumulated rewards during mining
+                if (typeof windowBal === 'number' && Number.isFinite(windowBal) && windowBal > candidate) {
+                    candidate = windowBal;
+                }
+                
+                // CRITICAL: Prevent rollback - if we've already initialized and chain kernel balance is smaller,
+                // it means indexState was reset (e.g., from snapshot restore). In this case, keep the previous value.
+                if (initializedRef.current) {
+                    // If chain kernel balance is smaller than what we've displayed, it was likely reset
+                    // Keep the previous displayed value to prevent rollback
+                    if (candidate < lastDisplayedBalanceRef.current) {
+                        console.warn("[MiningConsole] Detected indexState rollback:", candidate, "<", lastDisplayedBalanceRef.current, 
+                            "- keeping previous Expected Balance");
+                        candidate = lastDisplayedBalanceRef.current;
+                    } else {
+                        // Normal update: use max to prevent visual flicker
+                        candidate = Math.max(candidate, lastDisplayedBalanceRef.current || 0);
+                    }
+                } else {
+                    // First time: use chain kernel balance directly
+                    // This ensures we start from the real chain state
+                }
+                
                 lastDisplayedBalanceRef.current = candidate;
                 setDisplayBalance(candidate.toFixed(12));
             } catch (e) {
                 // ignore
             }
         };
+        
+        // CRITICAL: Initialize from chain kernel ONLY on first mount or when chainContext actually changes
+        // Use chainContext indexState ID to detect if it's a new instance
+        const currentContextId = (props.chainContext?.indexState as any)?._debugId || null;
+        const isNewContext = currentContextId !== lastChainContextIdRef.current;
+        
+        if (props.chainContext && props.nodeAddress && (!initializedRef.current || isNewContext)) {
+            try {
+                const kernelBalance = props.chainContext.indexState.getBalance(props.nodeAddress);
+                if (typeof kernelBalance === 'number' && Number.isFinite(kernelBalance)) {
+                    // CRITICAL: Always reset to chain kernel balance, never preserve old value
+                    // This ensures we always start from the real chain state
+                    lastDisplayedBalanceRef.current = kernelBalance;
+                    // Also sync window.lastLocalBalance to chain kernel balance
+                    if (typeof window !== 'undefined') {
+                        (window as any).lastLocalBalance = kernelBalance;
+                    }
+                    initializedRef.current = true;
+                    lastChainContextIdRef.current = currentContextId;
+                    console.log("[MiningConsole] Initialized Expected Balance from chain kernel:", kernelBalance);
+                }
+            } catch (e) {
+                console.error("[MiningConsole] Failed to initialize balance:", e);
+            }
+        }
         
         // Update immediately
         updateBalance();
@@ -874,10 +930,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         // CRITICAL: Apply snapshot state immediately so chain can continue from snapshot height
                                         try {
                                             const { IndexState } = await import("../../core/indexState.js");
+                                            const { guardSnapshotApplication } = await import("../../core/stateGuards.js");
                                             const currentHeight = ctx.storage.getTip()?.header.height || 0;
                                             const snapshotHeight = snapshotData.meta.height || 0;
                                             
-                                            if (snapshotData.indexState) {
+                                            // CRITICAL: Block snapshot application during solo mining to prevent balance rollback
+                                            if (!guardSnapshotApplication(snapshotHeight, currentHeight)) {
+                                                console.warn(`[MiningConsole] Skipping snapshot application at height ${snapshotHeight} (solo mining mode)`);
+                                            } else if (snapshotData.indexState) {
                                                 const restoredState = IndexState.fromSnapshot(snapshotData.indexState);
                                                 const restoredInternalState = (restoredState as any).getInternalState();
                                                 const currentInternalState = (ctx.indexState as any).getInternalState();

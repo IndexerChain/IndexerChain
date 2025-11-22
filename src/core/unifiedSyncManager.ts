@@ -898,6 +898,23 @@ async function warpSyncFromPeers(
             })();
             
             if (finalSnapshot && finalSnapshot.indexState) {
+              // CRITICAL: Block snapshot application during solo mining to prevent balance rollback
+              const { guardSnapshotApplication } = await import("./stateGuards.js");
+              const snapshotCurrentHeight = chainContext.storage.getTip()?.header.height ?? 0;
+              const snapshotHeight = bestSnapshot.height;
+              
+              if (!guardSnapshotApplication(snapshotHeight, snapshotCurrentHeight)) {
+                logger.warn(`[UnifiedSync] Skipping snapshot application at height ${snapshotHeight} (solo mining mode)`);
+                return {
+                  success: false,
+                  error: "Snapshot application blocked (solo mining mode)",
+                  synced: false,
+                  method: "none",
+                  fromHeight: snapshotCurrentHeight,
+                  toHeight: snapshotCurrentHeight
+                };
+              }
+              
               if (_statusCallback) {
                 _statusCallback(`Snapshot found, manually applying...`);
               }

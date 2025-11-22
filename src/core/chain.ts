@@ -121,46 +121,62 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
           // Find nearest full snapshot
           const fullSnapMeta = findNearestFullSnapshot(latestSnap.height);
           if (fullSnapMeta) {
-            const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
-            if (fullSnap && fullSnap.indexState) {
-              // Start with full snapshot
-              const restoredState = IndexState.fromSnapshot(fullSnap.indexState);
-              const restoredInternalState = (restoredState as any).getInternalState();
-              const currentInternalState = (indexState as any).getInternalState();
-              currentInternalState.clear();
-              for (const [ns, kvMap] of restoredInternalState) {
-                const newMap = new Map(kvMap);
-                currentInternalState.set(ns, newMap);
-              }
-              
-              // Apply all delta snapshots
-              const deltaMetas = loadDeltaSnapshotsAfter(fullSnapMeta.height, latestSnap.height);
-              for (const deltaMeta of deltaMetas) {
-                const deltaSnap = await loadSnapshotByHeight(deltaMeta.height);
-                if (deltaSnap && deltaSnap.delta) {
-                  const { applyDelta } = await import("./snapshotDelta.js");
-                  await applyDelta(deltaSnap.delta, (op: any) => {
-                    indexState.applyOperation(op, undefined);
-                  });
+            // CRITICAL: Block snapshot restore during solo mining to prevent balance rollback
+            const { guardSnapshotApplication } = await import("./stateGuards.js");
+            const currentHeight = storage.getTip()?.header.height ?? 0;
+            if (!guardSnapshotApplication(fullSnapMeta.height, currentHeight)) {
+              console.warn(`[Chain] Skipping snapshot restore at height ${fullSnapMeta.height} (solo mining mode)`);
+              startHeight = 0;
+            } else {
+              const fullSnap = await loadSnapshotByHeight(fullSnapMeta.height);
+              if (fullSnap && fullSnap.indexState) {
+                // Start with full snapshot
+                const restoredState = IndexState.fromSnapshot(fullSnap.indexState);
+                const restoredInternalState = (restoredState as any).getInternalState();
+                const currentInternalState = (indexState as any).getInternalState();
+                currentInternalState.clear();
+                for (const [ns, kvMap] of restoredInternalState) {
+                  const newMap = new Map(kvMap);
+                  currentInternalState.set(ns, newMap);
                 }
-              }
               
-              startHeight = latestSnap.height + 1;
+                // Apply all delta snapshots
+                const deltaMetas = loadDeltaSnapshotsAfter(fullSnapMeta.height, latestSnap.height);
+                for (const deltaMeta of deltaMetas) {
+                  const deltaSnap = await loadSnapshotByHeight(deltaMeta.height);
+                  if (deltaSnap && deltaSnap.delta) {
+                    const { applyDelta } = await import("./snapshotDelta.js");
+                    await applyDelta(deltaSnap.delta, (op: any) => {
+                      indexState.applyOperation(op, undefined);
+                    });
+                  }
+                }
+              
+                startHeight = latestSnap.height + 1;
+              }
             }
           } else {
             startHeight = 0;
           }
         } else {
           // Full snapshot (or legacy format)
-          const restoredState = IndexState.fromSnapshot(snapData.indexState);
-          const restoredInternalState = (restoredState as any).getInternalState();
-          const currentInternalState = (indexState as any).getInternalState();
-          currentInternalState.clear();
-          for (const [ns, kvMap] of restoredInternalState) {
-            const newMap = new Map(kvMap);
-            currentInternalState.set(ns, newMap);
+          // CRITICAL: Block snapshot restore during solo mining to prevent balance rollback
+          const { guardSnapshotApplication } = await import("./stateGuards.js");
+          const currentHeight = storage.getTip()?.header.height ?? 0;
+          if (!guardSnapshotApplication(latestSnap.height, currentHeight)) {
+            console.warn(`[Chain] Skipping snapshot restore at height ${latestSnap.height} (solo mining mode)`);
+            startHeight = 0;
+          } else {
+            const restoredState = IndexState.fromSnapshot(snapData.indexState);
+            const restoredInternalState = (restoredState as any).getInternalState();
+            const currentInternalState = (indexState as any).getInternalState();
+            currentInternalState.clear();
+            for (const [ns, kvMap] of restoredInternalState) {
+              const newMap = new Map(kvMap);
+              currentInternalState.set(ns, newMap);
+            }
+            startHeight = latestSnap.height + 1;
           }
-          startHeight = latestSnap.height + 1;
         }
       }
     } else {
@@ -195,17 +211,24 @@ export async function initChain(params: ChainParams): Promise<ChainContext & { n
         // Reload snapshot after saving remote one
         const updatedSnap = getLatestSnapshotMeta();
         if (updatedSnap && updatedSnap.height === remoteMeta.height) {
-          // Load the newly saved remote snapshot
-          const snapData = await loadSnapshotByHeight(updatedSnap.height);
-          if (snapData && snapData.indexState) {
-            // Restore state from remote snapshot
-            const restoredState = IndexState.fromSnapshot(snapData.indexState);
-            const restoredInternalState = (restoredState as any).getInternalState();
-            const currentInternalState = (indexState as any).getInternalState();
-            currentInternalState.clear();
-            for (const [ns, kvMap] of restoredInternalState) {
-              const newMap = new Map(kvMap);
-              currentInternalState.set(ns, newMap);
+          // CRITICAL: Block remote snapshot restore during solo mining to prevent balance rollback
+          const { guardSnapshotApplication } = await import("./stateGuards.js");
+          const currentHeight = storage.getTip()?.header.height ?? 0;
+          if (!guardSnapshotApplication(updatedSnap.height, currentHeight)) {
+            console.warn(`[Chain] Skipping remote snapshot restore at height ${updatedSnap.height} (solo mining mode)`);
+          } else {
+            // Load the newly saved remote snapshot
+            const snapData = await loadSnapshotByHeight(updatedSnap.height);
+            if (snapData && snapData.indexState) {
+              // Restore state from remote snapshot
+              const restoredState = IndexState.fromSnapshot(snapData.indexState);
+              const restoredInternalState = (restoredState as any).getInternalState();
+              const currentInternalState = (indexState as any).getInternalState();
+              currentInternalState.clear();
+              for (const [ns, kvMap] of restoredInternalState) {
+                const newMap = new Map(kvMap);
+                currentInternalState.set(ns, newMap);
+              }
             }
             
             startHeight = updatedSnap.height + 1;
@@ -508,57 +531,68 @@ export async function appendMinedBlock(
     // Append to storage (this also saves to persistence)
     context.storage.appendBlock(block);
 
-    // Apply block to index state
-    try {
-      context.indexState.applyBlock(block);
-    } catch (stateError) {
-      // CRITICAL: If applying to state fails, we MUST revert the storage append
-      // otherwise we have an inconsistent state (block in storage but not in index)
-      context.storage.removeBlocksFromHeight(block.header.height);
-      throw stateError;
-    }
-
-    // Log updated balance for debugging
-    try {
-      if (block.txs.length > 0) {
-        const coinbase = block.txs[0];
-        if (coinbase.ownerAddress === "idc_system" && coinbase.ops.length > 0) {
-          const minerOp = coinbase.ops.find(op => op.type === "TRANSFER" && op.to?.startsWith("idc_"));
-          if (minerOp && minerOp.to) {
-            const bal = context.indexState.getBalance(minerOp.to);
-            console.log(`[Chain] Applied block ${block.header.height}. IndexState ID: ${(context.indexState as any)._debugId}. New balance for ${minerOp.to}: ${bal}`);
-          }
-        }
-      }
-    } catch {}
+    // CRITICAL: Set isApplyingBlock flag before applyBlock to allow all modifications
+    // This ensures incrementTotalMinted can be called after applyBlock completes
+    const wasApplyingBlock = (context.indexState as any).isApplyingBlock;
+    (context.indexState as any).isApplyingBlock = true;
     
-    // Phase 29: Report state update to LocalStateCoordinator
-    if (typeof window !== "undefined" && (window as any).localStateCoordinator) {
-      (window as any).localStateCoordinator.reportLocalState(
-        block.header.height,
-        block.hash,
-        block.header.stateCommitment,
-        undefined // finalizedHeight will be updated separately
-      );
-    }
+    try {
+      // Apply block to index state
+      try {
+        context.indexState.applyBlock(block);
+      } catch (stateError) {
+        // CRITICAL: If applying to state fails, we MUST revert the storage append
+        // otherwise we have an inconsistent state (block in storage but not in index)
+        context.storage.removeBlocksFromHeight(block.header.height);
+        throw stateError;
+      }
 
-    // Phase 16: Update total minted after applying block
-    // Phase 42: Extract total coinbase reward from all operations (miner + referrals + fees)
-    if (block.txs.length > 0) {
-      const coinbaseTx = block.txs[0];
-      if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
-        const { IDCToUIDC } = await import("./idcEmission.js");
-        // Sum all TRANSFER operations in coinbase transaction
-        let totalRewardUIDC = 0n;
-        for (const op of coinbaseTx.ops) {
-          if (op.type === "TRANSFER" && op.amount) {
-            totalRewardUIDC += IDCToUIDC(op.amount);
+      // Log updated balance for debugging
+      try {
+        if (block.txs.length > 0) {
+          const coinbase = block.txs[0];
+          if (coinbase.ownerAddress === "idc_system" && coinbase.ops.length > 0) {
+            const minerOp = coinbase.ops.find(op => op.type === "TRANSFER" && op.to?.startsWith("idc_"));
+            if (minerOp && minerOp.to) {
+              const bal = context.indexState.getBalance(minerOp.to);
+              console.log(`[Chain] Applied block ${block.header.height}. IndexState ID: ${(context.indexState as any)._debugId}. New balance for ${minerOp.to}: ${bal}`);
+            }
           }
         }
-        if (totalRewardUIDC > 0n) {
-          context.indexState.incrementTotalMinted(totalRewardUIDC);
+      } catch {}
+      
+      // Phase 29: Report state update to LocalStateCoordinator
+      if (typeof window !== "undefined" && (window as any).localStateCoordinator) {
+        (window as any).localStateCoordinator.reportLocalState(
+          block.header.height,
+          block.hash,
+          block.header.stateCommitment,
+          undefined // finalizedHeight will be updated separately
+        );
+      }
+
+      // Phase 16: Update total minted after applying block
+      // Phase 42: Extract total coinbase reward from all operations (miner + referrals + fees)
+      // CRITICAL: isApplyingBlock is still true, so incrementTotalMinted will be allowed
+      if (block.txs.length > 0) {
+        const coinbaseTx = block.txs[0];
+        if (coinbaseTx.ownerAddress === "idc_system" && coinbaseTx.ops.length > 0) {
+          const { IDCToUIDC } = await import("./idcEmission.js");
+          // Sum all TRANSFER operations in coinbase transaction
+          let totalRewardUIDC = 0n;
+          for (const op of coinbaseTx.ops) {
+            if (op.type === "TRANSFER" && op.amount) {
+              totalRewardUIDC += IDCToUIDC(op.amount);
+            }
+          }
+          if (totalRewardUIDC > 0n) {
+            context.indexState.incrementTotalMinted(totalRewardUIDC);
+          }
         }
       }
+    } finally {
+      // CRITICAL: Restore isApplyingBlock flag after appendMinedBlock completes
+      (context.indexState as any).isApplyingBlock = wasApplyingBlock;
     }
 
     // Phase 9: Auto-generate snapshot if needed
