@@ -258,23 +258,23 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
   };
 
   return (
-    <div style={{ background: '#0d1117', color: '#c9d1d9', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', padding: '16px', boxSizing: 'border-box' }}>
+    <div style={{ background: 'var(--color-background)', color: 'var(--color-text)', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', padding: '16px', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontWeight: 700 }}>IndexerChain Mobile Miner</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <div style={{ fontSize: '12px', color: '#8b949e' }}>{shortAddr}</div>
-          <button onClick={copyAddr} style={{ background: 'none', border: '1px solid #30363d', color: '#58a6ff', borderRadius: 6, padding: '2px 6px', fontSize: 12 }}>复制</button>
+          <button onClick={copyAddr} style={{ background: 'none', border: '1px solid var(--color-border)', color: 'var(--color-secondary)', borderRadius: 6, padding: '2px 6px', fontSize: 12 }}>复制</button>
         </div>
       </div>
 
       <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 10 }}>
+        <div style={{ flex: 1, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, padding: 10 }}>
           <div style={{ fontSize: 11, color: '#8b949e' }}>Signal</div>
           <div style={{ marginTop: 4, fontSize: 13 }}>
             {signalConnected ? 'Connected' : 'Connecting...'}
           </div>
         </div>
-        <div style={{ flex: 1, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 10 }}>
+        <div style={{ flex: 1, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, padding: 10 }}>
           <div style={{ fontSize: 11, color: '#8b949e' }}>Proof</div>
           <div style={{ marginTop: 4, fontSize: 13 }}>
             {verifying ? 'Verifying...' : (lastProofHeight > 0 ? `Verified @ ${lastProofHeight.toLocaleString()}` : '—')}
@@ -282,7 +282,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
         </div>
       </div>
 
-      <div style={{ marginTop: 12, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 16 }}>
+      <div style={{ marginTop: 12, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, padding: 16 }}>
         <div style={{ fontSize: 12, color: '#8b949e' }}>Current Balance (IDC)</div>
         <div style={{ fontSize: 28, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>{displayBalance.toFixed(2)}</div>
       </div>
@@ -304,7 +304,7 @@ export const MobileMinerPage: React.FC<MobileMinerPageProps> = (props) => {
             width: '100%',
             maxWidth: 480,
             padding: '18px 16px',
-            background: displayMining ? '#da3633' : '#238636',
+            background: displayMining ? 'var(--color-danger)' : '#238636',
             color: '#fff',
             border: 'none',
             borderRadius: 14,

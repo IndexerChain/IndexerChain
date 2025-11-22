@@ -1,8 +1,8 @@
 .card { 
-    background-color: #161b22; /* var(--color-surface) */
-    padding: 20px; /* calc(var(--spacing-unit) * 2) */
+    background-color: var(--color-surface);
+    padding: calc(var(--spacing-unit) * 2);
     border-radius: 8px; 
-    border: 1px solid #30363d; /* var(--color-border) */
+    border: 1px solid var(--color-border);
     display: flex; 
     flex-direction: column;
     justify-content: space-between;
@@ -10,11 +10,11 @@
 
 .header {
     font-size: 1.1em; 
-    color: #58a6ff; /* var(--color-secondary) */
+    color: var(--color-secondary);
     margin-top: 0; 
-    margin-bottom: 15px; /* calc(var(--spacing-unit) * 1.5) */
-    border-bottom: 1px dashed #30363d; /* var(--color-border) */
-    padding-bottom: 10px; /* var(--spacing-unit) */
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+    border-bottom: 1px dashed var(--color-border);
+    padding-bottom: var(--spacing-unit);
     display: flex; 
     justify-content: space-between;
     align-items: center;
@@ -22,9 +22,9 @@
 
 .controlCardTop { 
     display: flex; 
-    gap: 20px; /* calc(var(--spacing-unit) * 2) */
+    gap: calc(var(--spacing-unit) * 2);
     align-items: center; 
-    margin-bottom: 15px; /* calc(var(--spacing-unit) * 1.5) */
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
 }
 
 .btn { 
@@ -42,12 +42,12 @@
 }
 
 .btnDanger { 
-    background-color: #da3633; /* var(--color-danger) */
+    background-color: var(--color-danger);
     color: white; 
 }
 
 .btn:disabled { 
-    background-color: #30363d; 
+    background-color: var(--color-border);
     cursor: not-allowed; 
     color: #8b949e; 
 }
@@ -74,10 +74,10 @@
 }
 
 .errorAlert {
-    color: orange; /* var(--color-warning) */
+    color: var(--color-warning);
     background-color: rgba(255, 165, 0, 0.1); 
-    padding: 10px; /* var(--spacing-unit) */
+    padding: var(--spacing-unit);
     border-radius: 4px; 
-    margin-bottom: 15px; /* calc(var(--spacing-unit) * 1.5) */
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
     font-size: 0.9em; 
 }

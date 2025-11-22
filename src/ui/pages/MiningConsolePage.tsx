@@ -2,10 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useMiningData } from '../../features/miner-dashboard/hooks/useMiningData';
 import { LiveBlockFeed } from '../components/LiveBlockFeed';
 import { WalletSummaryCard } from '../wallet/WalletSummaryCard';
+import { WalletManagerPanel } from '../WalletManagerPanel';
+import { WalletBackupPanel } from '../WalletBackupPanel';
 import { ChainContext } from '../../core/chain';
 import { MinerClient } from '../../core/minerClient';
 import styles from '../../features/miner-dashboard/styles/miner-console.module.css';
 import { getSlotIdentity, deriveRandSeed, selectLeader } from '../../core/slotSchedule.js';
+import { getMultiWalletStore } from '../../core/multiWallet.js';
 
 // Mining Guard card - memoized to avoid refresh; only changes on explicit prop changes (clicks)
 const MiningGuardCard = React.memo((props: {
@@ -77,6 +80,7 @@ interface MiningConsolePageProps {
 
 export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
     const [activePage, setActivePage] = useState<'mining' | 'wallet'>('mining');
+    const [walletRefreshKey, setWalletRefreshKey] = useState<number>(0);
     const [autoMining, setAutoMining] = useState<boolean>(() => {
         try {
             const saved = typeof window !== 'undefined' ? localStorage.getItem('indexer_auto_mining') : null;
@@ -107,12 +111,94 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         verified?: boolean;
         error?: string;
     } | null>(null);
+    
+    // Refs for aligning card heights
+    const leftPanelRef = useRef<HTMLDivElement>(null); // Left panel container (contains 3 cards)
+    const rightPanelRef = useRef<HTMLDivElement>(null); // Right panel container (contains 2 cards)
+    const liveBlockFeedRef = useRef<HTMLDivElement>(null);
+    const provingPanelRef = useRef<HTMLDivElement>(null);
+    
+    // Align heights - ensure right panel (Live Block Feed + Proving Panel) total height equals left panel (3 cards) total height
+    useEffect(() => {
+        let lastLeftHeight = 0;
+        let lastRightHeight = 0;
+        let alignmentTimer: NodeJS.Timeout | null = null;
+        
+        const alignHeights = () => {
+            if (leftPanelRef.current && rightPanelRef.current && liveBlockFeedRef.current && provingPanelRef.current) {
+                // Get total height of left panel (3 cards + gaps between them)
+                const leftPanelHeight = leftPanelRef.current.offsetHeight;
+                
+                // Get height of Live Block Feed component
+                const liveBlockFeedHeight = liveBlockFeedRef.current.offsetHeight;
+                
+                // Only update if heights have actually changed to avoid unnecessary reflows
+                if (leftPanelHeight === lastLeftHeight && liveBlockFeedHeight === lastRightHeight) {
+                    return;
+                }
+                
+                // Calculate required height for Proving Panel
+                // Right panel total = Live Block Feed height + gap + Proving Panel height
+                // We need: Live Block Feed height + gap + Proving Panel height = Left panel height
+                // So: Proving Panel height = Left panel height - Live Block Feed height - gap
+                const gap = 20; // gap between cards (from CSS: gap: calc(var(--spacing-unit) * 2) = 20px)
+                const requiredProvingPanelHeight = leftPanelHeight - liveBlockFeedHeight - gap;
+                
+                if (requiredProvingPanelHeight > 0) {
+                    const currentMinHeight = provingPanelRef.current.style.minHeight;
+                    const newMinHeight = `${requiredProvingPanelHeight}px`;
+                    // Only update if the value actually changed
+                    if (currentMinHeight !== newMinHeight) {
+                        provingPanelRef.current.style.minHeight = newMinHeight;
+                        lastLeftHeight = leftPanelHeight;
+                        lastRightHeight = liveBlockFeedHeight;
+                    }
+                } else {
+                    // If calculation results in negative, remove minHeight to let it be natural
+                    if (provingPanelRef.current.style.minHeight) {
+                        provingPanelRef.current.style.minHeight = '';
+                    }
+                }
+            }
+        };
+        
+        // Debounced alignment function
+        const debouncedAlign = () => {
+            if (alignmentTimer) {
+                clearTimeout(alignmentTimer);
+            }
+            alignmentTimer = setTimeout(alignHeights, 50);
+        };
+        
+        // Initial alignment - wait for DOM to be ready
+        const timer1 = setTimeout(alignHeights, 200);
+        const timer2 = setTimeout(alignHeights, 500);
+        const timer3 = setTimeout(alignHeights, 1000);
+        
+        // Observe resize changes with debouncing
+        const resizeObserver = new ResizeObserver(() => {
+            debouncedAlign();
+        });
+        
+        if (leftPanelRef.current) resizeObserver.observe(leftPanelRef.current);
+        if (rightPanelRef.current) resizeObserver.observe(rightPanelRef.current);
+        if (liveBlockFeedRef.current) resizeObserver.observe(liveBlockFeedRef.current);
+        if (provingPanelRef.current) resizeObserver.observe(provingPanelRef.current);
+        
+        return () => {
+            clearTimeout(timer1);
+            clearTimeout(timer2);
+            clearTimeout(timer3);
+            if (alignmentTimer) clearTimeout(alignmentTimer);
+            resizeObserver.disconnect();
+        };
+    }, [payoutProof]);
 
     // Override body background when Console is active
     useEffect(() => {
         const originalBg = document.body.style.background;
         const originalColor = document.body.style.color;
-        document.body.style.background = '#0d1117';
+        document.body.style.background = 'var(--color-background)';
         document.body.style.color = '#c9d1d9';
         document.body.style.margin = '0';
         document.body.style.padding = '0';
@@ -332,8 +418,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         const updateBalance = () => {
             if (!props.chainContext || !props.nodeAddress) return;
             try {
-                // CRITICAL FIX: Always initialize from chain kernel (indexState), never from old cache
-                // This ensures Expected Balance always starts from the real chain state, not stale values
+                // Get balance from chain kernel (indexState) - the authoritative source
                 const localBal = props.chainContext.indexState.getBalance(props.nodeAddress);
                 const zkBal = lightVerifiedBalance;
                 const windowBal = (typeof window !== 'undefined' && (window as any).lastLocalBalance);
@@ -341,36 +426,44 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 // Priority 1: Chain kernel balance (indexState) - the authoritative source
                 // This is the real balance from the chain, always use this as baseline
                 let candidate: number = 0;
-                if (typeof localBal === 'number' && Number.isFinite(localBal)) {
+                
+                // Try to get balance from chain state first
+                if (typeof localBal === 'number' && Number.isFinite(localBal) && localBal >= 0) {
                     candidate = localBal;
-                } else if (typeof zkBal === 'number' && Number.isFinite(zkBal)) {
+                } else if (typeof zkBal === 'number' && Number.isFinite(zkBal) && zkBal >= 0) {
                     // Fallback to ZK verified balance if indexState is not available
                     candidate = zkBal;
+                } else if (typeof windowBal === 'number' && Number.isFinite(windowBal) && windowBal >= 0) {
+                    // Fallback to window balance if chain state is not available
+                    candidate = windowBal;
                 }
                 
-                // Priority 2: If we're actively mining, use window.lastLocalBalance (accumulated delta)
-                // But only if it's larger than the chain kernel balance (meaning we've mined new blocks)
-                // This allows Expected Balance to show accumulated rewards during mining
+                // Priority 2: Use window.lastLocalBalance if it's higher (preserves accumulated mining rewards)
+                // This works both during active mining and after page reload (if window balance persists)
                 if (typeof windowBal === 'number' && Number.isFinite(windowBal) && windowBal > candidate) {
                     candidate = windowBal;
                 }
                 
-                // CRITICAL: Prevent rollback - if we've already initialized and chain kernel balance is smaller,
-                // it means indexState was reset (e.g., from snapshot restore). In this case, keep the previous value.
+                // During active session: prevent rollback to avoid visual flicker
                 if (initializedRef.current) {
-                    // If chain kernel balance is smaller than what we've displayed, it was likely reset
-                    // Keep the previous displayed value to prevent rollback
-                    if (candidate < lastDisplayedBalanceRef.current) {
-                        candidate = lastDisplayedBalanceRef.current;
-                    } else {
-                        // Normal update: use max to prevent visual flicker
-                        candidate = Math.max(candidate, lastDisplayedBalanceRef.current || 0);
+                    // Prevent visual flicker: only update if change is significant
+                    if (Math.abs(candidate - lastDisplayedBalanceRef.current) < 0.000000000001) {
+                        return; // Skip update if change is negligible
                     }
-                } else {
-                    // First time: use chain kernel balance directly
-                    // This ensures we start from the real chain state
+                    // During active session, prevent balance from going backwards
+                    // (unless it's a significant decrease, which might indicate a reorg)
+                    if (candidate < lastDisplayedBalanceRef.current && 
+                        (lastDisplayedBalanceRef.current - candidate) > 0.01) {
+                        // Significant decrease - might be a reorg, but keep showing higher value
+                        // Use window balance if available and higher
+                        if (typeof windowBal === 'number' && Number.isFinite(windowBal) && windowBal > candidate) {
+                            candidate = windowBal;
+                        }
+                        // Otherwise trust chain balance
+                    }
                 }
                 
+                // Update displayed balance
                 lastDisplayedBalanceRef.current = candidate;
                 setDisplayBalance(candidate.toFixed(12));
             } catch (e) {
@@ -386,17 +479,47 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
         if (props.chainContext && props.nodeAddress && (!initializedRef.current || isNewContext)) {
             try {
                 const kernelBalance = props.chainContext.indexState.getBalance(props.nodeAddress);
-                if (typeof kernelBalance === 'number' && Number.isFinite(kernelBalance)) {
-                    // CRITICAL: Always reset to chain kernel balance, never preserve old value
-                    // This ensures we always start from the real chain state
-                    lastDisplayedBalanceRef.current = kernelBalance;
-                    // Also sync window.lastLocalBalance to chain kernel balance
-                    if (typeof window !== 'undefined') {
-                        (window as any).lastLocalBalance = kernelBalance;
-                    }
-                    initializedRef.current = true;
-                    lastChainContextIdRef.current = currentContextId;
+                const windowBal = (typeof window !== 'undefined' && (window as any).lastLocalBalance);
+                
+                // Initialize with the maximum of chain balance and window balance
+                // This preserves accumulated mining rewards across page reloads
+                let initialBalance = 0;
+                
+                if (typeof kernelBalance === 'number' && Number.isFinite(kernelBalance) && kernelBalance >= 0) {
+                    initialBalance = kernelBalance;
                 }
+                
+                // Use window balance if it's higher (preserves mining rewards)
+                if (typeof windowBal === 'number' && Number.isFinite(windowBal) && windowBal >= 0) {
+                    if (windowBal > initialBalance) {
+                        initialBalance = windowBal;
+                    }
+                }
+                
+                // Set initial balance
+                lastDisplayedBalanceRef.current = initialBalance;
+                setDisplayBalance(initialBalance.toFixed(12));
+                
+                // CRITICAL: Don't overwrite window.lastLocalBalance with chain balance if window balance is higher
+                // This preserves accumulated mining rewards. Only update if chain balance is higher.
+                if (typeof window !== 'undefined') {
+                    const currentWindowBal = (window as any).lastLocalBalance;
+                    if (typeof kernelBalance === 'number' && Number.isFinite(kernelBalance) && kernelBalance >= 0) {
+                        // Only update window balance if chain balance is higher (new blocks confirmed)
+                        if (typeof currentWindowBal !== 'number' || kernelBalance > currentWindowBal) {
+                            (window as any).lastLocalBalance = kernelBalance;
+                        } else {
+                            // Preserve window balance if it's higher (accumulated mining rewards)
+                            (window as any).lastLocalBalance = currentWindowBal;
+                        }
+                    } else if (typeof currentWindowBal === 'number' && Number.isFinite(currentWindowBal) && currentWindowBal >= 0) {
+                        // If chain balance is not available, keep window balance
+                        (window as any).lastLocalBalance = currentWindowBal;
+                    }
+                }
+                
+                initializedRef.current = true;
+                lastChainContextIdRef.current = currentContextId;
             } catch (e) {
                 // ignore
             }
@@ -432,7 +555,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                 window.removeEventListener('newBlock', handleNewBlock as any);
             }
         };
-    }, [props.chainContext, props.nodeAddress, lightVerifiedBalance]);
+    }, [props.chainContext, props.nodeAddress, lightVerifiedBalance, walletRefreshKey]);
 
     // Sync local state with hook state
     // useEffect(() => {
@@ -1073,32 +1196,38 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
 
                         {/* Wallet Display Bar */}
                         <div className={styles.walletDisplayBar}>
-                            <div className={styles.addressInfo}>
-                                <span className={styles.balanceLabel}>Miner Address:</span>
-                                <span style={{ color: '#4ee672', fontWeight: 'bold', marginLeft: 10 }}>
-                                    {formatAddress(props.nodeAddress || '')}
-                                </span>
-                                <button 
-                                    id="copy-address-btn"
-                                    onClick={copyAddress}
-                                    style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', marginLeft: 10 }}
-                                >
-                                    📋
-                                </button>
+                            <div className={styles.addressInfo} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span className={styles.balanceLabel} style={{ fontSize: '14px' }}>Miner Address:</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '4px' }}>
+                                    <span style={{ color: '#4ee672', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                                        {formatAddress(props.nodeAddress || '')}
+                                    </span>
+                                    <button 
+                                        id="copy-address-btn"
+                                        onClick={copyAddress}
+                                        style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+                                        title="Copy Address"
+                                    >
+                                        📋
+                                    </button>
+                                </div>
                             </div>
                             
-                            
                             <div className={styles.balanceInfo}>
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                                        <span className={styles.balanceLabel} style={{ marginRight: 8 }}>Expected Balance (Local):</span>
-                                        <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance" style={{ color: '#4ee672' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+                                        <span className={styles.balanceLabel}>Expected Balance (Local):</span>
+                                        <span className={`${styles.balanceAmount} ${styles.numeric}`} id="current-balance" style={{ color: '#4ee672', fontSize: '1.6em', lineHeight: 1 }}>
                                             {displayBalance}
                                         </span>
+                                        <span style={{ color: '#8b949e', fontSize: '0.8em' }}>IDC</span>
                                     </div>
                                     {nodeMode === 'light' && (
-                                        <div style={{ fontSize: '0.8em', color: '#8b949e', marginTop: 2 }}>
-                                            ZK Verified: {lightVerifiedBalance !== null ? lightVerifiedBalance.toFixed(12) : 'Pending...'}
+                                        <div style={{ fontSize: '0.8em', color: '#8b949e', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span>ZK Verified:</span>
+                                            <span style={{ color: lightVerifiedBalance !== null ? '#4ee672' : '#8b949e' }}>
+                                                {lightVerifiedBalance !== null ? lightVerifiedBalance.toFixed(12) : 'Pending...'}
+                                            </span>
                                         </div>
                                     )}
                                 </div>
@@ -1107,11 +1236,36 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
 
                         {/* Address Bar */}
                         <div className={styles.addressBar}>
-                            <span>
-                                Local Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar">{localHeight.toLocaleString()}</span> | 
-                                Network Height: <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar">{networkHeight.toLocaleString()}</span> | 
-                                Peers: <span className={styles.dataValue} id="peer-count-bar">{peerCount}</span>
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>Local Height</span>
+                                    <span className={`${styles.dataValue} ${styles.numeric}`} id="local-height-bar" style={{ fontSize: '1.1em', minWidth: 'auto' }}>{localHeight.toLocaleString()}</span>
+                                </div>
+                                <div style={{ width: '1px', height: '14px', background: 'var(--color-border)' }}></div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>Network Height</span>
+                                    <span className={`${styles.dataValue} ${styles.numeric}`} id="network-height-bar" style={{ fontSize: '1.1em', minWidth: 'auto' }}>{networkHeight.toLocaleString()}</span>
+                                </div>
+                                <div style={{ width: '1px', height: '14px', background: 'var(--color-border)' }}></div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <span style={{ color: '#8b949e', fontSize: '0.9em' }}>Peers</span>
+                                    <span className={styles.dataValue} id="peer-count-bar" style={{ fontSize: '1.1em' }}>{peerCount}</span>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {(() => {
+                                    // Consider online if: has peers, or Signal Server connected, or network height > 0 (can sync)
+                                    const isOnline = peerCount > 0 || healthSnapshot.isSignalConnected || networkHeight > 0;
+                                    return (
+                                        <>
+                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: isOnline ? 'var(--color-primary)' : 'var(--color-danger)' }}></div>
+                                            <span style={{ color: isOnline ? '#4ee672' : '#da3633', fontSize: '0.85em', fontWeight: 500 }}>
+                                                {isOnline ? 'Online' : 'Offline'}
+                                            </span>
+                                        </>
+                                    );
+                                })()}
+                            </div>
                         </div>
                         {/* ZK/Sync status bar */}
                         {nodeMode === 'light' && (
@@ -1145,14 +1299,14 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         <div className={styles.topSection}>
                             {/* Reorg Banner */}
                             {reorgInfo && (
-                                <div className={styles.card} style={{ background: '#2b2111', borderColor: '#8b5e34', color: '#e3b341' }}>
+                                <div className={styles.card} style={{ background: 'rgba(43, 33, 17, 1)', borderColor: '#8b5e34', color: '#e3b341' }}>
                                     ⚠️ Reorg detected: rolled back {reorgInfo.count} block(s) from {reorgInfo.from} to {reorgInfo.to}. Auto resyncing...
                                 </div>
                             )}
 
                             {/* Light Validator Info - Pool Mining Architecture */}
                             {nodeMode === 'light' && (
-                                <div className={styles.card} style={{ background: '#0f1520', borderColor: '#30363d' }}>
+                                <div className={styles.card} style={{ background: 'var(--color-background)', borderColor: 'var(--color-border)' }}>
                                     <div style={{ fontWeight: 600, marginBottom: 6 }}>All-Light-Node Chain (Header + ZK)</div>
                                     <div style={{ color: '#8b949e', fontSize: 13 }}>
                                         轻节点不存储本地区块，仅通过区块头与余额证明展示余额。池化挖矿模式：所有节点共享区块奖励，按权重分配。当你开始证明时，会自动拉取并应用最新快照以具备世界状态。
@@ -1164,7 +1318,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                         {/* Dashboard Grid */}
                         <div className={styles.dashboardGrid}>
                             {/* Left Panel */}
-                            <div className={styles.leftPanel}>
+                            <div className={styles.leftPanel} ref={leftPanelRef}>
                                 {/* Control Card - memoized, no refresh */}
                                 <MiningGuardCard
                                     displayMining={displayMining}
@@ -1185,94 +1339,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     onToggleAutoMining={setAutoMining}
                                 />
 
-                                {/* Network Health under Proving Guard */}
-                                <div className={styles.card}>
-									<h3>Network Health</h3>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px 24px', marginBottom: 12 }}>
-                                        <div>
-                                            <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Local</div>
-                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.local.toLocaleString()}</div>
-                                        </div>
-                                        <div>
-											<div className={styles.dataLabel} style={{ marginBottom: 4 }}>Signal</div>
-                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.signal.toLocaleString()}</div>
-                                        </div>
-                                        <div>
-											<div className={styles.dataLabel} style={{ marginBottom: 4 }}>Finalized</div>
-                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.finality.toLocaleString()}</div>
-                                        </div>
-                                        <div>
-											<div className={styles.dataLabel} style={{ marginBottom: 4 }}>Peers</div>
-                                            <div className={`${styles.dataValue} ${styles.numeric}`} style={{ fontSize: '1.1em' }}>{healthSnapshot.p2pPeers}</div>
-                                        </div>
-                                    </div>
-                                    <div style={{ paddingTop: 12, borderTop: '1px solid #30363d' }}>
-                                        <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Status</div>
-                                        <div className={styles.dataValue} style={{ fontSize: '0.95em' }}>
-                                            {healthSnapshot.status === 'aligned' && <span style={{ color: '#4ee672' }}>aligned ✅</span>}
-                                            {healthSnapshot.status === 'syncing' && <span style={{ color: '#e3b341' }}>syncing ⏳</span>}
-                                            {healthSnapshot.status === 'fork_detected' && <span style={{ color: '#da3633' }}>fork_detected ⚠️</span>}
-                                            {healthSnapshot.status === 'offline' && <span style={{ color: '#8b949e' }}>offline 🔌</span>}
-                                        </div>
-                                    </div>
-                                    {/* Pool Mining Architecture: Independent IP mining status */}
-                                    {healthSnapshot.isIndependentIPMining && (
-                                        <div style={{ marginTop: 12, padding: 10, background: '#0f1520', border: '1px solid #30363d', borderRadius: 6, fontSize: 12, color: '#4ee672', lineHeight: 1.5 }}>
-                                            ✅ 独立 IP 已接入信号服务器，可以开始挖矿（池化模式，无需其他 peer）
-                                        </div>
-                                    )}
-                                    {healthSnapshot.isSignalConnected && healthSnapshot.p2pPeers === 0 && healthSnapshot.quorumScore < 30 && (
-                                        <div style={{ marginTop: 12, padding: 10, background: '#2b2111', border: '1px solid #8b5e34', borderRadius: 6, fontSize: 12, color: '#e3b341', lineHeight: 1.5 }}>
-                                            ⚠️ 已连接信号服务器，但 QuorumScore ({healthSnapshot.quorumScore.toString()}) &lt; 30，需要独立 IP 才能挖矿
-                                        </div>
-                                    )}
-                                </div>
-                                <WalletSummaryCard chainContext={props.chainContext} address={props.nodeAddress || null} locale={'en'} />
-                            </div>
-
-                            {/* Right Panel */}
-                            <div className={styles.rightPanel}>
-                                {/* Live Block Feed Component */}
-                                <LiveBlockFeed 
-                                  chainContext={props.chainContext} 
-                                  locale={'en'} 
-                                  maxItems={15} 
-                                  myAddress={props.nodeAddress || undefined}
-                                />
-                                
-                                {/* Proving Panel (Pool Mining) */}
-                                <div className={styles.card}>
-                                    <h3>Proving Panel (Pool Mining)</h3>
-                                    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
-                                        池化挖矿模式：所有参与者按权重共享区块奖励
-                                    </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
-                                            <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Leader of this Slot</div>
-                                                <div className={`${styles.dataValue} ${styles.numeric}`} style={{ wordBreak: 'break-all' }}>
-                                                  {leaderThisSlot === props.nodeAddress ? 
-                                                    <span style={{color: '#2ea043', fontWeight: 'bold', fontSize: '1.1em'}}>✨ YOU ✨</span> : 
-                                                    humanLeader(leaderThisSlot || undefined)}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>My Weight</div>
-                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ?? 0).toFixed(6)}</div>
-                                            </div>
-                                        </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
-                                            <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Block</div>
-                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ? (projectedReward / ((24 * 60 * 60) / (props.chainContext?.params?.targetBlockTime || 10))) : 0).toFixed(6)} IDC</div>
-                                            </div>
-                                            <div>
-                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Day</div>
-                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ?? 0).toFixed(6)} IDC</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                <WalletSummaryCard chainContext={props.chainContext} address={props.nodeAddress || null} locale={'en'} className={styles.card} styles={styles} />
 
                                 {/* Pool Rewards (Proof) */}
                                 <div className={styles.card}>
@@ -1285,7 +1352,7 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                             type="number" 
                                             placeholder="Block Height"
                                             style={{ 
-                                                background: '#0d1117', 
+                                                background: 'var(--color-background)', 
                                                 border: '1px solid #30363d', 
                                                 color: '#c9d1d9', 
                                                 padding: '6px 12px',
@@ -1335,6 +1402,55 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                     )}
                                 </div>
                             </div>
+
+                            {/* Right Panel */}
+                            <div className={styles.rightPanel} ref={rightPanelRef}>
+                                {/* Live Block Feed Component */}
+                                <div ref={liveBlockFeedRef}>
+                                    <LiveBlockFeed 
+                                      chainContext={props.chainContext} 
+                                      locale={'en'} 
+                                      maxItems={15} 
+                                      myAddress={props.nodeAddress || undefined}
+                                    />
+                                </div>
+                                
+                                {/* Proving Panel (Pool Mining) */}
+                                <div className={styles.card} ref={provingPanelRef} style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <h3>Proving Panel (Pool Mining)</h3>
+                                    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #30363d', fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
+                                        池化挖矿模式：所有参与者按权重共享区块奖励
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Leader of this Slot</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`} style={{ wordBreak: 'break-all' }}>
+                                                  {leaderThisSlot === props.nodeAddress ? 
+                                                    <span style={{color: '#2ea043', fontWeight: 'bold', fontSize: '1.1em'}}>✨ YOU ✨</span> : 
+                                                    humanLeader(leaderThisSlot || undefined)}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>My Weight</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(effectiveWeight ?? 0).toFixed(6)}</div>
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Block</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ? (projectedReward / ((24 * 60 * 60) / (props.chainContext?.params?.targetBlockTime || 10))) : 0).toFixed(6)} IDC</div>
+                                            </div>
+                                            <div>
+                                                <div className={styles.dataLabel} style={{ marginBottom: 4 }}>Est. Reward / Day</div>
+                                                <div className={`${styles.dataValue} ${styles.numeric}`}>{(projectedReward ?? 0).toFixed(6)} IDC</div>
+                                            </div>
+                                        </div>
+                                        {/* Spacer to push content up and ensure bottom alignment */}
+                                        <div style={{ flex: 1, minHeight: '60px' }}></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -1366,22 +1482,78 @@ export const MiningConsolePage: React.FC<MiningConsolePageProps> = (props) => {
                                         </div>
                                     )}
                             
-                            <p className={styles.dataLabel}>主钱包地址:</p>
-                            <div className={styles.walletAddressBox}>
-								<span id="wallet-full-address" style={{ fontFamily: 'Consolas, Courier New, monospace' }} title={props.nodeAddress || ''}>
-									{formatAddress(props.nodeAddress || '')}
-                                </span>
-                                <button 
-                                    onClick={copyWalletAddress}
-                                    style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', marginLeft: 10 }}
-                                >
-                                    📋
-                                </button>
+                            <div style={{ marginTop: '1rem' }}>
+                                <p className={styles.dataLabel} style={{ marginBottom: '0.5rem' }}>主钱包地址:</p>
+                                <div className={styles.walletAddressBox} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span id="wallet-full-address" style={{ fontFamily: 'Consolas, Courier New, monospace', flex: 1, wordBreak: 'break-all' }} title={props.nodeAddress || ''}>
+                                        {props.nodeAddress || 'Not initialized'}
+                                    </span>
+                                    <button 
+                                        onClick={copyWalletAddress}
+                                        style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', marginLeft: 10, padding: '4px 8px' }}
+                                        title="Copy Address"
+                                    >
+                                        📋
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Wallet Management Section */}
+                        <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                            {/* Wallet Manager - Create/Manage Wallets */}
+                            <div className={styles.card}>
+                                <h3>💼 Wallet Management</h3>
+                                <WalletManagerPanel
+                                    onWalletChanged={async () => {
+                                        // Refresh wallet data without reloading page
+                                        try {
+                                            const { getOrCreateNodeAddress } = await import('../../core/keys.js');
+                                            const newAddress = await getOrCreateNodeAddress();
+                                            // Update global nodeAddress if available
+                                            if (typeof window !== 'undefined') {
+                                                (window as any).nodeAddress = newAddress;
+                                            }
+                                            // Trigger refresh by updating key
+                                            setWalletRefreshKey(prev => prev + 1);
+                                        } catch (err) {
+                                            console.error('Failed to refresh wallet:', err);
+                                        }
+                                    }}
+                                    onError={(error) => {
+                                        alert(error);
+                                    }}
+                                />
                             </div>
 
-                            <p style={{ marginTop: 20, color: '#8b949e' }}>
-                                Tip: 钱包管理和备份功能被折叠在 <strong>Advanced</strong> 设置中。
-                            </p>
+                            {/* Wallet Backup - Import/Export */}
+                            <div className={styles.card}>
+                                <h3>🔐 Wallet Backup & Restore</h3>
+                                <WalletBackupPanel
+                                    onExportSuccess={() => {
+                                        // Show success message
+                                    }}
+                                    onImportSuccess={async () => {
+                                        // Refresh wallet data without reloading page
+                                        try {
+                                            const { getOrCreateNodeAddress } = await import('../../core/keys.js');
+                                            const newAddress = await getOrCreateNodeAddress();
+                                            if (typeof window !== 'undefined') {
+                                                (window as any).nodeAddress = newAddress;
+                                            }
+                                            setWalletRefreshKey(prev => prev + 1);
+                                        } catch (err) {
+                                            console.error('Failed to refresh wallet:', err);
+                                        }
+                                    }}
+                                    onError={(error) => {
+                                        // Only show alert if there's an actual error message
+                                        if (error && error.trim()) {
+                                            alert(error);
+                                        }
+                                    }}
+                                />
+                            </div>
                         </div>
                     </div>
                 )}

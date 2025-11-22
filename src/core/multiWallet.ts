@@ -521,6 +521,96 @@ export class MultiWalletStore {
       throw error;
     }
   }
+
+  /**
+   * Import wallet from private key (JWK format)
+   */
+  async importFromPrivateKey(
+    privateKeyJwk: JsonWebKey,
+    name?: string
+  ): Promise<Wallet> {
+    // Validate private key structure
+    if (!privateKeyJwk.kty || !privateKeyJwk.crv || !privateKeyJwk.d) {
+      throw new Error("Invalid private key format");
+    }
+
+    // Import private key to verify it's valid
+    const privateKey = await crypto.subtle.importKey(
+      "jwk",
+      privateKeyJwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["sign"]
+    );
+
+    // Get public key from private key
+    const publicKeyJwk: JsonWebKey = {
+      kty: privateKeyJwk.kty,
+      crv: privateKeyJwk.crv,
+      x: privateKeyJwk.x,
+      y: privateKeyJwk.y,
+    };
+
+    // Copy optional fields
+    if (privateKeyJwk.alg) publicKeyJwk.alg = privateKeyJwk.alg;
+    if (privateKeyJwk.use) publicKeyJwk.use = privateKeyJwk.use;
+    if (privateKeyJwk.key_ops) publicKeyJwk.key_ops = privateKeyJwk.key_ops;
+    if (privateKeyJwk.ext !== undefined) publicKeyJwk.ext = privateKeyJwk.ext;
+
+    const address = await getNodeAddressFromPublicKey(publicKeyJwk);
+
+    // Check if wallet with this address already exists
+    const existingWallet = Object.entries(this.storage.list).find(
+      ([_, info]) => info.address === address
+    );
+    
+    if (existingWallet) {
+      // Wallet already exists, update it instead of creating a new one
+      const [walletId, _] = existingWallet;
+      
+      // Update wallet info
+      this.storage.list[walletId] = {
+        ...this.storage.list[walletId],
+        name: name || this.storage.list[walletId].name,
+        publicKey: publicKeyJwk,
+      };
+      
+      // Update private key in memory
+      this.keyPairs.set(walletId, privateKey);
+      
+      this.saveToStorage();
+      
+      return {
+        id: walletId,
+        name: this.storage.list[walletId].name,
+        address,
+        publicKey: publicKeyJwk,
+        createdAt: this.storage.list[walletId].createdAt,
+      };
+    }
+
+    // Create new wallet entry
+    const walletId = `wallet_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    this.storage.list[walletId] = {
+      name: name || `Imported Wallet ${Object.keys(this.storage.list).length + 1}`,
+      address,
+      publicKey: publicKeyJwk,
+      createdAt: Date.now(),
+    };
+
+    // Store private key in memory
+    this.keyPairs.set(walletId, privateKey);
+
+    this.saveToStorage();
+
+    return {
+      id: walletId,
+      name: this.storage.list[walletId].name,
+      address,
+      publicKey: publicKeyJwk,
+      createdAt: this.storage.list[walletId].createdAt,
+    };
+  }
 }
 
 // Global instance

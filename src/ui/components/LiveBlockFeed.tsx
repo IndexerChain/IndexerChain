@@ -85,8 +85,8 @@ export function LiveBlockFeed({ chainContext, locale, maxItems = 20, myAddress }
       className="status-card"
       style={{
         marginBottom: "1rem",
-        background: "#0d1117", // Dark background
-        border: "1px solid #30363d", // Dark border
+        background: "var(--color-background)", // Dark background
+        border: "1px solid var(--color-border)", // Dark border
         borderRadius: "6px",
         padding: "0.75rem",
         color: "#c9d1d9" // Light text

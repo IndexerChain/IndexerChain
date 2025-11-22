@@ -226,7 +226,7 @@ export function WalletBackupPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       {/* Export Section */}
-      <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
+      <div style={{ padding: "1rem", background: "var(--color-surface)", borderRadius: "4px", border: "1px solid var(--color-border)" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
           {t("wallet.exportTitle")}
         </h4>
@@ -235,16 +235,16 @@ export function WalletBackupPanel({
         {currentAddress && (
           <div style={{ 
             padding: "0.75rem", 
-            background: "#e7f3ff", 
+            background: "rgba(88, 166, 255, 0.1)", 
             borderRadius: "4px", 
             marginBottom: "0.75rem",
             fontSize: "0.85rem",
-            border: "1px solid #b3d9ff"
+            border: "1px solid var(--color-secondary)"
           }}>
             <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
               {t("wallet.currentWalletAddress")}:
             </div>
-            <div style={{ fontFamily: "monospace", fontSize: "0.9rem", color: "#0066cc" }}>
+              <div style={{ fontFamily: "monospace", fontSize: "0.9rem", color: "var(--color-secondary)" }}>
               {currentAddress}
             </div>
           </div>
@@ -254,12 +254,12 @@ export function WalletBackupPanel({
         {exportSuccess && (
           <div style={{ 
             padding: "0.75rem", 
-            background: "#d4edda", 
+            background: "rgba(35, 134, 54, 0.15)", 
             borderRadius: "4px", 
             marginBottom: "0.75rem",
             fontSize: "0.85rem",
-            border: "1px solid #c3e6cb",
-            color: "#155724"
+            border: "1px solid #238636",
+            color: "#3fb950"
           }}>
             {exportSuccess}
           </div>
@@ -285,7 +285,7 @@ export function WalletBackupPanel({
                   setExportPasswordStrength(null);
                 }
               }}
-              style={{ width: "100%", padding: "0.5rem" }}
+              style={{ width: "100%", padding: "0.5rem", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
               disabled={isExporting}
             />
             {exportPasswordStrength && (
@@ -306,7 +306,7 @@ export function WalletBackupPanel({
               placeholder={t("wallet.confirmPassword")}
               value={exportConfirmPassword}
               onChange={(e) => setExportConfirmPassword(e.target.value)}
-              style={{ width: "100%", padding: "0.5rem" }}
+              style={{ width: "100%", padding: "0.5rem", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
               disabled={isExporting}
             />
             {exportConfirmPassword && exportPassword !== exportConfirmPassword && (
@@ -329,14 +329,14 @@ export function WalletBackupPanel({
           >
             {isExporting ? t("common.loading") : `${t("wallet.exportWallet")} (.idcbackup)`}
           </button>
-          <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
+          <div style={{ fontSize: "0.75rem", color: "#8b949e", marginTop: "0.25rem" }}>
             {t("wallet.encryptionNotice")}
           </div>
         </form>
       </div>
 
       {/* Import Section */}
-      <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
+      <div style={{ padding: "1rem", background: "var(--color-surface)", borderRadius: "4px", border: "1px solid var(--color-border)" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
           {t("wallet.importTitle")}
         </h4>
@@ -345,12 +345,12 @@ export function WalletBackupPanel({
         {importSuccess && (
           <div style={{ 
             padding: "0.75rem", 
-            background: "#d4edda", 
+            background: "rgba(35, 134, 54, 0.15)", 
             borderRadius: "4px", 
             marginBottom: "0.75rem",
             fontSize: "0.85rem",
-            border: "1px solid #c3e6cb",
-            color: "#155724"
+            border: "1px solid #238636",
+            color: "#3fb950"
           }}>
             <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
               {t("wallet.importSuccess")}
@@ -371,11 +371,11 @@ export function WalletBackupPanel({
         {filePreview && (
           <div style={{ 
             padding: "0.75rem", 
-            background: "#fff3cd", 
+            background: "rgba(255, 165, 0, 0.1)", 
             borderRadius: "4px", 
             marginBottom: "0.75rem",
             fontSize: "0.85rem",
-            border: "1px solid #ffc107"
+            border: "1px solid var(--color-warning)"
           }}>
             <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
               📄 {t("wallet.selectBackupFile")}:
@@ -412,7 +412,7 @@ export function WalletBackupPanel({
               value={importPassword}
               onChange={(e) => {
                 setImportPassword(e.target.value);
-                onError?.(""); // Clear any previous errors when typing
+                // Don't call onError with empty string to avoid triggering alerts
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && selectedFile && importPassword) {
@@ -420,10 +420,10 @@ export function WalletBackupPanel({
                   handleImport();
                 }
               }}
-              style={{ width: "100%", padding: "0.5rem" }}
+              style={{ width: "100%", padding: "0.5rem", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
               disabled={isImporting}
             />
-            <div style={{ fontSize: "0.75rem", color: "#666", marginTop: "0.25rem" }}>
+            <div style={{ fontSize: "0.75rem", color: "#8b949e", marginTop: "0.25rem" }}>
               {t("wallet.passwordHint")}
             </div>
           </div>
@@ -436,7 +436,7 @@ export function WalletBackupPanel({
               accept=".idcbackup,application/json"
               ref={fileInputRef}
               onChange={handleFileSelect}
-              style={{ width: "100%", padding: "0.5rem" }}
+              style={{ width: "100%", padding: "0.5rem", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
               disabled={isImporting || !importPassword}
             />
             {!importPassword && (
@@ -460,7 +460,7 @@ export function WalletBackupPanel({
       </div>
 
       {/* Security Notice */}
-      <div style={{ padding: "0.75rem", background: "#fff3cd", borderRadius: "4px", border: "1px solid #ffc107", fontSize: "0.85rem" }}>
+      <div style={{ padding: "0.75rem", background: "rgba(255, 165, 0, 0.1)", borderRadius: "4px", border: "1px solid var(--color-warning)", fontSize: "0.85rem", color: "var(--color-text)" }}>
         <strong>{t("wallet.securityNotice")}</strong>
         <ul style={{ margin: "0.5rem 0 0 1.5rem", padding: 0 }}>
           <li>{t("wallet.securityNotice1")}</li>

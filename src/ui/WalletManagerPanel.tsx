@@ -133,7 +133,7 @@ export function WalletManagerPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       {/* Current & Mining Wallet Info */}
-      <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
+      <div style={{ padding: "1rem", background: "var(--color-surface)", borderRadius: "4px", border: "1px solid var(--color-border)" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
           {t("wallet.activeWallets")}
         </h4>
@@ -154,12 +154,12 @@ export function WalletManagerPanel({
       </div>
 
       {/* Wallet List */}
-      <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
+      <div style={{ padding: "1rem", background: "var(--color-surface)", borderRadius: "4px", border: "1px solid var(--color-border)" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
           {t("wallet.walletList")} ({wallets.length})
         </h4>
         {wallets.length === 0 ? (
-          <div style={{ fontSize: "0.9rem", color: "#666", padding: "1rem", textAlign: "center" }}>
+          <div style={{ fontSize: "0.9rem", color: "#8b949e", padding: "1rem", textAlign: "center" }}>
             {t("wallet.noWallets")}
           </div>
         ) : (
@@ -169,9 +169,9 @@ export function WalletManagerPanel({
                 key={wallet.id}
                 style={{
                   padding: "0.75rem",
-                  background: wallet.id === currentWallet?.id ? "#e7f3ff" : "white",
+                  background: wallet.id === currentWallet?.id ? "rgba(88, 166, 255, 0.1)" : "var(--color-surface)",
                   borderRadius: "4px",
-                  border: wallet.id === currentWallet?.id ? "2px solid #667eea" : "1px solid #ddd",
+                  border: wallet.id === currentWallet?.id ? "2px solid var(--color-secondary)" : "1px solid var(--color-border)",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
@@ -182,7 +182,7 @@ export function WalletManagerPanel({
                           type="text"
                           value={editingName}
                           onChange={(e) => setEditingName(e.target.value)}
-                          style={{ padding: "0.25rem", fontSize: "0.9rem" }}
+                          style={{ padding: "0.25rem", fontSize: "0.9rem", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               handleRenameWallet(wallet.id);
@@ -195,7 +195,7 @@ export function WalletManagerPanel({
                         />
                         <button
                           onClick={() => handleRenameWallet(wallet.id)}
-                          style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem" }}
+                          style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "var(--color-secondary)", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                         >
                           ✓
                         </button>
@@ -204,7 +204,7 @@ export function WalletManagerPanel({
                             setEditingWalletId(null);
                             setEditingName("");
                           }}
-                          style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem" }}
+                          style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "var(--color-secondary)", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                         >
                           ✗
                         </button>
@@ -215,25 +215,25 @@ export function WalletManagerPanel({
                   </div>
                   <div style={{ display: "flex", gap: "0.25rem", fontSize: "0.75rem" }}>
                     {wallet.id === currentWallet?.id && (
-                      <span style={{ background: "#667eea", color: "white", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>
+                      <span style={{ background: "var(--color-secondary)", color: "white", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>
                         {t("wallet.currentWallet")}
                       </span>
                     )}
                     {wallet.id === miningWallet?.id && (
-                      <span style={{ background: "#28a745", color: "white", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>
+                      <span style={{ background: "#238636", color: "white", padding: "0.2rem 0.4rem", borderRadius: "3px" }}>
                         {t("wallet.miningWallet")}
                       </span>
                     )}
                   </div>
                 </div>
-                <div style={{ fontSize: "0.8rem", color: "#666", fontFamily: "monospace", marginBottom: "0.5rem", wordBreak: "break-all" }}>
+                <div style={{ fontSize: "0.8rem", color: "#8b949e", fontFamily: "monospace", marginBottom: "0.5rem", wordBreak: "break-all" }}>
                   {wallet.address}
                 </div>
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {wallet.id !== currentWallet?.id && (
                     <button
                       onClick={() => handleSwitchWallet(wallet.id)}
-                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#667eea", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
+                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "var(--color-secondary)", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
                       {t("wallet.setAsCurrent")}
                     </button>
@@ -241,7 +241,7 @@ export function WalletManagerPanel({
                   {wallet.id !== miningWallet?.id && (
                     <button
                       onClick={() => handleSetMiningWallet(wallet.id)}
-                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#28a745", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
+                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#238636", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
                       {t("wallet.setAsMining")}
                     </button>
@@ -252,7 +252,7 @@ export function WalletManagerPanel({
                         setEditingWalletId(wallet.id);
                         setEditingName(wallet.name);
                       }}
-                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#ffc107", color: "#000", border: "none", borderRadius: "3px", cursor: "pointer" }}
+                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "var(--color-warning)", color: "#000", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
                       {t("wallet.rename")}
                     </button>
@@ -270,7 +270,7 @@ export function WalletManagerPanel({
                         placeholder={t("wallet.enterPassword")}
                         value={exportPassword}
                         onChange={(e) => setExportPassword(e.target.value)}
-                        style={{ padding: "0.25rem", fontSize: "0.8rem", width: "100px" }}
+                        style={{ padding: "0.25rem", fontSize: "0.8rem", width: "100px", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
                       />
                       <button
                         onClick={() => handleExportWallet(wallet.id)}
@@ -292,7 +292,7 @@ export function WalletManagerPanel({
                   ) : (
                     <button
                       onClick={() => setExportingWalletId(wallet.id)}
-                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#17a2b8", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
+                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "var(--color-secondary)", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
                       {t("wallet.export")}
                     </button>
@@ -300,7 +300,7 @@ export function WalletManagerPanel({
                   {wallets.length > 1 && (
                     <button
                       onClick={() => handleDeleteWallet(wallet.id)}
-                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#dc3545", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
+                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "var(--color-danger)", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" }}
                     >
                       {t("wallet.delete")}
                     </button>
@@ -313,7 +313,7 @@ export function WalletManagerPanel({
       </div>
 
       {/* Create New Wallet */}
-      <div style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "4px", border: "1px solid #dee2e6" }}>
+      <div style={{ padding: "1rem", background: "var(--color-surface)", borderRadius: "4px", border: "1px solid var(--color-border)" }}>
         <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem" }}>
           ➕ {t("wallet.createNewWallet")}
         </h4>
@@ -328,13 +328,13 @@ export function WalletManagerPanel({
                 handleCreateWallet();
               }
             }}
-            style={{ flex: 1, padding: "0.5rem" }}
+            style={{ flex: 1, padding: "0.5rem", background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "4px", color: "var(--color-text)" }}
             disabled={isCreating}
           />
           <button
             onClick={handleCreateWallet}
             disabled={isCreating || !newWalletName.trim()}
-            style={{ padding: "0.5rem 1rem", background: "#667eea", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+            style={{ padding: "0.5rem 1rem", background: "var(--color-secondary)", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
           >
             {isCreating ? t("common.loading") : t("wallet.create")}
           </button>

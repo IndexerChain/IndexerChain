@@ -70,7 +70,7 @@
 
 .navLink:hover,
 .navLink.active {
-    background-color: #28303a;
+    background-color: rgba(40, 48, 58, 1); /* #28303a - hover state */
     color: white;
     border-left: 3px solid var(--color-secondary);
 }
@@ -89,15 +89,15 @@
 /* V12 保持: 钱包余额区域 */
 .walletDisplayBar {
     background-color: var(--color-surface);
-    padding: var(--spacing-unit);
-    border-radius: 6px;
+    padding: calc(var(--spacing-unit) * 1.5);
+    border-radius: 8px;
     margin-bottom: calc(var(--spacing-unit) * 2);
-    font-family: var(--font-mono);
     font-size: 0.9em;
     display: flex;
     justify-content: space-between;
     align-items: center;
     border: 1px solid var(--color-border);
+    box-sizing: border-box;
 }
 
 .addressInfo,
@@ -110,6 +110,7 @@
     font-size: 1.4em;
     color: var(--color-warning);
     margin-left: 10px;
+    font-family: var(--font-mono);
 }
 
 .balanceLabel {
@@ -119,15 +120,15 @@
 
 .addressBar {
     background-color: var(--color-surface);
-    padding: var(--spacing-unit);
-    border-radius: 6px;
+    padding: calc(var(--spacing-unit) * 1.5);
+    border-radius: 8px;
     margin-bottom: calc(var(--spacing-unit) * 2);
-    font-family: var(--font-mono);
     font-size: 0.9em;
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
     align-items: center;
     border: 1px solid var(--color-border);
+    box-sizing: border-box;
 }
 
 .addressBar span {
@@ -146,18 +147,16 @@
 
 /* V11 保持: 左侧面板单列布局 */
 .leftPanel {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
     gap: calc(var(--spacing-unit) * 2);
-    grid-auto-rows: minmax(min-content, max-content);
 }
 
 /* 右侧面板单列布局 */
 .rightPanel {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
     gap: calc(var(--spacing-unit) * 2);
-    grid-auto-rows: minmax(min-content, max-content);
 }
 
 /* 顶部组件容器 */
@@ -254,7 +253,7 @@
 }
 
 .btn:disabled {
-    background-color: #30363d;
+    background-color: var(--color-border);
     cursor: not-allowed;
     color: #8b949e;
 }
@@ -406,7 +405,7 @@
 
 .slotItem {
     padding: 2px 6px;
-    background: #21262d;
+    background: rgba(33, 38, 45, 1); /* #21262d - slot item background */
     border-radius: 4px;
     font-size: 0.85em;
     font-family: var(--font-mono);
@@ -466,7 +465,7 @@
 }
 
 .walletAddressBox {
-    background-color: var(--color-background);
+    background-color: var(--color-surface);
     padding: 10px;
     border-radius: 6px;
     border: 1px solid var(--color-border);

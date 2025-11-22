@@ -1,17 +1,6 @@
 /* --- 核心主题设置 --- */
-.root {
-    --color-primary: #4ee672;       
-    --color-secondary: #58a6ff;     
-    --color-warning: orange;        
-    --color-danger: #da3633;        
-    --color-background: #0d1117;    
-    --color-surface: #161b22;       
-    --color-border: #30363d;        
-    --color-text: #c9d1d9;          
-    --font-mono: 'Consolas', 'Courier New', monospace;
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --spacing-unit: 10px;
-}
+/* Note: CSS variables are defined in :root in miner-console.module.css */
+/* This file uses those variables via var() */
 
 .dashboardGrid {
     display: grid;
@@ -28,16 +17,16 @@
 
 /* V12 保持: 钱包余额区域 */
 .walletDisplayBar {
-    background-color: #161b22; /* var(--color-surface) */
-    padding: 10px; /* var(--spacing-unit) */
+    background-color: var(--color-surface);
+    padding: var(--spacing-unit);
     border-radius: 6px; 
-    margin-bottom: 20px; /* calc(var(--spacing-unit) * 2) */
-    font-family: 'Consolas', 'Courier New', monospace; /* var(--font-mono) */
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    font-family: var(--font-mono);
     font-size: 0.9em;
     display: flex; 
     justify-content: space-between; 
     align-items: center;
-    border: 1px solid #30363d; /* var(--color-border) */
+    border: 1px solid var(--color-border);
 }
 
 .addressInfo, .balanceInfo {
@@ -47,8 +36,8 @@
 
 .balanceAmount {
     font-size: 1.4em; 
-    color: orange; /* var(--color-warning) */
-    margin-left: 10px;
+    color: var(--color-warning);
+    margin-left: var(--spacing-unit);
 }
 
 .balanceLabel {
@@ -57,22 +46,22 @@
 }
 
 .addressBar {
-    background-color: #161b22; /* var(--color-surface) */
-    padding: 10px; /* var(--spacing-unit) */
+    background-color: var(--color-surface);
+    padding: var(--spacing-unit);
     border-radius: 6px; 
-    margin-bottom: 20px; /* calc(var(--spacing-unit) * 2) */
-    font-family: 'Consolas', 'Courier New', monospace; /* var(--font-mono) */
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    font-family: var(--font-mono);
     font-size: 0.9em;
     display: flex; 
     justify-content: flex-end; /* V13: 仅显示网络状态在右侧 */
     align-items: center;
-    border: 1px solid #30363d; /* var(--color-border) */
+    border: 1px solid var(--color-border);
 }
 
 .addressBar span { 
     overflow: hidden; 
     text-overflow: ellipsis; 
-    padding: 0 10px; /* var(--spacing-unit) */
+    padding: 0 var(--spacing-unit);
 }
 
 /* --- 通用数据元素增强 (保持) --- */
@@ -85,7 +74,7 @@
 }
 
 .dataValueLg { 
-    color: #4ee672; /* var(--color-primary) */
+    color: var(--color-primary);
     font-size: 1.8em; 
 }
 
